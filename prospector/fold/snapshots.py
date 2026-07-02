@@ -18,14 +18,26 @@ last-snapshot timestamp, same clock -> same decision.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Callable
 
 from prospector.primitives.atomic import sha256_file, write_json_atomic
 from prospector.store.envelope import parse_ts
 from prospector.store.layout import StoreLayout, ts_compact
 from prospector.store.registry import Registry
+
+
+class SnapshotDivergenceError(RuntimeError):
+    """A rewrite of an existing (lead, ts) snapshot carried a DIFFERENT fold state (beyond the
+    reason field). First-write-wins on the file is correct only while two invariants hold:
+    (a) events are monotonic — never backdated before an existing snapshot's ts — so the event
+    set folded up to any past T is frozen once T passes; and (b) the fold is deterministic.
+    A divergence means one of those broke: a backdated event (breaks a) or a nondeterministic
+    fold (breaks b, a bug). Rather than silently keep the old bytes and never learn the fold
+    diverged, we surface it — audit = detection."""
 
 _NAMED_INTERVALS = {
     "hourly": timedelta(hours=1),
@@ -84,7 +96,8 @@ def should_snapshot(state: dict, last_snapshot_ts: str | None, changed: list[str
 
 
 def write_snapshot(layout: StoreLayout, registry: Registry, lead: str, state: dict,
-                   reason: str, ts: str) -> Path:
+                   reason: str, ts: str,
+                   fault_sink: Callable[[dict], None] | None = None) -> Path:
     """Materialize a fold to snapshots/{lead}/{ts}.json and index it in the registry.
 
     The written JSON is the state dict extended with a top-level "reason" key, so the
@@ -98,10 +111,28 @@ def write_snapshot(layout: StoreLayout, registry: Registry, lead: str, state: di
     the indexed sha256 always matches the bytes on disk even when a replay carries a
     different reason. The indexed file_path is store-root-relative — like event rows,
     it doubles as the S3 key unchanged (spec §7).
+
+    Divergence guard (defense in depth): if an existing file carries a DIFFERENT state
+    (ignoring the reason field), first-write-wins would silently mask a broken invariant
+    (see SnapshotDivergenceError). Instead we make it loud: emit a `fault` on _system via
+    `fault_sink` if provided (keeping the old bytes so the record stays consistent), else
+    raise. The runner passes its EventStore.append as the sink, so the divergence reaches
+    the fault-email surface; a pure caller with no sink gets the exception.
     """
     path = layout.snapshot_path(lead, ts)
     if path.exists():
         sha256 = sha256_file(path)
+        existing = json.loads(path.read_bytes())
+        existing.pop("reason", None)
+        if existing != dict(state):
+            msg = (f"snapshot rewrite for ({lead}, {ts}) diverged from the materialized "
+                   f"state — a backdated event or a nondeterministic fold (invariant break)")
+            if fault_sink is not None:
+                fault_sink({"ts": ts, "lead": "_system", "type": "fault",
+                            "payload": {"subsystem": "snapshot", "message": msg, "lead": lead},
+                            "schema": 1})
+            else:
+                raise SnapshotDivergenceError(msg)
     else:
         sha256 = write_json_atomic(path, dict(state, reason=reason))
     registry.insert_snapshot(snapshot_id=f"{lead}:{ts_compact(ts)}", lead=lead, ts=ts,

@@ -39,7 +39,10 @@ def spawned(layout, registry):
 # -- the pinned surface: no run-now, no capture trigger ------------------------------
 
 def test_command_tree_is_exactly_the_contract_surface():
-    assert set(cli.commands) == {"store", "lead", "verdict", "identity"}
+    # backtest is calibration over frozen history, writing only under backtest/ — not a
+    # run-now surface (it never recomputes the live record). Still no capture trigger, no
+    # recompute-on-demand of the live store (CLAUDE.md, no-run-now CONTRACT).
+    assert set(cli.commands) == {"store", "lead", "verdict", "identity", "backtest"}
     assert set(cli.commands["store"].commands) == {"reindex"}
     assert set(cli.commands["lead"].commands) == {"list", "show"}
     assert set(cli.commands["identity"].commands) == {"resolve", "queue"}

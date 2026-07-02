@@ -218,6 +218,78 @@ def identity_queue(store_path):
             str(row["attempts"]), _cell(row["detected_at"]))))
 
 
+# -- backtest (calibration + the milestone-3 acceptance gate, spec §10 test 5) ------
+# Writes ONLY under backtest/ (own store root + registry). Not a run-now surface: it replays
+# frozen history for calibration, never recomputes the live record.
+
+@cli.command("backtest")
+@click.option("--from", "from_date", required=True, help="Window start (ISO date).")
+@click.option("--to", "to_date", required=True, help="Window end (ISO date).")
+@click.option("--sweep", is_flag=True, help="Also sweep the (z_in, z_out) grid from config.")
+@_store_option
+def backtest(from_date, to_date, sweep, store_path):
+    """Replay the xcorr sensor over history; write the acceptance report under backtest/."""
+    from prospector.backtest import report as report_mod
+    from prospector.backtest import runner as runner_mod
+    from prospector.backtest.corroboration import load_launches
+
+    cfg, _ = load_config(_CONFIG_PATH)
+    root = _store_root(store_path)
+    bt = cfg["backtest"]
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    result = runner_mod.run(
+        root, bt["prices_source"], str(bt["prices_date"]), bt["series_ids_path"],
+        cfg, from_date, to_date, stamp)
+
+    # β-strip health + stress diagnostics: the diagnosis that comes BEFORE any threshold tuning
+    # (§4a). Recompute the panel/z once and reuse for the sweep too.
+    from prospector.ingest.prices import PriceIngest, build_panel
+    import warnings
+    market = cfg["universe"]["market"]
+    tickers = list(cfg["universe"]["sectors"]) + [market]
+    ing = PriceIngest(StoreLayout(root))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        panel = build_panel([ing.load_frozen(bt["prices_source"], str(bt["prices_date"]), t)
+                             for t in tickers])
+        z, stress = runner_mod.compute_z_and_stress(panel, market, cfg)
+    beta_strip = runner_mod.beta_strip_health(panel, market, cfg, [
+        ("calm 2019-H2", "2019-06-01", "2019-12-31"),
+        ("March-2020 crash", "2020-02-20", "2020-04-30"),
+        ("2022 rate shock", "2022-01-01", "2022-10-31"),
+        ("full window", from_date, to_date)])
+    stress_diag = runner_mod.stress_diagnostics(
+        z, stress, from_date, to_date, cfg["xcorr"]["stress_corr_threshold"],
+        cfg["xcorr"]["z_in"], target_pair=("XLK", "XLU"))
+
+    sweep_results = []
+    if sweep:
+        pairs_leads = runner_mod._pairs_with_series(
+            tickers, runner_mod.load_series_ids(bt["series_ids_path"]))
+        grid = [tuple(g) for g in bt["sweep_grid"]]
+        sweep_results = runner_mod.sweep(z, stress, pairs_leads, from_date, to_date, grid,
+                                         cfg["xcorr"]["stress_corr_threshold"])
+
+    launches = load_launches(bt["launches_path"])
+    rep = report_mod.build_report(result, sweep_results, launches,
+                                  cfg["sector_keywords"], cfg,
+                                  beta_strip=beta_strip, stress_diag=stress_diag)
+    jpath, mpath = report_mod.write_report(result.run_root, rep)
+
+    r = rep["recall"]
+    p = rep["precision"]["summary"]
+    f = rep["falsification"]
+    click.echo(f"recall {r['target']}: {'FIRED' if r['fired'] else 'DID NOT FIRE'}")
+    click.echo(f"precision: {p['n_structural']}/{p['n_firings']} structural "
+               f"({p['structural_fraction']:.1%})")
+    click.echo(f"falsification (March 2020): {'PASS' if f['passed'] else 'FAIL'} "
+               f"({f['new_leads_spawned_in_window']} spawns in window)")
+    if rep["cross_stream_lag"]:
+        click.echo(f"lag datum: {rep['cross_stream_lag']['lag_days']} days")
+    click.echo(f"artifact: {mpath}")
+
+
 # -- verdict (the human judgment write path) ---------------------------------------
 
 @cli.command("verdict")

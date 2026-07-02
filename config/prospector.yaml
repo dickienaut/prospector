@@ -52,6 +52,19 @@ backtest:
   stress_window:           # March-2020 falsification window (test 5c)
     from: "2020-02-15"
     to: "2020-04-30"
+  # Reviewed static data committed under tests/fixtures/backtest/ (identity seed + the
+  # EDGAR-verified launch table). The backtest reads these, never live EDGAR (§10 test 5).
+  series_ids_path: tests/fixtures/backtest/sector_series_ids.yaml
+  launches_path: tests/fixtures/backtest/historical_launches.yaml
+  # The frozen price pull the replay reads (pull-once-freeze, §3). Set by the ingest step.
+  prices_source: yahoo
+  prices_date: "2026-07-02"
+  # (z_in, z_out) grid for --sweep; the report backs the chosen pair off from recall-optimal.
+  sweep_grid:
+    - [2.0, 1.0]
+    - [2.5, 1.0]
+    - [3.0, 1.0]
+    - [3.5, 1.5]
 
 # Sector -> keyword corroboration map (crude, deterministic, reviewable — spec test 5b).
 # Used to auto-score backtest firings against launch/rebalance concentration industries.
