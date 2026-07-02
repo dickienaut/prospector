@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -312,9 +313,14 @@ def stress_concept_validation(stress: pd.Series, from_date: str, to_date: str,
             first_fire = fired.index[0]
             onset_lag = int(after.index.get_loc(first_fire))  # 0 == fires on the onset day
             gate_rises = first_fire.date().isoformat()
+        # (ii) the gate fires on the acute crisis AND does not gate the whole window (rev5 §10.5c-ii):
+        # the onset and recovery-tail stay open, so gated_days < the window's trading days.
+        window_days = int(len(seg.dropna()))
         crises.append({
             "label": c["label"], "window": f"{c['from']}..{c['to']}",
             "fires": bool(len(gated)), "gated_days": int(len(gated)),
+            "window_trading_days": window_days,
+            "gates_whole_window": bool(len(gated) >= window_days) if window_days else False,
             "peak_level": round(float(seg.max()), 3) if len(seg) else None,
             "onset": c["onset"], "onset_latency_trading_days": onset_lag,
             "gate_rises": gate_rises})
@@ -335,14 +341,19 @@ def stress_concept_validation(stress: pd.Series, from_date: str, to_date: str,
         calm.append({"label": a["label"], "date": a["date"], "level": round(float(v), 3),
                      "quiet": bool(v < crisis_level)})
 
-    # Aging-drift monitor: absolute levels age. Report the recent calm-regime p95 and its headroom
-    # to the frozen gate. If secular co-movement lifts the baseline and this margin compresses, the
-    # gate is deliberately RE-FROZEN higher by a human — never via a rolling percentile (that would
-    # be baseline-relative in disguise, the rejected form). "Recent" = the last ~2y of the window.
+    # Aging-drift monitor (spec rev5 §4a — pinned to the CALM-REGIME p95). Absolute levels age;
+    # report the recent calm-regime p95 and its headroom to the frozen gate. "Calm-regime" excludes
+    # crisis days (level >= crisis_level) from the recent window — aging is about the *calm* baseline
+    # drifting up toward the gate, so the crisis excursions must not inflate the percentile (that is
+    # the all-days p95 ~0.81, a different, near-crisis-contaminated measure). If this margin
+    # compresses, the gate is deliberately RE-FROZEN higher by a human — never via a rolling
+    # percentile (that would be baseline-relative in disguise, the rejected form). "Recent" = last ~2y.
     recent = win.iloc[-504:] if len(win) >= 504 else win
-    calm_p95 = float(recent.quantile(0.95))
-    aging = {"recent_window_days": len(recent), "calm_p95": round(calm_p95, 3),
-             "crisis_level": crisis_level, "headroom": round(crisis_level - calm_p95, 3)}
+    calm_recent = recent[recent < crisis_level]          # calm-regime: crisis days excluded
+    calm_p95 = float(calm_recent.quantile(0.95)) if len(calm_recent) else float(recent.quantile(0.95))
+    aging = {"recent_window_days": len(recent), "calm_regime_days": len(calm_recent),
+             "calm_p95": round(calm_p95, 3), "crisis_level": crisis_level,
+             "headroom": round(crisis_level - calm_p95, 3)}
 
     return {
         "crisis_level": crisis_level,
@@ -352,6 +363,61 @@ def stress_concept_validation(stress: pd.Series, from_date: str, to_date: str,
         "calm_anchors": calm,
         "aging_monitor": aging,
         "all_acute_fire": all(c["fires"] for c in crises),
+        "gate_not_whole_window": all(not c["gates_whole_window"] for c in crises),
         "all_sustained_open": all(s["correctly_open"] for s in sustained),
         "all_calm_quiet": all(a["quiet"] for a in calm),
+    }
+
+
+# Phase taxonomy for a crash-window spawn (rev5 §10.5c reporting).
+_PHASES = ("pre-onset", "onset", "peak", "recovery-tail")
+
+
+def crash_falsification(result: BacktestResult, stress: pd.Series, crisis_level: float,
+                        crash_from: str, crash_to: str, onset: str | None,
+                        gate_rises: str | None, crash_revert_weeks: int) -> dict:
+    """Amended March-2020 falsification, criterion (iii) (spec rev5 §10.5c). A crash-window spawn is
+    "free" only if it is TRANSIENT — it reverts (the Schmitt exit) within `crash_revert_weeks`.
+    β-strip-clean is necessary but not sufficient: idiosyncratic ≠ structural, and only persistence
+    separates a durable thesis from a transient crisis phenomenon. Reports each crash-window spawn
+    with its phase and reversion latency; a spawn that persists FLAGS (iii) — which does not
+    repudiate the recalibration, but says "examine this lead" (real crisis-coincident shift, or a
+    stale-β artifact → the principled fix is a faster β estimator, never re-tightening the gate)."""
+    # gate_releases: the last in-crash-window day the level held at/above the gate (after this the
+    # gate reopens -> recovery-tail).
+    seg = stress.loc[crash_from:crash_to]
+    gated = seg[seg >= crisis_level]
+    gate_releases = gated.index[-1].date().isoformat() if len(gated) else None
+
+    def phase_of(entered: str) -> str:
+        if onset is not None and entered < onset:
+            return "pre-onset"
+        if gate_rises is not None and entered < gate_rises:
+            return "onset"
+        if gate_releases is not None and entered <= gate_releases:
+            return "peak"
+        return "recovery-tail"
+
+    spawns = []
+    for f in result.firings:
+        if not (crash_from <= f.entered <= crash_to):
+            continue
+        if f.exited is not None:
+            weeks = round((date.fromisoformat(f.exited) - date.fromisoformat(f.entered)).days / 7, 1)
+            within = weeks <= crash_revert_weeks
+        else:
+            weeks, within = None, False   # still active at window end == persistent
+        spawns.append({
+            "display": xcorr.pair_display(f.pair), "entered": f.entered, "exited": f.exited,
+            "phase": phase_of(f.entered), "revert_weeks": weeks, "reverted_within": within})
+
+    spawns.sort(key=lambda s: s["entered"])
+    n_persistent = sum(1 for s in spawns if not s["reverted_within"])
+    return {
+        "crash_revert_weeks": crash_revert_weeks,
+        "gate_releases": gate_releases,
+        "n_spawns": len(spawns),
+        "n_persistent": n_persistent,
+        "all_transient": n_persistent == 0,
+        "spawns": spawns,
     }

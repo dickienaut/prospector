@@ -135,3 +135,76 @@ def test_runner_replay_gates_a_crash_day_and_records_a_stressed_departure():
     assert res.stressed_departures[0]["date"] == idx[1].date().isoformat()
     assert len(res.firings) == 1
     assert res.firings[0].entered == idx[4].date().isoformat()
+
+
+# -- rev5 §10.5c(iii): crash-window spawn reversion + phase -----------------------------------
+
+def test_crash_falsification_phases_and_reversion():
+    """A crash-window spawn is 'free' only if it reverts within crash_revert_weeks. The classifier
+    labels each spawn's phase (pre-onset / onset / peak / recovery-tail) and flags any that persist."""
+    crash_from, crash_to = "2020-02-15", "2020-04-30"
+    onset, gate_rises = "2020-02-24", "2020-03-02"   # gate rises 5 trading days after the onset
+    # A stress level that is >=0.85 only across the acute peak (Mar 02 .. Apr 10) -> gate_releases.
+    idx = pd.bdate_range(crash_from, crash_to)
+    level = pd.Series(0.55, index=idx)
+    level.loc["2020-03-02":"2020-04-10"] = 0.92
+    Firing = runner.Firing
+    firings = [
+        Firing(("XLF", "XLP"), "l1", "2020-02-18", "2020-03-10", 3.0),   # pre-onset, reverts 3wk
+        Firing(("XLF", "XLU"), "l2", "2020-02-28", "2020-07-10", 3.0),   # onset, persists ~19wk
+        Firing(("XLV", "XLY"), "l3", "2020-02-28", "2020-04-01", 3.0),   # onset, reverts ~4.4wk
+        Firing(("XLB", "XLF"), "l4", "2020-04-16", None, 3.0),           # recovery-tail, still active
+    ]
+    res = runner.BacktestResult(crash_from, crash_to, 2.5, 1.0, firings, [], [])
+    cf = runner.crash_falsification(res, level, CRISIS_LEVEL, crash_from, crash_to,
+                                    onset, gate_rises, crash_revert_weeks=8)
+
+    by_pair = {s["display"]: s for s in cf["spawns"]}
+    assert by_pair["XLF×XLP"]["phase"] == "pre-onset"
+    assert by_pair["XLF×XLU"]["phase"] == "onset"
+    assert by_pair["XLV×XLY"]["phase"] == "onset"
+    assert by_pair["XLB×XLF"]["phase"] == "recovery-tail"     # entered after gate_releases (Apr 10)
+    # reversion flags: the ~19wk and the still-active one persist; the 3wk / 4.4wk revert.
+    assert by_pair["XLF×XLP"]["reverted_within"] is True
+    assert by_pair["XLV×XLY"]["reverted_within"] is True
+    assert by_pair["XLF×XLU"]["reverted_within"] is False
+    assert by_pair["XLB×XLF"]["reverted_within"] is False
+    assert by_pair["XLB×XLF"]["revert_weeks"] is None         # None == still active == persistent
+    assert cf["n_spawns"] == 4 and cf["n_persistent"] == 2
+    assert cf["all_transient"] is False
+
+
+def test_crash_falsification_all_transient_when_every_spawn_reverts_fast():
+    crash_from, crash_to = "2020-02-15", "2020-04-30"
+    idx = pd.bdate_range(crash_from, crash_to)
+    level = pd.Series(0.55, index=idx)
+    level.loc["2020-03-02":"2020-03-20"] = 0.92
+    Firing = runner.Firing
+    firings = [Firing(("XLK", "XLU"), "l1", "2020-02-25", "2020-03-10", 3.0)]  # reverts ~2wk
+    res = runner.BacktestResult(crash_from, crash_to, 2.5, 1.0, firings, [], [])
+    cf = runner.crash_falsification(res, level, CRISIS_LEVEL, crash_from, crash_to,
+                                    "2020-02-24", "2020-03-02", crash_revert_weeks=8)
+    assert cf["all_transient"] is True and cf["n_persistent"] == 0
+
+
+# -- rev5 §4a: aging monitor pinned to the CALM-REGIME p95 (crisis days excluded) --------------
+
+def test_aging_monitor_uses_calm_regime_p95_excluding_crisis_days():
+    """The aging monitor must measure the CALM baseline, not the all-days distribution. A recent
+    window with a crisis excursion must not let the crisis days inflate the p95 — crisis days
+    (level >= crisis_level) are excluded, so the reported calm p95 stays near the calm baseline."""
+    idx = pd.bdate_range("2022-01-01", periods=700)          # > 504 so 'recent' is the last 2y
+    rng = np.random.default_rng(3)
+    level = pd.Series(0.55 + 0.05 * rng.standard_normal(700), index=idx).clip(0.2, 0.83)
+    level.iloc[-60:-40] = 0.95                                # a recent crisis excursion (gated)
+    v = runner.stress_concept_validation(level, idx[0].date().isoformat(),
+                                         idx[-1].date().isoformat(), CRISIS_LEVEL)
+    ag = v["aging_monitor"]
+    # Calm p95 excludes the 0.95 crisis days, so it stays near the calm baseline (well under gate),
+    # and the crisis days are counted out of the calm-regime day count.
+    assert ag["calm_p95"] < CRISIS_LEVEL
+    assert ag["calm_p95"] < 0.85 and ag["headroom"] > 0
+    assert ag["calm_regime_days"] < ag["recent_window_days"]   # crisis days were excluded
+    # A naive all-days p95 over the same recent window WOULD be inflated by the 0.95 days.
+    naive_p95 = float(level.iloc[-504:].quantile(0.95))
+    assert naive_p95 > ag["calm_p95"]

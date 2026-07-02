@@ -265,6 +265,10 @@ def backtest(from_date, to_date, sweep, store_path):
         cfg["xcorr"]["z_in"], target_pair=("XLK", "XLU"))
     stress_validation = runner_mod.stress_concept_validation(
         stress, from_date, to_date, crisis_level)
+    ac0 = (stress_validation.get("acute_crises") or [{}])[0]
+    crash_fals = runner_mod.crash_falsification(
+        result, stress, crisis_level, bt["stress_window"]["from"], bt["stress_window"]["to"],
+        ac0.get("onset"), ac0.get("gate_rises"), int(bt["crash_revert_weeks"]))
 
     sweep_results = []
     if sweep:
@@ -278,7 +282,8 @@ def backtest(from_date, to_date, sweep, store_path):
     rep = report_mod.build_report(result, sweep_results, launches,
                                   cfg["sector_keywords"], cfg,
                                   beta_strip=beta_strip, stress_diag=stress_diag,
-                                  stress_validation=stress_validation)
+                                  stress_validation=stress_validation,
+                                  crash_falsification=crash_fals)
     jpath, mpath = report_mod.write_report(result.run_root, rep)
 
     r = rep["recall"]
@@ -287,11 +292,11 @@ def backtest(from_date, to_date, sweep, store_path):
     click.echo(f"recall {r['target']}: {'FIRED' if r['fired'] else 'DID NOT FIRE'}")
     click.echo(f"precision: {p['n_structural']}/{p['n_firings']} structural "
                f"({p['structural_fraction']:.1%})")
-    click.echo(f"falsification (March 2020): β-strip holds="
-               f"{'PASS' if f.get('beta_strip_falsification_holds') else 'FAIL'} · "
-               f"literal-5c(zero spawns)={'PASS' if f.get('passed_literal_5c') else 'FAIL'} "
-               f"({f['new_leads_spawned_in_window']} spawns, "
-               f"{f.get('onset_window_spawns', 0)} at onset)")
+    click.echo(f"falsification (rev5): (i) β-strip {'✓' if f.get('i_beta_strip_clean') else '✗'} · "
+               f"(ii) gate-fires {'✓' if f.get('ii_gate_fires') and f.get('ii_not_whole_window') else '✗'} · "
+               f"(iii) reversion "
+               f"{'✓ all transient' if f.get('iii_all_transient') else 'FLAGS ' + str(f.get('iii_n_persistent')) + ' persistent'} "
+               f"({f['new_leads_spawned_in_window']} crash spawns)")
     if rep["cross_stream_lag"]:
         click.echo(f"lag datum: {rep['cross_stream_lag']['lag_days']} days")
     click.echo(f"artifact: {mpath}")

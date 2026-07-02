@@ -34,7 +34,7 @@ def _firing_rows(result: BacktestResult) -> list[dict]:
 def build_report(result: BacktestResult, sweep_results: list[BacktestResult],
                  launches: list[dict], sector_keywords: dict, cfg: dict,
                  beta_strip: list[dict] | None = None, stress_diag: dict | None = None,
-                 stress_validation: dict | None = None,
+                 stress_validation: dict | None = None, crash_falsification: dict | None = None,
                  target_display: str = "XLK×XLU", target_launch_ticker: str = "TEKX") -> dict:
     """Assemble the acceptance artifact as a JSON-serializable dict."""
     window_months = cfg["backtest"]["corroboration_window_months"]
@@ -94,38 +94,49 @@ def build_report(result: BacktestResult, sweep_results: list[BacktestResult],
                   if onset is not None and gate_rises is not None
                   and onset <= s["first_fired"] < gate_rises]
 
-    clean = crash_resid is not None and abs(crash_resid) < 0.2
-    if not spawns_in_window:
-        note = ("PASS: zero non-stress leads spawned; raw departures captured as market_stress=true.")
+    # Amended falsification (spec rev5 §10.5c): three criteria, replacing the retired "zero spawns".
+    clean = crash_resid is not None and abs(crash_resid) < 0.2   # (i) β-strip clean in-crash
+    ac = (stress_validation or {}).get("acute_crises", [{}])[0]
+    ii_fires = bool(ac.get("fires"))                              # (ii) gate fires on the acute crisis
+    ii_not_whole = bool(stress_validation and stress_validation.get("gate_not_whole_window"))
+    cf = crash_falsification or {}
+    n_persistent = cf.get("n_persistent", 0)                      # (iii) all crash spawns revert?
+    iii_all_transient = bool(cf.get("all_transient", not spawns_in_window))
+
+    note = (
+        "(i) β-strip clean in-crash (necessary, not sufficient — the strip removes the common "
+        f"factor but idiosyncratic ≠ structural). (ii) gate fires on the acute crisis and does not "
+        "gate the whole window. (iii) the falsifiable core: a crash-window spawn is 'free' only if "
+        "it REVERTS; a spawn that persists is a durable lead, not a transient crisis phenomenon. ")
+    if iii_all_transient:
+        note += "All crash-window spawns reverted within the bound — (iii) holds."
     else:
-        note = (
-            f"{len(spawns_in_window)} leads spawned in the crash window. The β-strip is NOT the "
-            f"cause — residual mean correlation in-crash is {crash_resid} (≈0), so market beta is "
-            f"fully stripped (rules out the §4a stale-β mechanism). "
-            if clean else
-            f"{len(spawns_in_window)} leads spawned in the crash window. ")
         note += (
-            "This surfaces a CONTRACT tension the recalibration created, for the design thread. "
-            "Spec test 5c asserts ZERO crash-window spawns — a criterion written when the STRESS "
-            "GATE was the crash defense. The milestone-3 β-strip proof reassigned that job to the "
-            "β-strip (clean in-crash), and demoted the gate to acute-onset-only. With the gate "
-            "correctly no longer over-suppressing, departures that survive the clean β-strip during "
-            "a crash are genuine idiosyncratic moves (e.g. Financials×Utilities decoupling as rates "
-            "collapsed), not beta artifacts — so forcing them to zero would mean re-inflating the "
-            "gate back to the 24.8%-of-days over-gating we just removed. The spawns cluster at the "
-            "onset (the ~5-day β-staleness leading-edge leak, bounded — 'losing paging in a crash "
-            "week is free') and the recovery tail. RECOMMENDATION: amend test 5c from 'zero crash "
-            "spawns' to 'β-strip keeps residual ≈0 in-crash (PASS) AND the gate fires on the acute "
-            "crisis (PASS)'; separately weigh whether to shorten the level window to shrink the "
-            "onset leak. Do NOT re-tighten the crisis level to pass the old test — that undoes the "
-            "ratified recalibration.")
+            f"(iii) FLAGS {n_persistent} persistent crash spawn(s) — the test's teeth working. Per "
+            "rev5 this does NOT repudiate the recalibration (which stands on the scale distinction "
+            "and onset latency, §4a). It is informative: each persistent lead is either a genuine "
+            "crisis-coincident structural shift worth examining (the persistent set is "
+            "Financials-heavy — a plausible 2020 rates-to-zero regime shift), or a persistent "
+            "onset/stale-β artifact. Principled responses, in order: examine the lead (it may be "
+            "real); if artifact, the fix is a FASTER β estimator (§4a note 1: EWMA / shorter window) "
+            "to shrink the onset leak at its source — NEVER re-tighten the crisis level (undoes the "
+            "recalibration) and NEVER shrink the gate's level window (imports level-noise into the "
+            "common case to fix a rare one).")
     falsification = {
         "window": {"from": win_from, "to": win_to},
         "new_leads_spawned_in_window": len(spawns_in_window),
         "spawns_in_window": spawns_in_window,
         "onset_window_spawns": len(onset_leak),
-        "beta_strip_clean_in_crash": bool(clean),
         "stressed_departures_in_window": len(stressed_in_window),
+        # rev5 §10.5c three-part verdict:
+        "i_beta_strip_clean": bool(clean),
+        "ii_gate_fires": ii_fires,
+        "ii_not_whole_window": ii_not_whole,
+        "iii_all_transient": iii_all_transient,
+        "iii_n_persistent": n_persistent,
+        "crash_spawns": cf.get("spawns", []),
+        "crash_revert_weeks": cf.get("crash_revert_weeks"),
+        # legacy fields kept for the literal-5c comparison and back-compat:
         "passed_literal_5c": len(spawns_in_window) == 0,
         "beta_strip_falsification_holds": bool(clean),
         "note": note}
@@ -274,15 +285,33 @@ def render_markdown(report: dict) -> str:
     L.append(f"\n> {pr['caveat']}\n")
 
     fa = report["falsification"]
-    L.append("## (c) Falsification — March 2020\n")
+    L.append("## (c) Falsification — March 2020 (amended, spec rev5 §10.5c)\n")
     L.append(f"Window {fa['window']['from']} → {fa['window']['to']}: "
-             f"**{fa['new_leads_spawned_in_window']} new leads spawned** "
-             f"({fa.get('onset_window_spawns', 0)} in the onset-latency window) · "
-             f"{fa['stressed_departures_in_window']} stressed departures recorded\n")
-    literal = "✓" if fa.get("passed_literal_5c") else "✗"
-    strip = "✓" if fa.get("beta_strip_falsification_holds") else "✗"
-    L.append(f"Literal test 5c (zero spawns): {literal} · β-strip falsification (residual ≈0 "
-             f"in-crash): {strip}\n")
+             f"**{fa['new_leads_spawned_in_window']} crash-window spawns** · "
+             f"{fa['stressed_departures_in_window']} stressed departures recorded. "
+             f"The retired 'zero spawns' criterion is replaced by three tests:\n")
+    L.append("| # | criterion | result |")
+    L.append("|---|---|---|")
+    L.append(f"| i | β-strip keeps residual mean corr ≈0 in-crash (estimator falsifier) | "
+             f"{'✓ holds' if fa['i_beta_strip_clean'] else '✗ LEAKS'} |")
+    L.append(f"| ii | gate fires on the acute crisis, not the whole window | "
+             f"{'✓' if fa['ii_gate_fires'] and fa['ii_not_whole_window'] else '✗'} "
+             f"(fires={fa['ii_gate_fires']}, not-whole-window={fa['ii_not_whole_window']}) |")
+    iii_cell = ("✓ all transient" if fa["iii_all_transient"]
+                else f"⚠ FLAGS {fa['iii_n_persistent']} persistent")
+    L.append(f"| iii | every crash-window spawn reverts within {fa.get('crash_revert_weeks')}wk "
+             f"(no durable false leads) | {iii_cell} |")
+    L.append("")
+    if fa.get("crash_spawns"):
+        L.append(f"### Crash-window spawns — phase & reversion (revert bound {fa.get('crash_revert_weeks')}wk)\n")
+        L.append("| entered | pair | phase | exited | weeks | transient |")
+        L.append("|---|---|---|---|---:|:---:|")
+        for s in fa["crash_spawns"]:
+            wk = "—" if s["revert_weeks"] is None else f"{s['revert_weeks']}"
+            ex = s["exited"] or "(active at window end)"
+            L.append(f"| {s['entered']} | {s['display']} | {s['phase']} | {ex} | {wk} | "
+                     f"{'✓' if s['reverted_within'] else '✗ persists'} |")
+        L.append("")
     L.append(f"> {fa['note']}\n")
 
     lag = report["cross_stream_lag"]

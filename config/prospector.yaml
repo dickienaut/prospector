@@ -44,6 +44,9 @@ xcorr:
   # HIGHER. Fix aging by HUMAN recalibration only — NEVER a rolling percentile / self-updating
   # window (that is baseline-relative in disguise and reintroduces the rejected failure). The
   # backtest reports the calm-p95→gate margin each run so the drift is visible.
+  # (Spec rev5 §13 names these keys stress_gate.window_days / stress_gate.absolute_level; the repo
+  # keeps them under xcorr.stress as level_window / crisis_level — functionally identical, already
+  # tested. Same values, same behavior.)
   stress:
     level_window: 21       # window for the market-wide correlation level (also the onset-lag lever)
     crisis_level: 0.85     # absolute correlation level that counts as an acute crisis — frozen
@@ -77,6 +80,10 @@ backtest:
   stress_window:           # March-2020 falsification window (test 5c)
     from: "2020-02-15"
     to: "2020-04-30"
+  # Amended falsification (spec rev5 §10.5c-iii): a crash-window spawn is "free" only if it reverts
+  # (Schmitt exit) within this bound — a spawn that persists is a durable lead, not a transient
+  # crisis phenomenon, and is flagged for examination (real crisis-coincident shift vs stale-β).
+  crash_revert_weeks: 8
   # Reviewed static data committed under tests/fixtures/backtest/ (identity seed + the
   # EDGAR-verified launch table). The backtest reads these, never live EDGAR (§10 test 5).
   series_ids_path: tests/fixtures/backtest/sector_series_ids.yaml

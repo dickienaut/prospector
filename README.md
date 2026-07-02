@@ -5,7 +5,8 @@ and proposes **reading, never orders**. v1 is the deterministic core — three l
 (intra-basket dispersion, inter-basket excess-correlation, ETF launches), a rebalance accretion
 stream, discourse capture, and an append-only fossil record.
 
-Canonical spec: [docs/prospector-v1-spec-rev3-2026-07-01.md](docs/prospector-v1-spec-rev3-2026-07-01.md).
+Canonical spec: [docs/prospector-v1-spec-rev5-2026-07-02.md](docs/prospector-v1-spec-rev5-2026-07-02.md)
+(rev5; earlier revs kept as history).
 Repo rules: [CLAUDE.md](CLAUDE.md).
 
 ## Setup

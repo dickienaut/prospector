@@ -50,7 +50,7 @@ and it was **uniform across every construction tested** (level windows 5/10/15 �
   non-crisis days (a Dec-2024 wobble, the Aug-2019 scare).
 
 The absolute level, by contrast, preserves crisis severity ordering (COVID 0.95 > Aug-2019 0.88 >
-2022 grind 0.82 > calm 0.69; calm p95 ~0.81) and cleanly isolates the acute crisis.
+2022 grind 0.82 > calm 0.69; all-days p95 ~0.81) and cleanly isolates the acute crisis.
 
 Two corroborations: (1) this is the **absorption-ratio / correlation-concentration family**
 (Kritzman–Li) — systemic-risk practitioners use correlation-concentration as absolute levels or
@@ -71,8 +71,8 @@ load-bearing**. That kills the alternatives:
   disproportionately the structural shifts we want surfaced. That is the whole reason for the
   crisis-only demotion.
 - **0.85** matches the gate to its job: ~5-day onset latency, fires on COVID and the genuinely-acute
-  Aug-2019 scare, sits just above calm p95 (0.81) with the 2022 grind (0.82) correctly below, gates
-  only 2.7% of days.
+  Aug-2019 scare, sits just above the all-days p95 (0.81) with the 2022 grind (0.82) correctly below,
+  gates only 2.7% of days.
 
 **Principled, not fitted.** The choice was made on the *crisis side* (top ~2–3% of days = genuinely
 extreme comovement; onset-latency for the β-staleness job), validated against the concept (fires on
@@ -101,9 +101,15 @@ ticker. It is an observation read *after* freezing, never a tuning target.
 ## Standing watch-item: aging (the one real weakness of an absolute level)
 
 Absolute levels age. Over the 17-year horizon, secular ETF-driven co-movement could lift the calm
-baseline toward 0.85. **Monitor:** the backtest reports the recent-window calm p95 and its headroom
-to the gate each run (currently p95 0.668 → gate 0.85, headroom **0.18** — healthy). If the margin
-compresses, **deliberately re-freeze the level higher (a human decision).**
+baseline toward 0.85. **Monitor (definition pinned, spec rev5 §4a):** the backtest reports the
+recent-window **calm-regime** p95 — the p95 of market-wide correlation over recent **non-crisis**
+days (level < crisis_level excluded) — and its headroom to the gate (currently **calm-regime p95
+0.668 → gate 0.85, headroom 0.18** — healthy). This is deliberately *not* the all-days p95 (~0.81,
+margin ~0.04): aging is about the *calm* baseline drifting up toward the gate, so the crisis
+excursions must not inflate the percentile. The two are different measurements — the all-days p95
+(~0.81) appears above only in the *selection* rationale (to show 0.85 sits above the overall 95th
+percentile); the *aging monitor* is the calm-regime measure. If the margin compresses,
+**deliberately re-freeze the level higher (a human decision).**
 
 **Hard rule:** do NOT solve aging with a rolling percentile or any self-updating window — that is
 baseline-relative in disguise and reintroduces the exact failure diagnosed above (crisis days and
@@ -111,22 +117,24 @@ sustained regimes inflate the trailing percentile). The correct pattern is froze
 *human* recalibration: the machine surfaces the drift, the human moves the level — the same
 machine-proposes-human-ratifies discipline as everything else in the system.
 
-## OPEN — for the design thread: spec test 5c ("zero crash-window spawns")
+## RESOLVED by spec rev5: test 5c amended (was OPEN here)
 
-The recalibration surfaces a CONTRACT tension. **Spec §10 test 5c asserts zero new leads spawned in
-the March-2020 window.** That criterion was written when the stress gate was conceived as the crash
-defense (gate everything during a crash → zero spawns). The β-strip proof reassigned the crash
-defense to the β-strip and demoted the gate to acute-onset-only, so the recalibrated gate correctly
-no longer over-suppresses — and the window now shows **10 spawns** (7 in the [onset, gate-rises)
-β-staleness window, 1 pre-onset, 2 recovery-tail).
+The recalibration surfaced a CONTRACT tension: **the original §10 test 5c asserted zero March-2020
+crash-window spawns** — a criterion written when the stress gate was conceived as the crash defense.
+The β-strip proof reassigned that defense to the β-strip and demoted the gate to acute-onset-only, so
+the recalibrated gate correctly no longer over-suppresses (the window shows 10 spawns). The design
+thread resolved this in **`prospector-v1-spec-rev5-2026-07-02.md` §10.5(c)**: "zero spawns" is
+retired and replaced by three criteria — **(i)** β-strip keeps residual mean corr ≈0 in-crash,
+**(ii)** the gate fires on the acute crisis and does not gate the whole window, **(iii)** every
+crash-window spawn must **revert** within `backtest.crash_revert_weeks` (DEFAULT 8) rather than
+persisting as a durable lead. (iii) is the falsifiable core: β-strip-clean is necessary but not
+sufficient (idiosyncratic ≠ structural; only persistence separates a durable thesis from a transient
+crisis phenomenon).
 
-The β-strip is proven clean in-crash (−0.035), so departures that survive it during the crash are
-**genuine idiosyncratic moves** (e.g. Financials×Utilities decoupling as rates collapsed), not beta
-artifacts. Forcing them to zero would mean re-inflating the gate to the 24.8%-of-days over-gating we
-just removed.
-
-**Recommendation (not yet applied):** amend test 5c from *"zero crash-window spawns"* to
-*"(i) the β-strip keeps residual mean correlation ≈0 through the crash (holds: −0.035), AND (ii) the
-gate fires on the acute crisis (holds: COVID, onset lag 5d)."* Separately, weigh whether to shorten
-the level window to shrink the ~5-day onset leak (trades onset speed for level noise). **Do NOT
-re-tighten the crisis level to pass the old test — that undoes this ratified recalibration.**
+**M3 output under the amended test:** (i) ✓ (−0.035), (ii) ✓ (COVID fires, onset 5d, gates ~34/54
+window days), (iii) **flags 7 of 10 persistent** (Financials-heavy — a plausible real 2020
+rates-to-zero regime shift, or a persistent stale-β artifact). Per rev5 this does not repudiate the
+recalibration; the principled next step if the persistence is an artifact is a **faster β estimator**
+(§4a note 1: EWMA / shorter window) — never re-tighten the crisis level, never shrink the level
+window. Examining the flagged persistent leads (real shift vs artifact) is a design-thread item; the
+β-estimator work is a candidate next pass.

@@ -3,8 +3,9 @@
 This repo is **Project Prospector**, the offensive twin of the thesis smoke detector. It watches
 the ETF universe for structural novelty and proposes **reading, never orders**.
 
-The canonical spec is `docs/prospector-v1-spec-rev3-2026-07-01.md`. Read it before changing
-anything load-bearing.
+The canonical spec is `docs/prospector-v1-spec-rev5-2026-07-02.md` (rev5; earlier revs kept as
+history). Read it before changing anything load-bearing. Rev5 froze the stress gate (absolute 0.85,
+crisis-only) and amended the March-2020 falsification (test 5c) to the reversion criterion.
 
 ## Firewall
 - Never add code that reads the detector's bucket or `portfolio.yaml`.
@@ -58,6 +59,15 @@ sensor runs.
 Hard cadence floor (weekly heartbeat), state-change-only push, read-only surfaces, no execution.
 Silence beyond 7 days unambiguously means broken. No auto-tune of thresholds, ever — the
 active-lead ceiling is a tripwire for human recalibration.
+
+## Standing review items (human-ratified, never auto-tuned)
+Some thresholds are reviewed on a cadence and moved only by deliberate human recalibration that
+leaves a `config.changed` fossil — never by a self-updating rule:
+- **Active-lead ceiling** (§8a) — a tripwire for human recalibration of sensor sensitivity.
+- **Stress-gate aging monitor** (§4a) — the backtest reports the recent-window **calm-regime** p95
+  (non-crisis days) and its headroom to the frozen absolute gate. If the margin compresses,
+  re-freeze the level higher by hand. **Never** a rolling percentile / self-updating window — that
+  reintroduces the baseline-relative failure the recalibration diagnosed.
 
 ## Development
 - `uv sync` to set up; `uv run pytest` to test; `uv run pros --help` for the CLI.
