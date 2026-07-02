@@ -117,13 +117,41 @@ def departure_z(fisher_df: pd.DataFrame, baseline_window: int = 252) -> pd.DataF
 
 
 def stress_series(raw_returns: pd.DataFrame, window: int = 21) -> pd.Series:
-    """Market-stress annotation input (§4a CONTRACT): the mean, across all pairs, of the
-    rolling `window`-day RAW (pre-strip) pairwise correlation. When this exceeds
-    stress_corr_threshold (DEFAULT 0.65), departures are still recorded but do not spawn leads,
-    do not count as state changes, and do not page — losing paging during a crash week is free,
-    because structural formation is a months-scale phenomenon. Computed on raw returns, not
-    residuals: it measures gross comovement (everything moving together), which the strip is
-    designed to remove."""
+    """The market-stress gate signal (§4a CONTRACT): the mean, across all pairs, of the rolling
+    `window`-day RAW (pre-strip) pairwise correlation — gross comovement, everything moving
+    together. Computed on raw returns, not residuals: it measures the comovement the β-strip is
+    designed to remove. The gate fires when this LEVEL reaches crisis_level; a gated day freezes
+    the trigger and records a would-be entry as a stressed departure, never a spawn.
+
+    WHY AN ABSOLUTE LEVEL (recalibrated 2026-07-02, design thread, milestone-3 gate). The β-strip
+    is PROVEN to remove the market factor cleanly even in the March-2020 crash (residual mean corr
+    -0.035), so the strip — not this gate — is the primary market-factor defense. That demotes this
+    gate to a secondary, crisis-only job: catch the two things the strip cannot during an acute
+    crisis — (a) crash-onset β staleness (the trailing-252d β is estimated pre-crash, so residuals
+    carry uncorrected beta for a short onset window), and (b) liquidity fire-sale dislocations. The
+    old absolute 0.65 was miscalibrated — it fired on 24.8% of days because sector ETFs are
+    structurally correlated (calm baseline ~0.5-0.65). The recalibration LIFTS the level to 0.85
+    (top ~2-3% of days = genuinely extreme comovement).
+
+    A baseline-relative departure (the design thread's first-choice form) was TESTED AND REJECTED on
+    evidence: the mean pairwise correlation is smooth and mean-reverting with high year-long
+    variance, so even COVID's 0.95 is only ~2σ above its own trailing norm, the distribution caps
+    at ~2.5σ, and — decisively — its largest departures land on NON-crisis days (a Dec-2024 wobble,
+    the Aug-2019 scare), so no threshold cleanly isolates a crisis. For this statistic, crisis
+    severity IS the absolute level; normalizing by trailing variance destroys the signal. See
+    docs/decisions/2026-07-02-stress-gate-recalibration.md.
+
+    TWO NAMED CHARACTERISTICS (not bugs — recorded so no one is surprised):
+    - Onset latency: L is itself a `window`-day rolling correlation, so it lags a crash by a few
+      days; a departure at the very leading edge (2020-02-18) slips through before L rises — a
+      bounded leading-edge leak, and losing paging in a crash week is free (§4a). The latency lever
+      is `window`, not the threshold. Characterized in the backtest (§10).
+    - Crisis-duration, not transient: an absolute gate stays on for as long as correlation is
+      extreme (the whole COVID window), which is correct for an acute crisis. The watch-item is a
+      PROLONGED extreme-correlation regime that could over-suppress the idiosyncratic departures we
+      want to see — none occurred in 2019-2024, and the absolute level's aging under regime drift is
+      a design-thread revisit (a self-calibrating form would fix both, but none tested detects
+      crises — the open problem the decisions note records)."""
     raw_corr = pairwise_rolling_corr(raw_returns, window)
     return raw_corr.mean(axis=1)
 

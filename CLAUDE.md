@@ -15,6 +15,14 @@ anything load-bearing.
 Items marked CONTRACT in `docs/` specs change only via the design thread (chat with the owner),
 never unilaterally in implementation. DEFAULTs are config in `config/prospector.yaml` — change freely.
 
+Design-thread-authorized amendments to CONTRACT defaults are recorded under `docs/decisions/`:
+- `docs/decisions/2026-07-02-stress-gate-recalibration.md` — the market-stress gate moved from an
+  absolute 0.65 to an absolute 0.85 (crisis-only), after the β-strip was proven the primary
+  market-factor defense. Baseline-relative was tested and rejected (a fragility gauge's intrinsic
+  level is the signal). The stress gate's crisis_level is frozen; fix its aging by human
+  recalibration, never a rolling percentile. OPEN item there: spec test 5c ("zero crash spawns")
+  needs amending given the recalibration.
+
 ## Append-only
 - Nothing under `events/` is ever edited or deleted. Corrections are new events.
 - A changed mind is a new `verdict` event that supersedes via `superseded_by`, never an edit.

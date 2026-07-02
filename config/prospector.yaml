@@ -21,7 +21,32 @@ windows:
 xcorr:
   z_in: 2.5                # Schmitt entry (calibrated by the milestone-3 backtest)
   z_out: 1.0               # Schmitt exit
-  stress_corr_threshold: 0.65
+  # Market-stress gate. RECALIBRATED 2026-07-02 (design thread, per spec §5), because the
+  # milestone-3 β-strip diagnostic proved the strip is the primary market-factor defense (residual
+  # mean corr -0.035 in the March-2020 crash). The gate is demoted to catching ACUTE crises only:
+  # crash-onset β staleness + liquidity dislocations. The old absolute 0.65 was miscalibrated (it
+  # gated 24.8% of days — sector ETFs sit at a calm baseline ~0.5-0.65). The level is LIFTED to 0.85.
+  #
+  # Form: ABSOLUTE level, not a baseline-relative departure. Market-wide mean pairwise correlation
+  # is a fragility gauge with an INTRINSIC SCALE — 0.95 is a stressed market whether or not it was
+  # 0.95 last month — so the level carries the meaning and normalizing it away destroys the signal.
+  # (A baseline-relative departure was tested across level/baseline windows and rejected on evidence;
+  # it is the right frame only for scale-free statistics like the pair residual correlation. This is
+  # the absorption-ratio / correlation-concentration family — used as a level, never trailing-normed.)
+  # See docs/decisions/2026-07-02-stress-gate-recalibration.md.
+  #
+  # 0.85 is FROZEN and PRINCIPLED (top ~2-3% of days; just above calm p95 ~0.81; onset latency ~5d,
+  # the binding constraint for the β-staleness job), NOT fitted to any known case (the 2023 XLK×XLU
+  # signal at level 0.667 is ungated at 0.80/0.85/0.90 alike). Changing it emits config.changed (loud).
+  #
+  # AGING WATCH-ITEM (17-yr horizon): absolute levels age. Headroom to calm p95 is only ~0.04. If
+  # secular ETF-driven co-movement lifts the calm baseline toward 0.85, deliberately re-freeze
+  # HIGHER. Fix aging by HUMAN recalibration only — NEVER a rolling percentile / self-updating
+  # window (that is baseline-relative in disguise and reintroduces the rejected failure). The
+  # backtest reports the calm-p95→gate margin each run so the drift is visible.
+  stress:
+    level_window: 21       # window for the market-wide correlation level (also the onset-lag lever)
+    crisis_level: 0.85     # absolute correlation level that counts as an acute crisis — frozen
 
 dispersion:
   z_in: 2.5

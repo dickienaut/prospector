@@ -259,9 +259,12 @@ def backtest(from_date, to_date, sweep, store_path):
         ("March-2020 crash", "2020-02-20", "2020-04-30"),
         ("2022 rate shock", "2022-01-01", "2022-10-31"),
         ("full window", from_date, to_date)])
+    crisis_level = cfg["xcorr"]["stress"]["crisis_level"]
     stress_diag = runner_mod.stress_diagnostics(
-        z, stress, from_date, to_date, cfg["xcorr"]["stress_corr_threshold"],
+        z, stress, from_date, to_date, crisis_level,
         cfg["xcorr"]["z_in"], target_pair=("XLK", "XLU"))
+    stress_validation = runner_mod.stress_concept_validation(
+        stress, from_date, to_date, crisis_level)
 
     sweep_results = []
     if sweep:
@@ -269,12 +272,13 @@ def backtest(from_date, to_date, sweep, store_path):
             tickers, runner_mod.load_series_ids(bt["series_ids_path"]))
         grid = [tuple(g) for g in bt["sweep_grid"]]
         sweep_results = runner_mod.sweep(z, stress, pairs_leads, from_date, to_date, grid,
-                                         cfg["xcorr"]["stress_corr_threshold"])
+                                         crisis_level)
 
     launches = load_launches(bt["launches_path"])
     rep = report_mod.build_report(result, sweep_results, launches,
                                   cfg["sector_keywords"], cfg,
-                                  beta_strip=beta_strip, stress_diag=stress_diag)
+                                  beta_strip=beta_strip, stress_diag=stress_diag,
+                                  stress_validation=stress_validation)
     jpath, mpath = report_mod.write_report(result.run_root, rep)
 
     r = rep["recall"]
@@ -283,8 +287,11 @@ def backtest(from_date, to_date, sweep, store_path):
     click.echo(f"recall {r['target']}: {'FIRED' if r['fired'] else 'DID NOT FIRE'}")
     click.echo(f"precision: {p['n_structural']}/{p['n_firings']} structural "
                f"({p['structural_fraction']:.1%})")
-    click.echo(f"falsification (March 2020): {'PASS' if f['passed'] else 'FAIL'} "
-               f"({f['new_leads_spawned_in_window']} spawns in window)")
+    click.echo(f"falsification (March 2020): β-strip holds="
+               f"{'PASS' if f.get('beta_strip_falsification_holds') else 'FAIL'} · "
+               f"literal-5c(zero spawns)={'PASS' if f.get('passed_literal_5c') else 'FAIL'} "
+               f"({f['new_leads_spawned_in_window']} spawns, "
+               f"{f.get('onset_window_spawns', 0)} at onset)")
     if rep["cross_stream_lag"]:
         click.echo(f"lag datum: {rep['cross_stream_lag']['lag_days']} days")
     click.echo(f"artifact: {mpath}")
