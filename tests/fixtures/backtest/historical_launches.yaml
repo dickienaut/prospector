@@ -1,0 +1,43 @@
+# Curated historical launch table for backtest corroboration scoring (spec test 5b).
+# Crude, deterministic, reviewable — exactly like the sector→keyword map it joins against.
+# Every row is verified against EDGAR primary sources before it earns a place here; the
+# `verified` block says how. detected_at is the EDGAR effective-filing date (the launch
+# sensor's detected_at analog) — all lag math reads this field (CONTRACT §4c).
+#
+# Honesty caveat (spec, verbatim spirit): corroboration scoring bakes in "packaged = real" —
+# a real-but-never-packaged firing scores as junk. Acceptable because packageability is this
+# system's own success criterion, but it is a bias, not a truth.
+#
+# This table is deliberately extensible: milestone-3 curation adds rows as the precision audit
+# demands them. An absent launch can only make precision look WORSE (a structural firing scored
+# junk), never better — the bias direction is conservative.
+
+launches:
+  - ticker: TEKX
+    name: SPDR Galaxy Transformative Tech Accelerators ETF
+    series_id: S000087749
+    cik: 1516212
+    detected_at: "2024-09-09"
+    concentration_industries: [technology, "artificial intelligence", ai, semiconductor,
+                               infrastructure, power, electricity, "data center", utilities]
+    verified:
+      how: "EDGAR 485BPOS accession 0001193125-24-215334 (filed 2024-09-06, indexed 09-09), series header names TEKX/S000087749; earliest full-text hits 2024-09-09 and 2024-09-23"
+      note: "The spec's known cross-stream datum: T(first XLK×XLU firing) -> T(TEKX launch)."
+
+  - ticker: DECO
+    name: SPDR Galaxy Digital Asset Ecosystem ETF
+    series_id: S000087748
+    cik: 1516212
+    detected_at: "2024-09-09"
+    concentration_industries: [digital assets, blockchain, cryptocurrency, technology]
+    verified:
+      how: "Same 485BPOS as TEKX (0001193125-24-215334), series S000087748"
+
+  - ticker: HECO
+    name: SPDR Galaxy Hedged Digital Asset Ecosystem ETF
+    series_id: S000087750
+    cik: 1516212
+    detected_at: "2024-09-09"
+    concentration_industries: [digital assets, blockchain, cryptocurrency, technology]
+    verified:
+      how: "Same 485BPOS as TEKX (0001193125-24-215334), series S000087750"

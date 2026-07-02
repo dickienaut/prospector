@@ -1,0 +1,25 @@
+# SEC series IDs for the 11 Select Sector SPDRs — the backtest's identity seed (spec §10 test 5).
+# Recorded from https://www.sec.gov/files/company_tickers_mf.json on 2026-07-02 and reviewed.
+# The backtest never hits live EDGAR; leads key on these series IDs, tickers are display only.
+#
+# SPY is deliberately NOT here: SPDR S&P 500 ETF Trust is a unit investment trust with no SEC
+# series ID. It is the market factor for the beta strip only — it never keys a lead or a
+# baseline pair, so it stays a config-level price series (universe.market), outside the
+# identity registry. (Real-world fact, discovered at fixture-recording time.)
+
+trust:
+  name: SELECT SECTOR SPDR TRUST
+  cik: 1064641
+
+funds:
+  XLY:  { series_id: S000006408, class_id: C000017594, display: XLY }
+  XLP:  { series_id: S000006409, class_id: C000017595, display: XLP }
+  XLE:  { series_id: S000006410, class_id: C000017596, display: XLE }
+  XLF:  { series_id: S000006411, class_id: C000017597, display: XLF }
+  XLV:  { series_id: S000006412, class_id: C000017598, display: XLV }
+  XLI:  { series_id: S000006413, class_id: C000017599, display: XLI }
+  XLB:  { series_id: S000006414, class_id: C000017600, display: XLB }
+  XLK:  { series_id: S000006415, class_id: C000017601, display: XLK }
+  XLU:  { series_id: S000006416, class_id: C000017602, display: XLU }
+  XLRE: { series_id: S000051152, class_id: C000161049, display: XLRE }
+  XLC:  { series_id: S000062095, class_id: C000201048, display: XLC }

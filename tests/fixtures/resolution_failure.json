@@ -1,0 +1,10 @@
+{
+  "_fixture_note": "Spec test 2 (failed-resolution path). ZZZQ is a fabricated ticker absent from the EDGAR MF map. The scenario: detected by the launch scan (launch.unverified with detected_at), resolution fails, daily retries for identity.retry_days, then the manual queue; manual resolve completes the two-phase launch with the ORIGINAL detected_at (lag integrity, CONTRACT §4c).",
+  "ticker": "ZZZQ",
+  "name_raw": "Fabricated Quantum Grid Infrastructure ETF",
+  "detected_at": "2026-07-02T13:00:00Z",
+  "manual_resolution": {
+    "series_id": "S000087750",
+    "note": "resolved by hand in the test after the retry window lapses (reuses a real series id so the EDGAR-verify step can pass against fixtures)"
+  }
+}

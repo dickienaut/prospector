@@ -69,10 +69,12 @@ sector_keywords:
   XLU: [utility, utilities, power, electric, electricity, grid, nuclear, "independent power"]
 
 prices:
-  primary: stooq
-  fallback: yahoo
-  # Stooq wants lowercase + ".us" for US ETFs — the symbol map lives here so a source quirk
-  # never leaks into identity.
+  primary: yahoo
+  fallback: stooq
+  # Yahoo made primary 2026-07-02: Stooq's CSV endpoint now sits behind a JavaScript
+  # proof-of-work gate that a polite HTTP client cannot pass. Source is recorded per row (§3),
+  # so a future flip back is data-honest. Stooq wants lowercase + ".us" for US ETFs — the
+  # symbol map lives here so a source quirk never leaks into identity.
   stooq_suffix: ".us"
 
 edgar:

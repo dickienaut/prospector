@@ -1,0 +1,18 @@
+{
+  "_fixture_note": "Spec test 1 (the HECO rule). Ticker reuse in the wild: HECO today is the SPDR Galaxy Hedged Digital Asset Ecosystem ETF (SSGA Active Trust), but etfdb's stale category label still reflects the ticker's previous owner (an ecological/ESG fund). category_draft is stored as steering, never used for identity or baselines. Recorded from EDGAR 2026-07-02.",
+  "expected_entry": {
+    "series_id": "S000087750",
+    "class_ids": ["C000253658"],
+    "cik": 1516212,
+    "ticker_current": "HECO",
+    "name": "SPDR Galaxy Hedged Digital Asset Ecosystem ETF",
+    "issuer": "SSGA Active Trust",
+    "category_draft": "Environmentally Responsible",
+    "concentration_industries": ["digital assets", "blockchain", "cryptocurrency"],
+    "prospectus_accession": "0001193125-26-291833",
+    "holdings_source": "issuer_daily",
+    "first_seen": "2026-07-02T00:00:00Z",
+    "verified_at": "2026-07-02T00:00:00Z"
+  },
+  "etfdb_stale_category": "Environmentally Responsible"
+}
