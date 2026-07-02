@@ -192,7 +192,9 @@ def run(store_root: Path, prices_source: str, prices_date: str, series_ids_path,
             spawn_ts = f.entered + "T00:00:00Z"
             store.append({"ts": spawn_ts, "lead": f.lead_id, "type": "lead.spawned",
                           "payload": {"spawner": "xcorr", "display": xcorr.pair_display(f.pair),
-                                      "series_pair": list(f.pair), "shadow": False},
+                                      # display tickers, not series ids — the lead_id itself is
+                                      # the series-ID key (xcorr_lead_id); this is for the eye
+                                      "display_pair": list(f.pair), "shadow": False},
                           "schema": 1})
             store.append({"ts": spawn_ts, "lead": f.lead_id, "type": "xcorr.departure",
                           "payload": {"display": xcorr.pair_display(f.pair), "z": f.peak_z,

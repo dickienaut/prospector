@@ -35,6 +35,23 @@ def test_keyword_match_no_false_match_between_disjoint_lists():
     assert keyword_match(["power"], []) is False
 
 
+def test_keyword_match_short_token_needs_a_word_boundary():
+    # A 2-char token like 'ai' is a raw substring of many unrelated words — without the boundary
+    # guard it would forge cross-sector bridges (XLK's 'ai' -> XLY 'retail'/XLC 'entertainment')
+    # and inflate the structural fraction. Short tokens must land on a word boundary.
+    assert keyword_match(["retail"], ["ai"]) is False
+    assert keyword_match(["entertainment"], ["ai"]) is False
+    assert keyword_match(["megastore"], ["gas"]) is False
+    # ...but a short token still matches when it stands as its own word.
+    assert keyword_match(["ai"], ["ai"]) is True
+    assert keyword_match(["ai chips"], ["ai"]) is True
+    assert keyword_match(["natural gas"], ["gas"]) is True
+    # Longer tokens keep plain substring matching, which is what makes legitimate stems work.
+    assert keyword_match(["electricity"], ["electric"]) is True
+    assert keyword_match(["utilities"], ["util"]) is True
+    assert keyword_match(["reits"], ["reit"]) is True
+
+
 # -- add_months: day clamped to the target month's length ---------------------
 
 def test_add_months_clamps_to_month_length():

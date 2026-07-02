@@ -16,9 +16,17 @@ precision look worse (a structural firing scored junk), never better.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 
 import yaml
+
+# A short token (like 'ai', 'gas', 'oil') is a substring of many unrelated words ('ai' ⊂ 'retail',
+# 'entertainment'; 'gas' ⊂ 'megastore') — a raw substring test would forge cross-sector bridges and
+# inflate the structural fraction. So a substring shorter than this must additionally land on a word
+# boundary. Longer tokens keep plain substring matching, which is what makes legitimate stems work
+# ('electric' ⊂ 'electricity', 'util' ⊂ 'utilities', 'reit' ⊂ 'reits').
+_MIN_FREE_SUBSTRING = 4
 
 
 def load_launches(path) -> list[dict]:
@@ -30,18 +38,29 @@ def load_launches(path) -> list[dict]:
 
 def keyword_match(industries: list[str], sector_keywords: list[str]) -> bool:
     """True if any industry string and any sector keyword overlap as a case-insensitive
-    substring in EITHER direction ('semiconductor' matches keyword 'semi', and industry 'ai'
-    matches keyword 'ai chips'). Substring, not token — so 'ai' does NOT match 'artificial
-    intelligence' (no consecutive a-i); the launch table lists such terms as separate industries
-    when both should bridge. Crude, deterministic, reviewable — the whole scorer is meant to be
-    auditable by eye, not clever."""
+    substring in EITHER direction, with a word-boundary guard on short tokens (see
+    _MIN_FREE_SUBSTRING). So 'electric' matches 'electricity' and 'reit' matches 'reits', but the
+    2-char 'ai' matches only a standalone 'ai' — never 'retail' or 'entertainment'. 'ai' still does
+    not match 'artificial intelligence' (no consecutive a-i); the launch table lists such terms as
+    separate industries when both should bridge. Crude, deterministic, reviewable — the whole
+    scorer is meant to be auditable by eye, not clever."""
     lows_i = [str(s).lower() for s in industries]
     lows_k = [str(s).lower() for s in sector_keywords]
     for i in lows_i:
         for k in lows_k:
-            if k in i or i in k:
+            if _substr_match(k, i) or _substr_match(i, k):
                 return True
     return False
+
+
+def _substr_match(short: str, long: str) -> bool:
+    """`short` is accepted inside `long` if it is a substring AND either long enough to be
+    specific on its own or landing on a word boundary (so 'ai' ⊄ 'retail')."""
+    if short not in long:
+        return False
+    if len(short) >= _MIN_FREE_SUBSTRING:
+        return True
+    return re.search(rf"\b{re.escape(short)}\b", long) is not None
 
 
 def add_months(d: date, months: int) -> date:

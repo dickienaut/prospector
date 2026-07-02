@@ -9,3 +9,7 @@ __pycache__/
 *.sqlite-shm
 .DS_Store
 uv.lock
+.env
+*.pem
+credentials
+.aws/
