@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.hypothesis/
+/store/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.DS_Store
+uv.lock

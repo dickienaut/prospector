@@ -1,0 +1,91 @@
+# Project Prospector — configuration.
+# Every value here is a DEFAULT (spec rev 3): change freely. Changes are detected by config hash
+# and emit `config.changed` before any sensor runs (config honesty, CONTRACT).
+# All times UTC.
+
+store:
+  root: ./store            # local store root; events/, snapshots/, ingest/, backtest/ live under it
+
+universe:
+  # Correlation grid: the 11 Select Sector SPDRs (55 pairs). Tickers here are seed/display only —
+  # identity resolves to SEC series IDs before anything keys on them (HECO rule, CONTRACT).
+  sectors: [XLK, XLC, XLY, XLP, XLE, XLF, XLV, XLI, XLB, XLRE, XLU]
+  market: SPY              # market factor for the beta strip
+  # Deliberate exclusion: the owner's holdings are NOT in the seed (novelty != interest; firewall).
+
+windows:
+  corr_days: 63            # rolling residual-correlation window
+  baseline_days: 252       # baseline mean/std window (and rolling-beta window)
+  stress_days: 21          # market-stress raw-correlation window
+
+xcorr:
+  z_in: 2.5                # Schmitt entry (calibrated by the milestone-3 backtest)
+  z_out: 1.0               # Schmitt exit
+  stress_corr_threshold: 0.65
+
+dispersion:
+  z_in: 2.5
+  z_out: 1.0
+  weight_coverage: 0.90    # top holdings covering this fraction of basket weight
+  shadow_days: 90          # record-only burn-in (CONTRACT: ships shadow)
+  paging: false            # promotion to paging is a human config flip -> emits config.changed
+
+identity:
+  retry_days: 10           # daily auto-retry window before the manual-resolution queue
+
+oracle:
+  active_lead_ceiling: 8   # counts active, non-shadow leads; tripwire banner, never auto-tune
+
+snapshots:
+  active: daily            # snapshot cadence while any lead is active
+  quiet: weekly            # floor when the collection is quiet
+  # plus an immediate snapshot on any state change (reactive tier)
+
+capture:                   # milestone 6 — keys reserved now
+  k_queries: 5
+  m_fetch_urls: 2
+  max_searches_per_week: 60
+  monthly_budget_usd: null # user sets before capture goes live; null = capture disabled
+
+backtest:
+  corroboration_window_months: 24
+  stress_window:           # March-2020 falsification window (test 5c)
+    from: "2020-02-15"
+    to: "2020-04-30"
+
+# Sector -> keyword corroboration map (crude, deterministic, reviewable — spec test 5b).
+# Used to auto-score backtest firings against launch/rebalance concentration industries.
+sector_keywords:
+  XLK: [technology, software, semiconductor, chip, "artificial intelligence", ai, cloud, computing, digital, cyber]
+  XLC: [communication, media, telecom, internet, social, entertainment, streaming]
+  XLY: [consumer discretionary, retail, e-commerce, travel, leisure, automotive, homebuild]
+  XLP: [consumer staples, food, beverage, household, grocery]
+  XLE: [energy, oil, gas, petroleum, drilling, refining, pipeline]
+  XLF: [financial, bank, insurance, fintech, payments, capital markets]
+  XLV: [health, healthcare, pharmaceutical, biotech, medical, life sciences]
+  XLI: [industrial, manufacturing, aerospace, defense, machinery, transportation, infrastructure]
+  XLB: [materials, chemical, mining, metals, steel, lithium]
+  XLRE: [real estate, reit, property, "data center"]
+  XLU: [utility, utilities, power, electric, electricity, grid, nuclear, "independent power"]
+
+prices:
+  primary: stooq
+  fallback: yahoo
+  # Stooq wants lowercase + ".us" for US ETFs — the symbol map lives here so a source quirk
+  # never leaks into identity.
+  stooq_suffix: ".us"
+
+edgar:
+  user_agent: "Prospector/1.0 (lyle.e.dickie@gmail.com)"
+  max_requests_per_sec: 8  # safety margin under SEC's 10/s
+
+email:                     # milestone 5 — keys reserved now
+  to: lyle.e.dickie@gmail.com
+  subject_prefix: "[PROS]"
+
+schedule:                  # milestone 7 — keys reserved now
+  daily_utc: "22:30"       # after US close + EOD data settle
+  weekly_day: SUN
+
+s3:                        # milestone 7 — keys reserved now; sync is disabled when bucket is null
+  bucket: null

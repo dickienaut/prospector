@@ -1,0 +1,150 @@
+"""WAL-mode SQLite registry — the queryable index over the append-only store (spec §5/§7, CONTRACT).
+
+Structure vendored from prophit_skunkworks/ltee_archive/registry.py (WAL pragma, executescript
+init, Row factory, metadata/blob split), archive snapshot dated 2026-03-29, vendored 2026-07-02.
+No commit hash available (archive copy).
+
+Critical inversion from the source (spec §5): Prophit's registry uses wide typed metric columns
+(one column per metric) because its metric set is fixed. The Prospector's whole premise is
+unforeseen event types, so the events table is the ENVELOPE — ts/lead/type/schema columns plus a
+JSON `payload` blob column, indexed on (lead, ts, type). A new event type needs no migration and
+no new column. Do not re-introduce typed metric columns.
+
+The registry holds envelope rows, payload JSON, and file paths — never blob contents (snapshots,
+ingest pulls, captures stay on disk/S3). It is an INDEX: the events/ tree is the truth, and
+`rebuild()`-style repair (pros store reindex) reconstructs rows from files.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+SCHEMA_VERSION = 1
+
+_DDL = """
+CREATE TABLE IF NOT EXISTS events (
+    event_id     TEXT PRIMARY KEY,
+    ts           TEXT NOT NULL,
+    lead         TEXT NOT NULL,
+    type         TEXT NOT NULL,
+    schema       INTEGER NOT NULL,
+    payload      TEXT NOT NULL,
+    sha256       TEXT NOT NULL,
+    file_path    TEXT NOT NULL,
+    ingested_at  TEXT NOT NULL,
+    uploaded_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_events_lead_ts_type ON events(lead, ts, type);
+CREATE INDEX IF NOT EXISTS idx_events_type_ts ON events(type, ts);
+
+CREATE TABLE IF NOT EXISTS snapshots (
+    snapshot_id  TEXT PRIMARY KEY,
+    lead         TEXT NOT NULL,
+    ts           TEXT NOT NULL,
+    reason       TEXT NOT NULL,
+    file_path    TEXT NOT NULL,
+    sha256       TEXT NOT NULL,
+    uploaded_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_snapshots_lead_ts ON snapshots(lead, ts);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+"""
+
+
+class Registry:
+    def __init__(self, db_path: Path):
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.executescript(_DDL)
+        if self.get_meta("schema_version") is None:
+            self.set_meta("schema_version", str(SCHEMA_VERSION))
+        self.conn.commit()
+
+    # -- events ------------------------------------------------------------
+
+    def insert_event(self, *, event_id: str, ts: str, lead: str, type: str, schema: int,
+                     payload_json: str, sha256: str, file_path: str, ingested_at: str) -> bool:
+        """INSERT OR IGNORE — re-ingesting the same event_id is idempotent.
+        Returns True if a row was inserted. There is no update/delete for events, ever."""
+        cur = self.conn.execute(
+            """INSERT OR IGNORE INTO events
+               (event_id, ts, lead, type, schema, payload, sha256, file_path, ingested_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (event_id, ts, lead, type, schema, payload_json, sha256, file_path, ingested_at))
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def events_for_lead(self, lead: str, type: str | None = None) -> list[sqlite3.Row]:
+        """Ordered by (ts, event_id) — the fold's total order."""
+        if type is None:
+            q = "SELECT * FROM events WHERE lead = ? ORDER BY ts, event_id"
+            return self.conn.execute(q, (lead,)).fetchall()
+        q = "SELECT * FROM events WHERE lead = ? AND type = ? ORDER BY ts, event_id"
+        return self.conn.execute(q, (lead, type)).fetchall()
+
+    def events_by_type(self, type: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM events WHERE type = ? ORDER BY ts, event_id", (type,)).fetchall()
+
+    def all_leads(self) -> list[str]:
+        rows = self.conn.execute("SELECT DISTINCT lead FROM events ORDER BY lead").fetchall()
+        return [r["lead"] for r in rows]
+
+    def event_count(self, lead: str | None = None) -> int:
+        if lead is None:
+            return self.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM events WHERE lead = ?", (lead,)).fetchone()[0]
+
+    # -- snapshots ----------------------------------------------------------
+
+    def insert_snapshot(self, *, snapshot_id: str, lead: str, ts: str, reason: str,
+                        file_path: str, sha256: str) -> bool:
+        cur = self.conn.execute(
+            """INSERT OR IGNORE INTO snapshots
+               (snapshot_id, lead, ts, reason, file_path, sha256) VALUES (?, ?, ?, ?, ?, ?)""",
+            (snapshot_id, lead, ts, reason, file_path, sha256))
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def latest_snapshot(self, lead: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM snapshots WHERE lead = ? ORDER BY ts DESC, snapshot_id DESC LIMIT 1",
+            (lead,)).fetchone()
+
+    # -- upload bookkeeping (operational, not record content) ---------------
+
+    def pending_uploads(self, table: str) -> list[sqlite3.Row]:
+        assert table in ("events", "snapshots")
+        return self.conn.execute(
+            f"SELECT * FROM {table} WHERE uploaded_at IS NULL ORDER BY ts").fetchall()
+
+    def mark_uploaded(self, table: str, key: str, uploaded_at: str) -> None:
+        assert table in ("events", "snapshots")
+        pk = "event_id" if table == "events" else "snapshot_id"
+        self.conn.execute(
+            f"UPDATE {table} SET uploaded_at = ? WHERE {pk} = ?", (uploaded_at, key))
+        self.conn.commit()
+
+    # -- meta ----------------------------------------------------------------
+
+    def get_meta(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+        self.conn.commit()
+
+    def close(self) -> None:
+        self.conn.close()
