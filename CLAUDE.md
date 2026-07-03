@@ -3,11 +3,16 @@
 This repo is **Project Prospector**, the offensive twin of the thesis smoke detector. It watches
 the ETF universe for structural novelty and proposes **reading, never orders**.
 
-The canonical spec is `docs/prospector-v1-spec-rev8-2026-07-03.md` (rev8; earlier revs kept as
-history). Read it before changing anything load-bearing. Rev8 records the **proto-cluster / pseudo-ETF**
-concept as a v2 design note (Appendix B — a deterministic, price-only route to *new-category* detection
-below the ETF corpus) and folds in the one thing it needs from the current build: a **generous
-`dispersion.tick` payload** (§4b, now CONTRACT). Rev7 (folded in) demoted the launch stream to
+The canonical spec is `docs/prospector-v1-spec-rev9-2026-07-03.md` (rev9; earlier revs kept as
+history). Read it before changing anything load-bearing. Rev9 decomposes the rebalance sensor (§4d)
+like the launch sensor: the **holdings-diff accretion core is self-contained** (its own PR) and
+**`mandate.changed` is a deferred defined-next-slice** (needs new surface — EDGAR prospectus-*text*
+fetch + `ingest/prospectus/` blob-per-accession storage + text diff). Rev9 also makes **CONTRACT**:
+routing by **forward-hash** (reuse `xcorr_lead_id`/`dispersion_lead_id` verbatim — no series_ids in the
+payload, the lead-id already encodes them) and **live-lead enumeration from the registry-materialized
+fold** (no separate cache). Rev8 records the **proto-cluster / pseudo-ETF** concept as a v2 design note
+(Appendix B — a deterministic, price-only route to *new-category* detection below the ETF corpus) and
+folds in a **generous `dispersion.tick` payload** (§4b, CONTRACT). Rev7 (folded in) demoted the launch stream to
 corroboration + consensus-clock (never a ceiling-counting lead-spawner) and split the launch sensor
 into recording (built) + corroboration (gated on §4d holdings ingest). Rev6 folded the four-value
 verdict vocabulary into §5/§8c, recorded the box-B crash-flag outcome (§4a/§5/§8b/§10), and added the
@@ -48,6 +53,16 @@ Design-thread-authorized amendments to CONTRACT defaults are recorded under `doc
   single-name granularity is where over-trading and concentration risk peak). Same firewall class as
   the reading-list wall. v1's only action is capturing the substrate richly; do not build the
   interpretation.
+- **Rebalance routing + enumeration (CONTRACT §4d, rev9)** — ratified:
+  `docs/decisions/2026-07-03-rebalance-accretion-and-routing.md`. Rebalance is an **accretion** sensor
+  (no Schmitt, no lead of its own; `rebalance`/`mandate.changed` are silent corroborations). To find
+  "every live lead whose baskets include a fund," **forward-hash** — reuse `xcorr_lead_id`/
+  `dispersion_lead_id` verbatim and intersect with active leads; **never** add series_ids to a lead
+  payload (the lead-id already encodes them — duplication invites drift). Read the active-lead set from
+  the **registry-materialized fold** (the snapshots the fold writes), never by re-folding or a separate
+  cache. `mandate.changed` is a deferred defined-next-slice (unblock: EDGAR prospectus-*text* fetch +
+  `ingest/prospectus/` blob-per-accession storage); NPORT-P (`parse_nport_holdings`) stays the labeled
+  §3b stub — do not fill it with survivor-biased data.
 
 ## Append-only
 - Nothing under `events/` is ever edited or deleted. Corrections are new events.

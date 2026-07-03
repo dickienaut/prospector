@@ -1,6 +1,6 @@
 # Prospector — Architecture
 
-*A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev6-2026-07-02.md`
+*A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev9-2026-07-03.md`
 for the canonical "what to build," and `docs/decisions/` for the "why we changed our minds." Last
 updated after the launch sensor's detection + two-phase recording slice (milestone 4).*
 
@@ -33,7 +33,7 @@ path places, sizes, or recommends a trade.
 
 ## 2. Module map
 
-~3,700 lines of Python, 277 tests (offline). Packages under `prospector/`:
+~4,500 lines of Python, 316 tests (offline). Packages under `prospector/`:
 
 | Package / module | Responsibility | Key entry points |
 |---|---|---|
@@ -56,6 +56,7 @@ path places, sizes, or recommends a trade.
 | `sensors/xcorr.py` | The excess-correlation pipeline (β-strip → departure z) + the stress gate | `daily_returns`→`departure_z`, `stress_series` |
 | `sensors/dispersion.py` | Intra-basket fracture (§4b) — constituent corr → spectral bipartition → Q departure z; shadow-wired, generous payload | `dispersion_q_series`, `scan()` |
 | `sensors/launch.py` | Launch sensor — new-registration detection (MF-map diff), the consensus clock | `new_registrations()`, `scan()` |
+| `sensors/rebalance.py` | Rebalance accretion (§4d) — holdings-diff → `rebalance` onto live leads; forward-hash routing | `diff_holdings()`, `watching_leads()`, `scan()` |
 | `sensors/schmitt.py` | Shared hysteresis trigger (no flapping) | `step()`, `state_from_last_event_type()` |
 | `backtest/runner.py` | Replays the sensor over history; concept validation; crash falsification | `run()`, `replay()`, `crash_falsification()` |
 | `backtest/report.py` | The acceptance-gate artifact (recall/precision/falsification/lag) | `build_report()`, `render_markdown()` |
@@ -232,7 +233,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ## 9. Status — built vs deferred
 
-**Built (committed, 277 tests green):**
+**Built (committed, 316 tests green):**
 - Milestone 1 — vendored primitives, envelope store, WAL registry, fold engine, reactive snapshots,
   S3 sync, config honesty, reindex.
 - Milestone 2 — EDGAR client, fund registry (HECO rule), failed-resolution machine.
@@ -240,28 +241,34 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - Post-M3 design-thread work — the stress-gate recalibration (0.85 crisis-only), spec rev5's amended
   falsification (reversion criterion), the read-only crash-flags diagnostic (box B), and the
   verdict-disposition vocabulary lock-in.
-- Milestone 4 (in progress) — spec **rev8** landed as canonical; the **launch sensor**: new-registration
+- Milestone 4 (in progress) — spec **rev9** landed as canonical; the **launch sensor**: new-registration
   detection (MF-map diff) + two-phase recording (the consensus clock, `detected_at` preserved);
   **holdings ingest** (§4d keystone) — SPDR daily-CSV parse + 90%-weight membership, frozen substrate;
   the **dispersion sensor** (§4b) — constituent-correlation spectral bipartition → Q departure-z,
   **shadow-wired**, with the **generous `dispersion.tick` payload** (CONTRACT §4b/rev8) banking the
-  proto-cluster substrate from tick one.
+  proto-cluster substrate from tick one; and the **rebalance sensor** (§4d accretion core) —
+  holdings-diff → `rebalance` accreting onto live leads via forward-hash routing (CONTRACT §4d), a
+  silent corroboration (see `docs/decisions/2026-07-03-rebalance-accretion-and-routing.md`).
 
 **Deferred:**
 - Milestone 3b — dispersion **PIT backtest** + NPORT-P parser + delisted-price coverage measurement
   (waits on delisted-constituent price data; ships live burn-in only for now — see
   `docs/decisions/2026-07-03-dispersion-shadow-first.md`).
-- Milestone 4 (remaining) — the **rebalance** sensor; the launch **corroboration hook** +
-  holdings-derived concentration — the *defined next slice*, now **unblocked** by the landed holdings
-  ingest (see `docs/decisions/2026-07-03-launch-sensor-capture-first.md`), which yields the live
-  cross-stream lag; the live §9 cadence runner (M5+) that calls `dispersion.scan` daily.
+- Milestone 4 (remaining, rev9 §12 order) — the **mandate-diff slice** (`mandate.changed` — needs an
+  EDGAR prospectus-*text* fetch + `ingest/prospectus/` blob-per-accession storage + text diff; the
+  named unblock), then the launch **corroboration hook** + holdings-derived concentration — the
+  *capstone* (its own PR, hardest review, design-thread sign-off before green), which yields the live
+  cross-stream lag; then the live §9 cadence runner (M5+) that calls the sensor `scan`s daily. NPORT-P
+  quarterly cross-check stays the deliberately thin §3b stub. See
+  `docs/decisions/2026-07-03-rebalance-accretion-and-routing.md` and `…-launch-sensor-capture-first.md`.
 - **v2 (banked, not built)** — the **proto-cluster / pseudo-ETF** layer (spec rev8 Appendix B): a
   price-only, observation-only re-read of dispersion history (the canary is a cluster, never a single
   name, and never the trade). v1's only action is the generous dispersion payload that banks its
   substrate (see `docs/decisions/2026-07-03-dispersion-payload-generous.md`).
 - Milestone 5 — email (heartbeat + push + dead-man), read-only Streamlit dashboard (incl. the macro
-  catalog panel), verdict CLI polish. *(Spec **rev8** — the generous dispersion payload (§4b) and the
-  Appendix B proto-cluster note — is now the canonical spec.)*
+  catalog panel), verdict CLI polish. *(Spec **rev9** is now canonical — it decomposes §4d and makes
+  the routing/enumeration decisions CONTRACT; the generous dispersion payload (§4b) and the Appendix B
+  proto-cluster note landed in rev8.)*
 - Milestone 6 — discourse capture + budget guard.
 - Milestone 7 — infra-as-code + deploy.
 
@@ -271,7 +278,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ```sh
 uv sync                 # set up the environment
-uv run pytest -q        # 277 tests, offline
+uv run pytest -q        # 316 tests, offline
 uv run pros --help      # the CLI
 uv run pros backtest --from 2019-01-01 --to 2024-12-31 --sweep   # regenerate the acceptance gate
 ```
