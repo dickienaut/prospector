@@ -75,6 +75,17 @@ dispersion:
   correlation_detail: full
   correlation_top_k: 40    # pairs kept when correlation_detail == topk
 
+rebalance:
+  # Holdings-diff accretion (spec §4d). A watched fund's daily holdings are diffed vs the prior pull;
+  # a MATERIAL change accretes a `rebalance` onto every live lead whose baskets include that fund
+  # (forward-hash routing, CONTRACT §4d), else onto _system. Material = any add/drop of an IDENTIFIED
+  # security (cash/derivative rows without a CUSIP are excluded — no spurious daily-cash firing), or a
+  # weight delta at/above this threshold. Tune the threshold by hand if live tail-churn proves noisy;
+  # never auto-tuned.
+  weight_delta_threshold: 0.005   # 0.5% (DEFAULT, spec §4d)
+  # mandate.changed (prospectus mandate-diff) and the quarterly NPORT-P cross-check are DEFERRED own
+  # slices (spec rev9 §4d; §3b) — not wired here.
+
 identity:
   retry_days: 10           # daily auto-retry window before the manual-resolution queue
 

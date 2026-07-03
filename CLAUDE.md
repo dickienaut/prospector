@@ -53,6 +53,16 @@ Design-thread-authorized amendments to CONTRACT defaults are recorded under `doc
   single-name granularity is where over-trading and concentration risk peak). Same firewall class as
   the reading-list wall. v1's only action is capturing the substrate richly; do not build the
   interpretation.
+- **Rebalance routing + enumeration (CONTRACT §4d, rev9)** — ratified:
+  `docs/decisions/2026-07-03-rebalance-accretion-and-routing.md`. Rebalance is an **accretion** sensor
+  (no Schmitt, no lead of its own; `rebalance`/`mandate.changed` are silent corroborations). To find
+  "every live lead whose baskets include a fund," **forward-hash** — reuse `xcorr_lead_id`/
+  `dispersion_lead_id` verbatim and intersect with active leads; **never** add series_ids to a lead
+  payload (the lead-id already encodes them — duplication invites drift). Read the active-lead set from
+  the **registry-materialized fold** (the snapshots the fold writes), never by re-folding or a separate
+  cache. `mandate.changed` is a deferred defined-next-slice (unblock: EDGAR prospectus-*text* fetch +
+  `ingest/prospectus/` blob-per-accession storage); NPORT-P (`parse_nport_holdings`) stays the labeled
+  §3b stub — do not fill it with survivor-biased data.
 
 ## Append-only
 - Nothing under `events/` is ever edited or deleted. Corrections are new events.
