@@ -63,6 +63,17 @@ Design-thread-authorized amendments to CONTRACT defaults are recorded under `doc
   cache. `mandate.changed` is a deferred defined-next-slice (unblock: EDGAR prospectus-*text* fetch +
   `ingest/prospectus/` blob-per-accession storage); NPORT-P (`parse_nport_holdings`) stays the labeled
   §3b stub — do not fill it with survivor-biased data.
+- **Mandate-diff: targeted section + a deliberate dependency (§4d, rev9→rev10)** — ratified:
+  `docs/decisions/2026-07-03-mandate-diff-targeted-section.md`. A new prospectus → diff **only the
+  principal-investment-strategy section** (never the whole filing — a full-text diff is a false-positive
+  machine, the diff-trap), emit `mandate.changed` as a **silent corroboration** the human adjudicates
+  cosmetic-vs-substantive; when extraction is unreliable, emit a `fault` (manual review), **never** a
+  false change. Added **`beautifulsoup4` (pinned `==4.15.0`)** — a deliberate, reasoned dependency:
+  infrastructure-not-intelligence (parsing malformed filing HTML, like numpy/SQLite/boto3), pinned
+  because it parses external input. **Boundary (do not blur):** bs4 owns HTML **structure**, our code
+  owns **meaning** (which section, did the text move), the **human** owns **significance** — the
+  extraction/diff must never grow a "this change is meaningful" opinion. Routing reuses the rebalance
+  forward-hash. Folds into **spec rev10**.
 
 ## Append-only
 - Nothing under `events/` is ever edited or deleted. Corrections are new events.

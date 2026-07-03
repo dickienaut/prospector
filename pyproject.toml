@@ -11,6 +11,13 @@ dependencies = [
     "boto3>=1.34",
     "pyyaml>=6.0",
     "click>=8.1",
+    # PINNED (not >=, unlike the rest): the ONLY dependency that parses external, occasionally-
+    # malformed input (SEC prospectus HTML for the mandate-diff, §4d). A silent upstream parsing-
+    # behavior change would perturb the extracted mandate section and thus the fossil record, so the
+    # version is frozen for reproducibility; bump it deliberately. Infrastructure, not intelligence —
+    # bs4 owns HTML STRUCTURE only; the mandate meaning/significance judgment stays in our code + the
+    # human verdict. See docs/decisions/2026-07-03-mandate-diff-targeted-section.md.
+    "beautifulsoup4==4.15.0",
 ]
 
 [project.scripts]

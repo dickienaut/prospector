@@ -138,6 +138,38 @@ class EdgarClient:
         url = SUBMISSIONS_URL_TEMPLATE.format(cik=cik)
         return json.loads(self._get(url, f"CIK{cik:010d}.json"))
 
+    def filing_text(self, cik: int, accession: str, primary_doc: str) -> bytes:
+        """Fetch a filing's primary document (the prospectus HTML) from EDGAR Archives — rate-limited
+        and frozen via `persist` like every other pull (§3). The Archives path drops the accession's
+        dashes. Returns raw bytes; parsing/extraction is the caller's job (mandate-diff, §4d)."""
+        acc = accession.replace("-", "")
+        url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc}/{primary_doc}"
+        return self._get(url, f"{acc}_{primary_doc}")
+
+
+def latest_prospectus(submissions: dict) -> dict | None:
+    """The most-recent prospectus-family filing in a submissions dict, as
+    `{accession, primary_doc, form, filing_date}` — or None if there is none.
+
+    Same PROSPECTUS_FORMS + newest-first rule `resolve_ticker` uses to pick the prospectus accession,
+    but it also returns `primaryDocument` (the Archives filename) so the mandate-diff (§4d) can fetch
+    the document text. `recent` is newest-first, so strict `>` keeps the earlier index (the later
+    filing) on same-day ties — identical to resolve_ticker."""
+    try:
+        recent = submissions["filings"]["recent"]
+        forms, dates = recent["form"], recent["filingDate"]
+        accs, docs = recent["accessionNumber"], recent["primaryDocument"]
+    except (KeyError, TypeError):
+        return None
+    best: int | None = None
+    for i, form in enumerate(forms):
+        if form in PROSPECTUS_FORMS and (best is None or dates[i] > dates[best]):
+            best = i
+    if best is None:
+        return None
+    return {"accession": str(accs[best]), "primary_doc": str(docs[best]),
+            "form": str(forms[best]), "filing_date": str(dates[best])}
+
 
 def resolve_ticker(ticker: str, client: EdgarClient) -> Resolution | ResolutionFailure:
     """The §2 resolution flow (CONTRACT): ticker → series/class lookup → confirm a prospectus

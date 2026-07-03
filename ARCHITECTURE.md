@@ -33,7 +33,7 @@ path places, sizes, or recommends a trade.
 
 ## 2. Module map
 
-~4,500 lines of Python, 316 tests (offline). Packages under `prospector/`:
+~4,800 lines of Python, 329 tests (offline). Packages under `prospector/`:
 
 | Package / module | Responsibility | Key entry points |
 |---|---|---|
@@ -52,11 +52,13 @@ path places, sizes, or recommends a trade.
 | `ingest/edgar.py` | EDGAR client (declared UA, rate-limited, freeze-the-substrate) | `EdgarClient`, `resolve_ticker()` |
 | `ingest/prices.py` | Price ingest (Yahoo primary / Stooq fallback), frozen pulls, panel builder | `PriceIngest`, `build_panel()` |
 | `ingest/holdings.py` | Holdings ingest (§4d keystone) — SPDR daily CSV → 90%-weight membership, frozen | `HoldingsIngest`, `weight_covering_members()` |
+| `ingest/prospectus.py` | Prospectus fetch/freeze + mandate extraction (§4d) — bs4 → text, strategy section, diff | `ProspectusIngest`, `extract_mandate()`, `diff_mandate()` |
 | `identity/resolution.py` | Retry-then-manual resolution machine; two-phase-launch intake + completion | `ResolutionMachine`, `register_launch()`, `launch_lag()` |
 | `sensors/xcorr.py` | The excess-correlation pipeline (β-strip → departure z) + the stress gate | `daily_returns`→`departure_z`, `stress_series` |
 | `sensors/dispersion.py` | Intra-basket fracture (§4b) — constituent corr → spectral bipartition → Q departure z; shadow-wired, generous payload | `dispersion_q_series`, `scan()` |
 | `sensors/launch.py` | Launch sensor — new-registration detection (MF-map diff), the consensus clock | `new_registrations()`, `scan()` |
 | `sensors/rebalance.py` | Rebalance accretion (§4d) — holdings-diff → `rebalance` onto live leads; forward-hash routing | `diff_holdings()`, `watching_leads()`, `scan()` |
+| `sensors/mandate.py` | Mandate-diff accretion (§4d) — new prospectus → strategy-section diff → `mandate.changed` / `fault` | `scan()` |
 | `sensors/schmitt.py` | Shared hysteresis trigger (no flapping) | `step()`, `state_from_last_event_type()` |
 | `backtest/runner.py` | Replays the sensor over history; concept validation; crash falsification | `run()`, `replay()`, `crash_falsification()` |
 | `backtest/report.py` | The acceptance-gate artifact (recall/precision/falsification/lag) | `build_report()`, `render_markdown()` |
@@ -105,6 +107,7 @@ head, and a broken chain resolves deterministically with an `anomalies` entry ra
 events/{lead}/{ts}_{type}_{uuid}.json      append-only fossil record — live observations ONLY
 snapshots/{lead}/{ts}.json                 materialized folds (reactive cadence)
 ingest/prices|edgar|holdings/...           frozen raw substrate (pull-once-freeze)
+ingest/prospectus/{series_id}/{accession}/ frozen prospectus HTML — blob per filing (mandate-diff)
 registry/funds/{series_id}.json            versioned fund registry objects
 registry.sqlite                            the WAL index — uploaded only via .backup snapshot
 backtest/run_{stamp}/...                   synthetic history — NEVER under events/ (structural guard)
@@ -233,7 +236,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ## 9. Status — built vs deferred
 
-**Built (committed, 316 tests green):**
+**Built (committed, 329 tests green):**
 - Milestone 1 — vendored primitives, envelope store, WAL registry, fold engine, reactive snapshots,
   S3 sync, config honesty, reindex.
 - Milestone 2 — EDGAR client, fund registry (HECO rule), failed-resolution machine.
@@ -246,21 +249,23 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   **holdings ingest** (§4d keystone) — SPDR daily-CSV parse + 90%-weight membership, frozen substrate;
   the **dispersion sensor** (§4b) — constituent-correlation spectral bipartition → Q departure-z,
   **shadow-wired**, with the **generous `dispersion.tick` payload** (CONTRACT §4b/rev8) banking the
-  proto-cluster substrate from tick one; and the **rebalance sensor** (§4d accretion core) —
+  proto-cluster substrate from tick one; the **rebalance sensor** (§4d accretion core) —
   holdings-diff → `rebalance` accreting onto live leads via forward-hash routing (CONTRACT §4d), a
-  silent corroboration (see `docs/decisions/2026-07-03-rebalance-accretion-and-routing.md`).
+  silent corroboration; and the **mandate-diff sensor** (§4d) — a new prospectus → targeted
+  strategy-section diff → `mandate.changed` (or a `fault` when extraction is unreliable), the audit
+  half of §4d (added `beautifulsoup4`, pinned, structure-only; see
+  `docs/decisions/2026-07-03-mandate-diff-targeted-section.md` and `…-rebalance-accretion-and-routing.md`).
 
 **Deferred:**
 - Milestone 3b — dispersion **PIT backtest** + NPORT-P parser + delisted-price coverage measurement
   (waits on delisted-constituent price data; ships live burn-in only for now — see
   `docs/decisions/2026-07-03-dispersion-shadow-first.md`).
-- Milestone 4 (remaining, rev9 §12 order) — the **mandate-diff slice** (`mandate.changed` — needs an
-  EDGAR prospectus-*text* fetch + `ingest/prospectus/` blob-per-accession storage + text diff; the
-  named unblock), then the launch **corroboration hook** + holdings-derived concentration — the
-  *capstone* (its own PR, hardest review, design-thread sign-off before green), which yields the live
-  cross-stream lag; then the live §9 cadence runner (M5+) that calls the sensor `scan`s daily. NPORT-P
-  quarterly cross-check stays the deliberately thin §3b stub. See
-  `docs/decisions/2026-07-03-rebalance-accretion-and-routing.md` and `…-launch-sensor-capture-first.md`.
+- Milestone 4 (remaining, rev9 §12 order) — the launch **corroboration hook** + holdings-derived
+  concentration — the M4 *capstone* (its own PR, hardest review, design-thread sign-off before green),
+  which yields the live cross-stream lag; then the live §9 cadence runner (M5+) that calls the sensor
+  `scan`s daily. NPORT-P quarterly cross-check stays the deliberately thin §3b stub. The mandate-diff
+  design folds into **spec rev10** (as launch's honest-test boundary became rev7). See
+  `docs/decisions/2026-07-03-launch-sensor-capture-first.md`.
 - **v2 (banked, not built)** — the **proto-cluster / pseudo-ETF** layer (spec rev8 Appendix B): a
   price-only, observation-only re-read of dispersion history (the canary is a cluster, never a single
   name, and never the trade). v1's only action is the generous dispersion payload that banks its
@@ -278,7 +283,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ```sh
 uv sync                 # set up the environment
-uv run pytest -q        # 316 tests, offline
+uv run pytest -q        # 329 tests, offline
 uv run pros --help      # the CLI
 uv run pros backtest --from 2019-01-01 --to 2024-12-31 --sweep   # regenerate the acceptance gate
 ```
