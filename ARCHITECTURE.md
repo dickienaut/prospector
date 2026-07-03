@@ -1,6 +1,6 @@
 # Prospector — Architecture
 
-*A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev9-2026-07-03.md`
+*A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev11-2026-07-03.md`
 for the canonical "what to build," and `docs/decisions/` for the "why we changed our minds." Last
 updated after the launch sensor's detection + two-phase recording slice (milestone 4).*
 
@@ -33,7 +33,7 @@ path places, sizes, or recommends a trade.
 
 ## 2. Module map
 
-~4,800 lines of Python, 329 tests (offline). Packages under `prospector/`:
+~5,000 lines of Python, 341 tests (offline). Packages under `prospector/`:
 
 | Package / module | Responsibility | Key entry points |
 |---|---|---|
@@ -59,6 +59,7 @@ path places, sizes, or recommends a trade.
 | `sensors/launch.py` | Launch sensor — new-registration detection (MF-map diff), the consensus clock | `new_registrations()`, `scan()` |
 | `sensors/rebalance.py` | Rebalance accretion (§4d) — holdings-diff → `rebalance` onto live leads; forward-hash routing | `diff_holdings()`, `watching_leads()`, `scan()` |
 | `sensors/mandate.py` | Mandate-diff accretion (§4d) — new prospectus → strategy-section diff → `mandate.changed` / `fault` | `scan()` |
+| `sensors/launch_corroboration.py` | Launch corroboration (§4c) — holdings→sectors → overlap → accrete + signed lag | `sector_concentration()`, `corroborate()`, `cross_stream_lag()` |
 | `sensors/schmitt.py` | Shared hysteresis trigger (no flapping) | `step()`, `state_from_last_event_type()` |
 | `backtest/runner.py` | Replays the sensor over history; concept validation; crash falsification | `run()`, `replay()`, `crash_falsification()` |
 | `backtest/report.py` | The acceptance-gate artifact (recall/precision/falsification/lag) | `build_report()`, `render_markdown()` |
@@ -236,7 +237,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ## 9. Status — built vs deferred
 
-**Built (committed, 329 tests green):**
+**Built (committed, 341 tests green):**
 - Milestone 1 — vendored primitives, envelope store, WAL registry, fold engine, reactive snapshots,
   S3 sync, config honesty, reindex.
 - Milestone 2 — EDGAR client, fund registry (HECO rule), failed-resolution machine.
@@ -244,36 +245,32 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - Post-M3 design-thread work — the stress-gate recalibration (0.85 crisis-only), spec rev5's amended
   falsification (reversion criterion), the read-only crash-flags diagnostic (box B), and the
   verdict-disposition vocabulary lock-in.
-- Milestone 4 (in progress) — spec **rev9** landed as canonical; the **launch sensor**: new-registration
-  detection (MF-map diff) + two-phase recording (the consensus clock, `detected_at` preserved);
-  **holdings ingest** (§4d keystone) — SPDR daily-CSV parse + 90%-weight membership, frozen substrate;
-  the **dispersion sensor** (§4b) — constituent-correlation spectral bipartition → Q departure-z,
-  **shadow-wired**, with the **generous `dispersion.tick` payload** (CONTRACT §4b/rev8) banking the
-  proto-cluster substrate from tick one; the **rebalance sensor** (§4d accretion core) —
-  holdings-diff → `rebalance` accreting onto live leads via forward-hash routing (CONTRACT §4d), a
-  silent corroboration; and the **mandate-diff sensor** (§4d) — a new prospectus → targeted
-  strategy-section diff → `mandate.changed` (or a `fault` when extraction is unreliable), the audit
-  half of §4d (added `beautifulsoup4`, pinned, structure-only; see
-  `docs/decisions/2026-07-03-mandate-diff-targeted-section.md` and `…-rebalance-accretion-and-routing.md`).
+- Milestone 4 (**sensors complete**) — spec **rev11** canonical; the **launch sensor** (recording,
+  the consensus clock, `detected_at` preserved); **holdings ingest** (§4d keystone); the **dispersion
+  sensor** (§4b, shadow-wired, generous payload banking the proto-cluster substrate); the **rebalance
+  sensor** (§4d accretion, forward-hash routing); the **mandate-diff sensor** (§4d, targeted
+  strategy-section diff, added pinned `beautifulsoup4`); and the **launch corroboration hook** (§4c
+  capstone) — holdings-derived sectors → both-sides overlap → accrete onto the matched lead → the
+  **signed live cross-stream lag** (+593 on TEKX, computed from real events). Its finding, recorded at
+  full strength: **the live lag is bounded by holdings coverage, not the hook — SPDR-only today, so
+  outside that family it is *structurally unmeasurable*; the measured lag is an existence proof, not
+  yet a rate**, and `holdings-unavailable → dormant` is the first-class majority case. See
+  `docs/decisions/2026-07-03-launch-corroboration-existence-proof.md` (+ the rebalance/mandate notes).
 
 **Deferred:**
 - Milestone 3b — dispersion **PIT backtest** + NPORT-P parser + delisted-price coverage measurement
   (waits on delisted-constituent price data; ships live burn-in only for now — see
   `docs/decisions/2026-07-03-dispersion-shadow-first.md`).
-- Milestone 4 (remaining, rev9 §12 order) — the launch **corroboration hook** + holdings-derived
-  concentration — the M4 *capstone* (its own PR, hardest review, design-thread sign-off before green),
-  which yields the live cross-stream lag; then the live §9 cadence runner (M5+) that calls the sensor
-  `scan`s daily. NPORT-P quarterly cross-check stays the deliberately thin §3b stub. The mandate-diff
-  design folds into **spec rev10** (as launch's honest-test boundary became rev7). See
-  `docs/decisions/2026-07-03-launch-sensor-capture-first.md`.
+- **Holdings-intake coverage** (the named next slice) — per-issuer holdings parsers / NPORT-P
+  look-through, which turns the live cross-stream lag from an *existence proof* into a *representative
+  rate*. Intake was deliberately not widened inside the corroboration slice.
+- Milestone 5 — the live **§9 cadence runner** (calls the sensor `scan`s daily, owns the corroboration
+  retry-until-holdings-land loop and the mandate frozen-prior invariant), email (heartbeat/push/
+  dead-man), read-only Streamlit (incl. the macro-catalog + launch panels), verdict CLI polish.
 - **v2 (banked, not built)** — the **proto-cluster / pseudo-ETF** layer (spec rev8 Appendix B): a
   price-only, observation-only re-read of dispersion history (the canary is a cluster, never a single
   name, and never the trade). v1's only action is the generous dispersion payload that banks its
   substrate (see `docs/decisions/2026-07-03-dispersion-payload-generous.md`).
-- Milestone 5 — email (heartbeat + push + dead-man), read-only Streamlit dashboard (incl. the macro
-  catalog panel), verdict CLI polish. *(Spec **rev9** is now canonical — it decomposes §4d and makes
-  the routing/enumeration decisions CONTRACT; the generous dispersion payload (§4b) and the Appendix B
-  proto-cluster note landed in rev8.)*
 - Milestone 6 — discourse capture + budget guard.
 - Milestone 7 — infra-as-code + deploy.
 
@@ -283,7 +280,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ```sh
 uv sync                 # set up the environment
-uv run pytest -q        # 329 tests, offline
+uv run pytest -q        # 341 tests, offline
 uv run pros --help      # the CLI
 uv run pros backtest --from 2019-01-01 --to 2024-12-31 --sweep   # regenerate the acceptance gate
 ```

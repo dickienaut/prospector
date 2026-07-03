@@ -3,8 +3,13 @@
 This repo is **Project Prospector**, the offensive twin of the thesis smoke detector. It watches
 the ETF universe for structural novelty and proposes **reading, never orders**.
 
-The canonical spec is `docs/prospector-v1-spec-rev9-2026-07-03.md` (rev9; earlier revs kept as
-history). Read it before changing anything load-bearing. Rev9 decomposes the rebalance sensor (§4d)
+The canonical spec is `docs/prospector-v1-spec-rev11-2026-07-03.md` (rev11; earlier revs kept as
+history). Read it before changing anything load-bearing. Rev11 folds the mandate-diff precision into
+§4d/§7 (raw-HTML frozen per accession, section extracted on *read*; priority-match Strategies→Objective;
+specified extraction-unreliable→`fault` conditions) and adds a **CONTRACT state-source invariant for the
+§9 runner**: the mandate sensor's "prior" is its last *frozen* prospectus blob, never the registry
+`prospectus_accession` (which an identity pass may advance intra-run). Rev10 recorded mandate-diff built.
+Rev9 decomposed the rebalance sensor (§4d)
 like the launch sensor: the **holdings-diff accretion core is self-contained** (its own PR) and
 **`mandate.changed` is a deferred defined-next-slice** (needs new surface — EDGAR prospectus-*text*
 fetch + `ingest/prospectus/` blob-per-accession storage + text diff). Rev9 also makes **CONTRACT**:
@@ -74,6 +79,19 @@ Design-thread-authorized amendments to CONTRACT defaults are recorded under `doc
   owns **meaning** (which section, did the text move), the **human** owns **significance** — the
   extraction/diff must never grow a "this change is meaningful" opinion. Routing reuses the rebalance
   forward-hash. Folds into **spec rev10**.
+- **Launch corroboration: existence proof, not a rate (§4c, M4 capstone)** — ratified:
+  `docs/decisions/2026-07-03-launch-corroboration-existence-proof.md`. A resolved launch's sectors are
+  **derived from its first holdings** (ground truth, not prose); a **both-sides sector-set overlap**
+  with a live lead's baskets **accretes** the launch onto that lead (NEVER spawns one — rev7, no ceiling
+  slot), making the **signed** cross-stream lag measurable (negative = packaging beat structure, recorded
+  honestly, never clamped). It is a **deferred** pass (holdings post days after launch; wiring it at
+  resolution would find the empty set and never fire) — reaches back, preserving `detected_at` as T2.
+  The backtest `keyword_match` + curated launch table **never enter the live path**. **Load-bearing
+  finding, at full strength:** the live lag is **bounded by holdings coverage, not the hook** —
+  `ingest/holdings.py` is SPDR-only, so outside that family the lag is **structurally unmeasurable**;
+  the v1 live lag is an **existence proof, not yet a rate**, and `holdings-unavailable → dormant` is the
+  **first-class majority case** (flag the blind spot, never guess). Named next slice:
+  **holdings-intake coverage** (per-issuer parsers / NPORT-P) — do not widen intake ad hoc.
 
 ## Append-only
 - Nothing under `events/` is ever edited or deleted. Corrections are new events.
