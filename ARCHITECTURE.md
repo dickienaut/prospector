@@ -51,8 +51,10 @@ path places, sizes, or recommends a trade.
 | `config.py` | Load YAML → (config, canonical hash); `config.changed` emission | `load_config()`, `check_config_honesty()` |
 | `ingest/edgar.py` | EDGAR client (declared UA, rate-limited, freeze-the-substrate) | `EdgarClient`, `resolve_ticker()` |
 | `ingest/prices.py` | Price ingest (Yahoo primary / Stooq fallback), frozen pulls, panel builder | `PriceIngest`, `build_panel()` |
+| `ingest/holdings.py` | Holdings ingest (§4d keystone) — SPDR daily CSV → 90%-weight membership, frozen | `HoldingsIngest`, `weight_covering_members()` |
 | `identity/resolution.py` | Retry-then-manual resolution machine; two-phase-launch intake + completion | `ResolutionMachine`, `register_launch()`, `launch_lag()` |
 | `sensors/xcorr.py` | The excess-correlation pipeline (β-strip → departure z) + the stress gate | `daily_returns`→`departure_z`, `stress_series` |
+| `sensors/dispersion.py` | Intra-basket fracture (§4b) — constituent corr → spectral bipartition → Q departure z; shadow-wired, generous payload | `dispersion_q_series`, `scan()` |
 | `sensors/launch.py` | Launch sensor — new-registration detection (MF-map diff), the consensus clock | `new_registrations()`, `scan()` |
 | `sensors/schmitt.py` | Shared hysteresis trigger (no flapping) | `step()`, `state_from_last_event_type()` |
 | `backtest/runner.py` | Replays the sensor over history; concept validation; crash falsification | `run()`, `replay()`, `crash_falsification()` |
@@ -238,18 +240,28 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - Post-M3 design-thread work — the stress-gate recalibration (0.85 crisis-only), spec rev5's amended
   falsification (reversion criterion), the read-only crash-flags diagnostic (box B), and the
   verdict-disposition vocabulary lock-in.
-- Milestone 4 (in progress) — spec rev6 landed as canonical; the **launch sensor**: new-registration
-  detection (MF-map diff) + two-phase recording (the consensus clock, `detected_at` preserved).
+- Milestone 4 (in progress) — spec **rev8** landed as canonical; the **launch sensor**: new-registration
+  detection (MF-map diff) + two-phase recording (the consensus clock, `detected_at` preserved);
+  **holdings ingest** (§4d keystone) — SPDR daily-CSV parse + 90%-weight membership, frozen substrate;
+  the **dispersion sensor** (§4b) — constituent-correlation spectral bipartition → Q departure-z,
+  **shadow-wired**, with the **generous `dispersion.tick` payload** (CONTRACT §4b/rev8) banking the
+  proto-cluster substrate from tick one.
 
 **Deferred:**
-- Milestone 3b — dispersion PIT backtest (waits on delisted-constituent price data).
-- Milestone 4 (remaining) — dispersion (shadow-wired) and rebalance sensors; the launch
-  **corroboration hook** + holdings-derived concentration — the *defined next slice*, unblocked by
-  §4d holdings ingest (see `docs/decisions/2026-07-03-launch-sensor-capture-first.md`), which yields
-  the live cross-stream lag.
+- Milestone 3b — dispersion **PIT backtest** + NPORT-P parser + delisted-price coverage measurement
+  (waits on delisted-constituent price data; ships live burn-in only for now — see
+  `docs/decisions/2026-07-03-dispersion-shadow-first.md`).
+- Milestone 4 (remaining) — the **rebalance** sensor; the launch **corroboration hook** +
+  holdings-derived concentration — the *defined next slice*, now **unblocked** by the landed holdings
+  ingest (see `docs/decisions/2026-07-03-launch-sensor-capture-first.md`), which yields the live
+  cross-stream lag; the live §9 cadence runner (M5+) that calls `dispersion.scan` daily.
+- **v2 (banked, not built)** — the **proto-cluster / pseudo-ETF** layer (spec rev8 Appendix B): a
+  price-only, observation-only re-read of dispersion history (the canary is a cluster, never a single
+  name, and never the trade). v1's only action is the generous dispersion payload that banks its
+  substrate (see `docs/decisions/2026-07-03-dispersion-payload-generous.md`).
 - Milestone 5 — email (heartbeat + push + dead-man), read-only Streamlit dashboard (incl. the macro
-  catalog panel), verdict CLI polish. *(Spec **rev6** — the verdict-vocabulary fold into §5/§8c and the
-  box-B record — landed ahead of M5; it is now the canonical spec.)*
+  catalog panel), verdict CLI polish. *(Spec **rev8** — the generous dispersion payload (§4b) and the
+  Appendix B proto-cluster note — is now the canonical spec.)*
 - Milestone 6 — discourse capture + budget guard.
 - Milestone 7 — infra-as-code + deploy.
 

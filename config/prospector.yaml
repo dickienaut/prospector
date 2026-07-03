@@ -54,9 +54,26 @@ xcorr:
 dispersion:
   z_in: 2.5
   z_out: 1.0
-  weight_coverage: 0.90    # top holdings covering this fraction of basket weight
-  shadow_days: 90          # record-only burn-in (CONTRACT: ships shadow)
+  weight_coverage: 0.90    # top holdings covering this fraction of basket weight (bounds the O(n^2) matrix)
+  shadow_days: 90          # record-only burn-in (CONTRACT: ships shadow); advisory review horizon
   paging: false            # promotion to paging is a human config flip -> emits config.changed
+  # Dispersion has its OWN correlation/baseline windows (spec §4b gives it 63/252), kept separate from
+  # xcorr's `windows` block so the two sensors calibrate independently.
+  window_days: 63          # constituent-correlation window (63d trailing returns per basket)
+  baseline_days: 252       # Q baseline mean/std window (departure z reuses xcorr.departure_z on Q)
+  min_constituents: 4      # below this many warmed names, no bipartition/Q (degenerate split)
+  method: spectral         # spectral|hierarchical bipartition (DEFAULT spectral: small n, pure numpy)
+  tick_cadence_days: 7     # weekly dispersion.tick while a lead is active
+  # GENEROUS PAYLOAD (CONTRACT §4b, rev8): the dispersion.tick payload banks the substrate for the
+  # deferred v2 proto-cluster layer (Appendix B) -- full membership + sub-cluster assignment +
+  # correlation structure, NOT just scalar Q. You cannot backfill a payload you did not capture.
+  # This knob controls how much correlation structure is persisted per tick:
+  #   full    -> the whole pairwise matrix (DEFAULT during shadow burn-in: capture everything; weekly
+  #              cadence x ~11 baskets x ~40 names is only kilobytes, and no-backfill dominates)
+  #   topk    -> the correlation_top_k strongest within/cross pairs + within/between summaries
+  #   summary -> within/between-cluster correlation means only
+  correlation_detail: full
+  correlation_top_k: 40    # pairs kept when correlation_detail == topk
 
 identity:
   retry_days: 10           # daily auto-retry window before the manual-resolution queue

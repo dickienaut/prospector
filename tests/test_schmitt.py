@@ -71,10 +71,14 @@ def test_nan_z_never_transitions_from_either_state():
 # -- state reconstruction from the fossil record (§9) -------------------------
 
 def test_state_from_last_event_type():
-    assert state_from_last_event_type("xcorr.departure") == ACTIVE
-    assert state_from_last_event_type("xcorr.reverted") == QUIET
+    # Quiet ONLY on no-prior-event or a .reverted exit; every other trigger event means active.
     assert state_from_last_event_type(None) == QUIET
-    # Any other/unknown type reconstructs to quiet (only a .departure means active).
-    assert state_from_last_event_type("xcorr.tick") == QUIET
-    assert state_from_last_event_type("lead.spawned") == QUIET
-    assert state_from_last_event_type("dispersion.departure") == ACTIVE  # any *.departure
+    assert state_from_last_event_type("xcorr.reverted") == QUIET
+    assert state_from_last_event_type("dispersion.reverted") == QUIET
+    # Active: the spawn, a departure, and a cadence tick (an actively-ticking lead is active —
+    # this is the case the old "only .departure is active" rule got wrong for dispersion, which
+    # has no .departure event at all).
+    assert state_from_last_event_type("lead.spawned") == ACTIVE
+    assert state_from_last_event_type("xcorr.departure") == ACTIVE
+    assert state_from_last_event_type("xcorr.tick") == ACTIVE
+    assert state_from_last_event_type("dispersion.tick") == ACTIVE
