@@ -3,8 +3,13 @@
 This repo is **Project Prospector**, the offensive twin of the thesis smoke detector. It watches
 the ETF universe for structural novelty and proposes **reading, never orders**.
 
-The canonical spec is `docs/prospector-v1-spec-rev9-2026-07-03.md` (rev9; earlier revs kept as
-history). Read it before changing anything load-bearing. Rev9 decomposes the rebalance sensor (§4d)
+The canonical spec is `docs/prospector-v1-spec-rev11-2026-07-03.md` (rev11; earlier revs kept as
+history). Read it before changing anything load-bearing. Rev11 folds the mandate-diff precision into
+§4d/§7 (raw-HTML frozen per accession, section extracted on *read*; priority-match Strategies→Objective;
+specified extraction-unreliable→`fault` conditions) and adds a **CONTRACT state-source invariant for the
+§9 runner**: the mandate sensor's "prior" is its last *frozen* prospectus blob, never the registry
+`prospectus_accession` (which an identity pass may advance intra-run). Rev10 recorded mandate-diff built.
+Rev9 decomposed the rebalance sensor (§4d)
 like the launch sensor: the **holdings-diff accretion core is self-contained** (its own PR) and
 **`mandate.changed` is a deferred defined-next-slice** (needs new surface — EDGAR prospectus-*text*
 fetch + `ingest/prospectus/` blob-per-accession storage + text diff). Rev9 also makes **CONTRACT**:

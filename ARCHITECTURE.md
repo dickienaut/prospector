@@ -1,6 +1,6 @@
 # Prospector — Architecture
 
-*A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev9-2026-07-03.md`
+*A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev11-2026-07-03.md`
 for the canonical "what to build," and `docs/decisions/` for the "why we changed our minds." Last
 updated after the launch sensor's detection + two-phase recording slice (milestone 4).*
 
