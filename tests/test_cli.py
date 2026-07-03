@@ -9,7 +9,7 @@ import pytest
 from click.testing import CliRunner
 
 from prospector.cli.main import cli
-from prospector.fold.fold import fold
+from prospector.fold.fold import active_nonshadow, fold
 from prospector.store.event_store import EventStore
 from prospector.store.registry import Registry
 
@@ -118,7 +118,7 @@ def test_verdict_appends_and_second_supersedes_first(runner, spawned, layout, st
 
 def test_third_verdict_supersedes_the_new_head(runner, spawned, store_root, registry):
     ids = []
-    for value in ("watch", "no", "yes"):
+    for value in ("watch", "noise", "yes"):
         result = runner.invoke(cli, ["verdict", "ld_cli", value,
                                      "--store", str(store_root)])
         assert result.exit_code == 0, result.output
@@ -130,12 +130,34 @@ def test_third_verdict_supersedes_the_new_head(runner, spawned, store_root, regi
     assert by_id[ids[1]]["superseded_by"] == ids[0]
 
 
-def test_verdict_rejects_unknown_lead_and_value(runner, spawned, store_root, registry):
+def test_verdict_accepts_the_four_dispositions_and_off_thesis_real_is_inert(
+        runner, spawned, store_root, registry):
+    # All four ratified dispositions write; off-thesis-real (a real-but-macro classification) is a
+    # first-class value distinct from watch — the three-live-meanings split (guidance rev2 §8.4).
+    for value in ("yes", "watch", "off-thesis-real", "noise"):
+        r = runner.invoke(cli, ["verdict", "ld_cli", value, "--store", str(store_root)])
+        assert r.exit_code == 0, r.output
+    state = fold(registry.events_for_lead("ld_cli"))
+    assert state["verdict"] == "noise"                     # last written is the chain head
+    # off-thesis-real is DISPLAY-ONLY / inert: it never changes the lead's active/shadow mechanics.
+    off = fold([e for e in registry.events_for_lead("ld_cli")
+                if not (e["type"] == "verdict")] +
+               [{"event_id": "vX", "ts": "2026-07-20T00:00:00Z", "type": "verdict",
+                 "payload": {"verdict": "off-thesis-real", "note": None, "superseded_by": None}}])
+    assert off["verdict"] == "off-thesis-real"
+    assert off["status"] == "active"                       # a verdict never flips status
+    assert active_nonshadow([off]) == [off]                # ...and never gates the ceiling
+
+
+def test_verdict_rejects_unknown_lead_and_retired_or_unknown_value(runner, spawned, store_root,
+                                                                   registry):
     result = runner.invoke(cli, ["verdict", "ld_ghost", "yes", "--store", str(store_root)])
     assert result.exit_code != 0
     assert registry.events_for_lead("ld_ghost") == []
-    result = runner.invoke(cli, ["verdict", "ld_cli", "maybe", "--store", str(store_root)])
-    assert result.exit_code != 0
+    # `no` is retired -> `noise`; the Choice rejects it and an unknown value.
+    for bad in ("no", "maybe"):
+        result = runner.invoke(cli, ["verdict", "ld_cli", bad, "--store", str(store_root)])
+        assert result.exit_code != 0
     assert registry.events_for_lead("ld_cli", type="verdict") == []
 
 

@@ -34,6 +34,25 @@ V1_TYPES = frozenset({
 
 _CORROBORATION_TYPES = frozenset({"launch", "rebalance", "mandate.changed"})
 
+# Verdict vocabulary — FOUR values, THREE live meanings (ratified: crash-flags guidance rev2 §8.4).
+# The single source of truth the CLI Choice and future M5 surfaces reference. The fold does NOT
+# reject values outside this set (append-only / forward-compat — a legacy `no` or a v2 value still
+# renders); this is documentation + the write-path allow-list, not a fold gate.
+#
+#   yes             promoted — real, on-thesis, worth the per-investment-thread pipeline (live)
+#   watch           ON-THESIS but UNPROVEN — a candidate tech linkage not yet cleared (live)
+#   off-thesis-real REAL but OFF-THESIS (macro/sector regime) — catalogued as context, INERT, no
+#                   action ever (the cap-weighted core absorbs sector regimes on its own)
+#   noise           not real — artifact/spurious (dead/closed); this is the refinement of the old `no`
+#
+# The load-bearing distinction (guidance rev2 §8.4): `off-thesis-real` (real, permanently set aside)
+# must never be confused with `watch` (possibly-on-thesis, still live). Collapsing them would let a
+# deferred real tech lead rot in a drawer labeled "macro" — the exact failure the split prevents.
+# `none` is the no-verdict default, not a writable value. Verdict is DISPLAY-ONLY: nothing keys on
+# it to drive action (ceiling/paging key on status+shadow via active_nonshadow), so "context, never
+# a trigger" holds by construction.
+VERDICT_VOCAB = ("yes", "watch", "off-thesis-real", "noise")
+
 # The push/ceiling trio — the only fields that constitute a state change (spec §5, §8a).
 _CHANGE_FIELDS = ("status", "shadow", "verdict")
 _INITIAL_TRIO = {"status": None, "shadow": False, "verdict": "none"}

@@ -19,7 +19,7 @@ from pathlib import Path
 import click
 
 from prospector.config import load_config
-from prospector.fold.fold import fold, verdict_head_id
+from prospector.fold.fold import VERDICT_VOCAB, fold, verdict_head_id
 from prospector.identity.resolution import ResolutionMachine, VerificationError
 from prospector.ingest.edgar import EdgarClient
 from prospector.store.envelope import SYSTEM_LEAD
@@ -306,11 +306,17 @@ def backtest(from_date, to_date, sweep, store_path):
 
 @cli.command("verdict")
 @click.argument("lead_id")
-@click.argument("value", type=click.Choice(["yes", "no", "watch"]))
+@click.argument("value", type=click.Choice(list(VERDICT_VOCAB)))
 @click.option("-m", "--note", "note", default=None, help="Optional note on the verdict.")
 @_store_option
 def verdict(lead_id, value, note, store_path):
-    """Append a verdict event; a changed mind supersedes the current one, never edits it."""
+    """Append a verdict event; a changed mind supersedes the current one, never edits it.
+
+    Four dispositions (guidance rev2 §8.4): yes (promoted, on-thesis); watch (on-thesis but
+    UNPROVEN, still live); off-thesis-real (REAL but off-thesis macro/sector regime — catalogued
+    as context, inert, no action ever); noise (not real, closed). off-thesis-real and watch are
+    deliberately distinct — do not file a live candidate tech lead as macro.
+    """
     layout = _layout(store_path)
     registry = _open_registry(layout)
     try:

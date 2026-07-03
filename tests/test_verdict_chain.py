@@ -12,7 +12,7 @@ from hypothesis import given, settings, strategies as st
 
 from prospector.fold.fold import fold
 
-verdict_values = st.sampled_from(["yes", "no", "watch"])
+verdict_values = st.sampled_from(["yes", "watch", "off-thesis-real", "noise"])
 
 _T0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
 
@@ -103,7 +103,7 @@ def test_fork_records_anomaly_and_latest_wins(triple):
 
 def test_fork_tie_on_ts_breaks_on_event_id():
     root = _verdict_row("v000", _ts(0), "watch", None)
-    head_a = _verdict_row("va", _ts(1), "no", "v000")
+    head_a = _verdict_row("va", _ts(1), "noise", "v000")
     head_b = _verdict_row("vb", _ts(1), "yes", "v000")  # same ts; max event_id wins
     state = fold([head_b, root, head_a])
     assert state["verdict"] == "yes"
@@ -118,7 +118,7 @@ def test_no_verdicts_means_verdict_none():
 
 
 def test_cycle_resolves_to_latest_with_anomaly():
-    a = _verdict_row("va", _ts(0), "no", "vb")
+    a = _verdict_row("va", _ts(0), "noise", "vb")
     b = _verdict_row("vb", _ts(1), "yes", "va")
     state = fold([a, b])
     assert state["verdict"] == "yes"  # latest (ts, event_id)

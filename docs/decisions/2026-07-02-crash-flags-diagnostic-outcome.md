@@ -84,24 +84,31 @@ the regime; the core *absorbs* it; the two never touch. **Valuable-as-context, n
 valuable-as-trigger** — "detect the macro regime early and tilt ahead of it" is the market-timing
 trap in a data-science coat, the one thing the architecture exists to refuse.
 
-## Recommended fold (design thread's to ratify — not implemented in this pass)
+## Ratified fold (design thread — see guidance rev2 §8.4; vocabulary locked in 2026-07-02)
 
-Small, almost all recording, no new action:
+Small, almost all recording, no new action. The one subtlety, caught by Desktop and now the
+load-bearing rule: enriching the overloaded `no` must preserve **three live meanings**, or it repeats
+this document's own mistake one level down — mixing *off-thesis-but-real* (macro, inert) with
+*on-thesis-but-unproven* (`watch`, live) would let a deferred real tech lead rot in a drawer labeled
+"macro."
 
-1. **Enrich the verdict vocabulary.** Today it is yes/no/watch, and "no" is overloaded — it cannot
-   distinguish "junk/artifact" from "real, but off-thesis." Add a disposition
-   **"real — off-thesis (macro/sector regime)"** distinct from "noise." That one addition stops the
-   information being thrown away and makes the record honest about *why* something was set aside.
-   (Touches the verdict values in spec §5/§8c and the fold/CLI — a CONTRACT change, hence a design
-   thread rev-N, not a unilateral edit.)
-2. **A read-only macro catalog.** Mechanically nothing new — a forensic query over verdict events
-   filtered to that disposition, plus one Streamlit panel (M5). A labeled reference layer, **not** an
-   alert stream, **not** a monitoring lane.
+1. **Four-value verdict vocabulary** (CONTRACT §5/§8c): `yes` (promoted, on-thesis) · `watch`
+   (on-thesis but UNPROVEN — **live**, untouched) · **`off-thesis-real`** (real but off-thesis
+   macro/sector — catalogued, **inert**, no action ever) · `noise` (not real — the refined `no`,
+   dead). `off-thesis-real` and `watch` are deliberately distinct. **Locked in now** (`VERDICT_VOCAB`
+   in `fold.py`, the CLI Choice, tests pinning `off-thesis-real` as inert).
+2. **A read-only macro catalog** (milestone 5): a forensic query over verdict events filtered to
+   `off-thesis-real` + one Streamlit panel. **Not** an alert stream, **not** a monitoring lane.
 3. **Human-mediated consultation only.** Read the catalog when adjudicating elsewhere (a future tech
-   signal's backdrop, or a satellite drawdown in the detector). No automated hand-off; the owner
-   integrates in judgment. Firewall intact.
+   signal's backdrop, or a satellite drawdown in the detector). No automated hand-off; firewall
+   intact.
 4. **Standing hard line:** the catalog is read-only context, **never** a trade/tilt trigger, never
-   piped anywhere as actionable — same class of rule as the reading-list wall.
+   piped anywhere as actionable, and no macro-regime alert/monitoring surface — same class of rule as
+   the reading-list wall. (In CLAUDE.md standing-review items.)
+
+**Not authorized** (guidance rev2 §8.5): no multi-factor β / no stripping the macro regime from the
+sensor (the entanglement would delete real tech signal — single-factor β stays); no sensor change of
+any kind (Box B, Path 1); no macro alerting surface.
 
 **Resist** (the natural overreach, a real risk): letting this grow into a macro-regime *alert*
 stream, a "regime forming" push, or a monitoring dashboard. That reintroduces the cockpit and the

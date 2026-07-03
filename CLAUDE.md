@@ -21,8 +21,14 @@ Design-thread-authorized amendments to CONTRACT defaults are recorded under `doc
   absolute 0.65 to an absolute 0.85 (crisis-only), after the β-strip was proven the primary
   market-factor defense. Baseline-relative was tested and rejected (a fragility gauge's intrinsic
   level is the signal). The stress gate's crisis_level is frozen; fix its aging by human
-  recalibration, never a rolling percentile. OPEN item there: spec test 5c ("zero crash spawns")
-  needs amending given the recalibration.
+  recalibration, never a rolling percentile. (Test 5c amended by rev5; see below.)
+- **Verdict vocabulary (CONTRACT §5/§8c) — four values, three live meanings** (ratified:
+  `docs/decisions/2026-07-02-crash-flags-guidance-rev2.md` §8.4). `yes` · `watch` (on-thesis but
+  UNPROVEN — live) · `off-thesis-real` (real but off-thesis macro/sector regime — catalogued as
+  context, inert) · `noise` (the refined `no` — not real). `off-thesis-real` and `watch` are
+  deliberately distinct: never file a live candidate tech lead as macro. `VERDICT_VOCAB` in
+  `prospector/fold/fold.py` is the single source of truth. Spec rev5 §5/§8c (which still read
+  `none|yes|no|watch`) fold to rev6 with milestone 5.
 
 ## Append-only
 - Nothing under `events/` is ever edited or deleted. Corrections are new events.
@@ -68,6 +74,14 @@ leaves a `config.changed` fossil — never by a self-updating rule:
   (non-crisis days) and its headroom to the frozen absolute gate. If the margin compresses,
   re-freeze the level higher by hand. **Never** a rolling percentile / self-updating window — that
   reintroduces the baseline-relative failure the recalibration diagnosed.
+- **Macro catalog** (`off-thesis-real` verdicts) — a read-only reference layer of real-but-off-thesis
+  (macro/sector) classifications, consulted by the human when adjudicating elsewhere. **Read-only
+  context, NEVER a trade/tilt trigger, never piped anywhere as actionable, and never a macro-regime
+  alert stream / "regime forming" push / monitoring surface** (same class of rule as the reading-list
+  wall). The cap-weighted core already absorbs sector regimes; the correct action on a detected macro
+  regime is none. The sensor also never strips the macro regime out (no multi-factor β — it is
+  entangled with real tech theses; stripping it would delete real signal). See
+  `docs/decisions/2026-07-02-crash-flags-guidance-rev2.md` §8.
 
 ## Development
 - `uv sync` to set up; `uv run pytest` to test; `uv run pros --help` for the CLI.
