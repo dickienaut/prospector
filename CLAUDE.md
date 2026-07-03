@@ -3,11 +3,16 @@
 This repo is **Project Prospector**, the offensive twin of the thesis smoke detector. It watches
 the ETF universe for structural novelty and proposes **reading, never orders**.
 
-The canonical spec is `docs/prospector-v1-spec-rev6-2026-07-02.md` (rev6; earlier revs kept as
-history). Read it before changing anything load-bearing. Rev6 folded the four-value verdict vocabulary
-into §5/§8c (closing a code-ahead-of-spec drift), recorded the box-B crash-flag outcome (§4a/§5/§8b/§10),
-and added the §4a multi-factor-β guard. It carries forward unchanged rev5's stress-gate freeze
-(absolute 0.85, crisis-only) and the amended March-2020 falsification (test 5c → reversion criterion).
+The canonical spec is `docs/prospector-v1-spec-rev8-2026-07-03.md` (rev8; earlier revs kept as
+history). Read it before changing anything load-bearing. Rev8 records the **proto-cluster / pseudo-ETF**
+concept as a v2 design note (Appendix B — a deterministic, price-only route to *new-category* detection
+below the ETF corpus) and folds in the one thing it needs from the current build: a **generous
+`dispersion.tick` payload** (§4b, now CONTRACT). Rev7 (folded in) demoted the launch stream to
+corroboration + consensus-clock (never a ceiling-counting lead-spawner) and split the launch sensor
+into recording (built) + corroboration (gated on §4d holdings ingest). Rev6 folded the four-value
+verdict vocabulary into §5/§8c, recorded the box-B crash-flag outcome (§4a/§5/§8b/§10), and added the
+§4a multi-factor-β guard. It carries forward unchanged rev5's stress-gate freeze (absolute 0.85,
+crisis-only) and the amended March-2020 falsification (test 5c → reversion criterion).
 
 ## Firewall
 - Never add code that reads the detector's bucket or `portfolio.yaml`.
@@ -32,6 +37,17 @@ Design-thread-authorized amendments to CONTRACT defaults are recorded under `doc
   `prospector/fold/fold.py` is the single source of truth. Rev6 §5/§8c now carry
   `none|yes|watch|off-thesis-real|noise` — the code-ahead-of-spec drift is closed. The macro-catalog
   forensic view + Streamlit panel remain milestone 5.
+- **Generous dispersion payload (CONTRACT §4b, rev8)** — ratified:
+  `docs/decisions/2026-07-03-dispersion-payload-generous.md`. The `dispersion.tick` payload carries
+  **full constituent membership + each name's sub-cluster assignment + the correlation structure**
+  (not just the scalar Q), so the deferred v2 **proto-cluster / pseudo-ETF** layer (Appendix B) can
+  thaw backward over it — you cannot backfill a payload you did not capture. The proto-cluster layer
+  itself is **v2, not built**: it is **price-only** (correlation one level down — never keyword/NLP
+  mining), the canary is a **cluster, never a single name**, and it is **observation-only — the
+  canary is never the trade** (watch the forming cluster, buy the diversified ETF when it packages;
+  single-name granularity is where over-trading and concentration risk peak). Same firewall class as
+  the reading-list wall. v1's only action is capturing the substrate richly; do not build the
+  interpretation.
 
 ## Append-only
 - Nothing under `events/` is ever edited or deleted. Corrections are new events.

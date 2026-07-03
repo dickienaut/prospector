@@ -238,18 +238,23 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - Post-M3 design-thread work — the stress-gate recalibration (0.85 crisis-only), spec rev5's amended
   falsification (reversion criterion), the read-only crash-flags diagnostic (box B), and the
   verdict-disposition vocabulary lock-in.
-- Milestone 4 (in progress) — spec rev6 landed as canonical; the **launch sensor**: new-registration
+- Milestone 4 (in progress) — spec **rev8** landed as canonical; the **launch sensor**: new-registration
   detection (MF-map diff) + two-phase recording (the consensus clock, `detected_at` preserved).
 
 **Deferred:**
 - Milestone 3b — dispersion PIT backtest (waits on delisted-constituent price data).
-- Milestone 4 (remaining) — dispersion (shadow-wired) and rebalance sensors; the launch
-  **corroboration hook** + holdings-derived concentration — the *defined next slice*, unblocked by
-  §4d holdings ingest (see `docs/decisions/2026-07-03-launch-sensor-capture-first.md`), which yields
-  the live cross-stream lag.
+- Milestone 4 (remaining) — dispersion (shadow-wired, with the **generous `dispersion.tick` payload**
+  — CONTRACT §4b/rev8: full constituent membership + sub-cluster assignment + correlation structure)
+  and rebalance sensors; the launch **corroboration hook** + holdings-derived concentration — the
+  *defined next slice*, unblocked by §4d holdings ingest (see
+  `docs/decisions/2026-07-03-launch-sensor-capture-first.md`), which yields the live cross-stream lag.
+- **v2 (banked, not built)** — the **proto-cluster / pseudo-ETF** layer (spec rev8 Appendix B): a
+  price-only, observation-only re-read of dispersion history (the canary is a cluster, never a single
+  name, and never the trade). v1's only action is the generous dispersion payload that banks its
+  substrate (see `docs/decisions/2026-07-03-dispersion-payload-generous.md`).
 - Milestone 5 — email (heartbeat + push + dead-man), read-only Streamlit dashboard (incl. the macro
-  catalog panel), verdict CLI polish. *(Spec **rev6** — the verdict-vocabulary fold into §5/§8c and the
-  box-B record — landed ahead of M5; it is now the canonical spec.)*
+  catalog panel), verdict CLI polish. *(Spec **rev8** — the generous dispersion payload (§4b) and the
+  Appendix B proto-cluster note — is now the canonical spec.)*
 - Milestone 6 — discourse capture + budget guard.
 - Milestone 7 — infra-as-code + deploy.
 
