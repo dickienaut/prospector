@@ -106,6 +106,30 @@ mandate:
   min_section_chars: 80     # a shorter extraction is UNRELIABLE (flagged, never diffed)
   max_section_lines: 400    # no boundary within this many lines -> runaway -> UNRELIABLE
 
+corroboration:
+  # Launch corroboration hook (spec §4c, M4 capstone). A resolved launch's sectors are DERIVED from
+  # its first holdings (ground truth, not prose); a direct sector-set overlap with a live lead's
+  # baskets (BOTH sides of an xcorr pair, or the one dispersion basket) accretes the launch onto that
+  # lead, making the cross-stream lag measurable there. No overlap / holdings-unavailable -> dormant
+  # on _system (the honest coverage gap; the tool sees SPDR-format holdings only today). The backtest
+  # keyword matcher + curated launch table stay in the backtest; the live path never uses them.
+  sector_min_weight: 0.10   # a sector is "present" in a launch iff >= 10% of fund weight
+
+# SPDR ticker -> canonical GICS sector name (the launch's holdings carry these names; a lead's basket
+# maps to one via this). Stable data — a fund's legal sector designation, never changes.
+sector_map:
+  XLK: Information Technology
+  XLC: Communication Services
+  XLY: Consumer Discretionary
+  XLP: Consumer Staples
+  XLE: Energy
+  XLF: Financials
+  XLV: Health Care
+  XLI: Industrials
+  XLB: Materials
+  XLRE: Real Estate
+  XLU: Utilities
+
 identity:
   retry_days: 10           # daily auto-retry window before the manual-resolution queue
 
