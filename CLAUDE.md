@@ -88,3 +88,13 @@ leaves a `config.changed` fossil — never by a self-updating rule:
 - Tests are offline: a network guard fails any test that opens a real socket. Recorded fixtures
   live in `tests/fixtures/`.
 - All record times are UTC.
+
+## Documentation (standing practice — document as we build)
+- `ARCHITECTURE.md` (repo root) is the top-level map of what's built and why. **Keep it current**:
+  when a milestone lands or a module's shape changes, update the module map (§2) and the built/deferred
+  status (§9) in the same change. It is written for someone catching up — orient, don't just enumerate.
+- Every load-bearing decision or CONTRACT amendment leaves a written trace in `docs/decisions/`
+  (pointed to from this file), next to its `config.changed` fossil / commit.
+- Code carries **spec-citing docstrings** (which `§` a module implements) and **inline comments on the
+  subtle bits** — especially anything that encodes a CONTRACT, a deliberate non-obvious choice, or a
+  "do not do X because Y." Comment the *why*, not the *what*. This density is the norm; match it.
