@@ -1,6 +1,6 @@
 # Prospector — Architecture
 
-*A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev6-2026-07-02.md`
+*A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev9-2026-07-03.md`
 for the canonical "what to build," and `docs/decisions/` for the "why we changed our minds." Last
 updated after the launch sensor's detection + two-phase recording slice (milestone 4).*
 
@@ -240,7 +240,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - Post-M3 design-thread work — the stress-gate recalibration (0.85 crisis-only), spec rev5's amended
   falsification (reversion criterion), the read-only crash-flags diagnostic (box B), and the
   verdict-disposition vocabulary lock-in.
-- Milestone 4 (in progress) — spec **rev8** landed as canonical; the **launch sensor**: new-registration
+- Milestone 4 (in progress) — spec **rev9** landed as canonical; the **launch sensor**: new-registration
   detection (MF-map diff) + two-phase recording (the consensus clock, `detected_at` preserved);
   **holdings ingest** (§4d keystone) — SPDR daily-CSV parse + 90%-weight membership, frozen substrate;
   the **dispersion sensor** (§4b) — constituent-correlation spectral bipartition → Q departure-z,
