@@ -1,6 +1,6 @@
 # Prospector — Architecture
 
-*A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev5-2026-07-02.md`
+*A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev6-2026-07-02.md`
 for the canonical "what to build," and `docs/decisions/` for the "why we changed our minds." Last
 updated after the verdict-disposition lock-in (commit `5671a9f`).*
 
@@ -231,7 +231,8 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - Milestone 3b — dispersion PIT backtest (waits on delisted-constituent price data).
 - Milestone 4 — dispersion (shadow-wired), two-phase launch, rebalance sensors.
 - Milestone 5 — email (heartbeat + push + dead-man), read-only Streamlit dashboard (incl. the macro
-  catalog panel), verdict CLI polish; the formal spec **rev6** folding the verdict vocabulary into §5/§8c.
+  catalog panel), verdict CLI polish. *(Spec **rev6** — the verdict-vocabulary fold into §5/§8c and the
+  box-B record — landed ahead of M5; it is now the canonical spec.)*
 - Milestone 6 — discourse capture + budget guard.
 - Milestone 7 — infra-as-code + deploy.
 

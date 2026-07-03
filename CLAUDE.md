@@ -3,9 +3,11 @@
 This repo is **Project Prospector**, the offensive twin of the thesis smoke detector. It watches
 the ETF universe for structural novelty and proposes **reading, never orders**.
 
-The canonical spec is `docs/prospector-v1-spec-rev5-2026-07-02.md` (rev5; earlier revs kept as
-history). Read it before changing anything load-bearing. Rev5 froze the stress gate (absolute 0.85,
-crisis-only) and amended the March-2020 falsification (test 5c) to the reversion criterion.
+The canonical spec is `docs/prospector-v1-spec-rev6-2026-07-02.md` (rev6; earlier revs kept as
+history). Read it before changing anything load-bearing. Rev6 folded the four-value verdict vocabulary
+into §5/§8c (closing a code-ahead-of-spec drift), recorded the box-B crash-flag outcome (§4a/§5/§8b/§10),
+and added the §4a multi-factor-β guard. It carries forward unchanged rev5's stress-gate freeze
+(absolute 0.85, crisis-only) and the amended March-2020 falsification (test 5c → reversion criterion).
 
 ## Firewall
 - Never add code that reads the detector's bucket or `portfolio.yaml`.
@@ -27,8 +29,9 @@ Design-thread-authorized amendments to CONTRACT defaults are recorded under `doc
   UNPROVEN — live) · `off-thesis-real` (real but off-thesis macro/sector regime — catalogued as
   context, inert) · `noise` (the refined `no` — not real). `off-thesis-real` and `watch` are
   deliberately distinct: never file a live candidate tech lead as macro. `VERDICT_VOCAB` in
-  `prospector/fold/fold.py` is the single source of truth. Spec rev5 §5/§8c (which still read
-  `none|yes|no|watch`) fold to rev6 with milestone 5.
+  `prospector/fold/fold.py` is the single source of truth. Rev6 §5/§8c now carry
+  `none|yes|watch|off-thesis-real|noise` — the code-ahead-of-spec drift is closed. The macro-catalog
+  forensic view + Streamlit panel remain milestone 5.
 
 ## Append-only
 - Nothing under `events/` is ever edited or deleted. Corrections are new events.
