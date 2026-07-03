@@ -83,8 +83,28 @@ rebalance:
   # weight delta at/above this threshold. Tune the threshold by hand if live tail-churn proves noisy;
   # never auto-tuned.
   weight_delta_threshold: 0.005   # 0.5% (DEFAULT, spec §4d)
-  # mandate.changed (prospectus mandate-diff) and the quarterly NPORT-P cross-check are DEFERRED own
-  # slices (spec rev9 §4d; §3b) — not wired here.
+  # The quarterly NPORT-P cross-check is a DEFERRED slice (parse_nport_holdings, §3b) — not wired here.
+
+mandate:
+  # Prospectus mandate-diff (spec §4d). A new prospectus filing on a watched fund -> extract its
+  # principal-investment-strategy section, diff vs the prior filing, emit `mandate.changed` (a SILENT
+  # corroboration the HUMAN adjudicates cosmetic-vs-substantive — never a pager). TARGETED section,
+  # not a full-text diff: a whole-filing diff is a false-positive machine (fees/dates/boilerplate
+  # churn — the diff-trap). Extraction is heading-bounded; when it is unreliable the sensor FLAGS a
+  # fault for manual review rather than diffing the wrong thing. bs4 owns the HTML structure only.
+  strategy_headings:        # the section that carries the thesis (case-insensitive, heading-line match)
+    - principal investment strateg    # "Principal Investment Strategy/Strategies"
+    - investment objective
+  stop_headings:            # the strategy section ends at the next of these (the diff scope boundary)
+    - principal risk
+    - principal investment risk
+    - performance
+    - fees and expenses
+    - portfolio management
+    - purchase and sale
+    - tax information
+  min_section_chars: 80     # a shorter extraction is UNRELIABLE (flagged, never diffed)
+  max_section_lines: 400    # no boundary within this many lines -> runaway -> UNRELIABLE
 
 identity:
   retry_days: 10           # daily auto-retry window before the manual-resolution queue
