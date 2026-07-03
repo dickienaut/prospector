@@ -32,9 +32,24 @@ def step(state: str, z: float | None, z_in: float, z_out: float) -> tuple[str, s
 
 
 def state_from_last_event_type(last_type: str | None) -> str:
-    """Reconstruct trigger state from the last recorded event type for a pair (§9). A pair
-    whose last event was a `.departure` is active; anything else (a `.reverted`, or no prior
-    event at all) is quiet."""
-    if last_type is not None and last_type.endswith(".departure"):
-        return ACTIVE
-    return QUIET
+    """Reconstruct trigger state from the last TRIGGER-RELEVANT recorded event for an entity (§9).
+    Quiet only when there is no prior event (`None`) or the last one was a `.reverted` exit;
+    everything else — the spawn, a `.departure`, or a cadence `.tick` — means the entity is still
+    in departure, i.e. active.
+
+    Why not "only `.departure` is active" (the original form): dispersion has NO `.departure` event
+    (spec §5: only `dispersion.tick` / `dispersion.reverted`), so under the old rule an actively
+    *ticking* dispersion lead would reconstruct as quiet and re-spawn every run. The `.reverted`
+    suffix is the single exit convention (matching the fold, which folds any `*.reverted` to
+    `status=reverted`), so keying off it is correct for BOTH sensors — xcorr
+    (departure/tick→active, reverted→quiet) and dispersion (spawn/tick→active, reverted→quiet).
+
+    Contract: the caller passes the last event whose type belongs to the sensor's own trigger
+    vocabulary (`lead.spawned` / `*.departure` / `*.tick` / `*.reverted`). Corroboration
+    (`rebalance`, `launch`), `verdict`, and `capture.stored` accrete onto a lead without changing
+    its trigger state, so the driver skips them when selecting `last_type` — otherwise a
+    verdict-after-revert would wrongly read as active. (Dispersion's stress-free stream makes this
+    a non-issue in practice, but the contract keeps a future caller honest.)"""
+    if last_type is None or last_type.endswith(".reverted"):
+        return QUIET
+    return ACTIVE
