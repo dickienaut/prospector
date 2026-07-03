@@ -2,7 +2,7 @@
 
 *A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev6-2026-07-02.md`
 for the canonical "what to build," and `docs/decisions/` for the "why we changed our minds." Last
-updated after the verdict-disposition lock-in (commit `5671a9f`).*
+updated after the launch sensor's detection + two-phase recording slice (milestone 4).*
 
 ---
 
@@ -33,7 +33,7 @@ path places, sizes, or recommends a trade.
 
 ## 2. Module map
 
-~3,600 lines of Python, 272 tests (offline). Packages under `prospector/`:
+~3,700 lines of Python, 277 tests (offline). Packages under `prospector/`:
 
 | Package / module | Responsibility | Key entry points |
 |---|---|---|
@@ -51,8 +51,9 @@ path places, sizes, or recommends a trade.
 | `config.py` | Load YAML → (config, canonical hash); `config.changed` emission | `load_config()`, `check_config_honesty()` |
 | `ingest/edgar.py` | EDGAR client (declared UA, rate-limited, freeze-the-substrate) | `EdgarClient`, `resolve_ticker()` |
 | `ingest/prices.py` | Price ingest (Yahoo primary / Stooq fallback), frozen pulls, panel builder | `PriceIngest`, `build_panel()` |
-| `identity/resolution.py` | Retry-then-manual resolution machine; two-phase-launch completion | `ResolutionMachine` |
+| `identity/resolution.py` | Retry-then-manual resolution machine; two-phase-launch intake + completion | `ResolutionMachine`, `register_launch()`, `launch_lag()` |
 | `sensors/xcorr.py` | The excess-correlation pipeline (β-strip → departure z) + the stress gate | `daily_returns`→`departure_z`, `stress_series` |
+| `sensors/launch.py` | Launch sensor — new-registration detection (MF-map diff), the consensus clock | `new_registrations()`, `scan()` |
 | `sensors/schmitt.py` | Shared hysteresis trigger (no flapping) | `step()`, `state_from_last_event_type()` |
 | `backtest/runner.py` | Replays the sensor over history; concept validation; crash falsification | `run()`, `replay()`, `crash_falsification()` |
 | `backtest/report.py` | The acceptance-gate artifact (recall/precision/falsification/lag) | `build_report()`, `render_markdown()` |
@@ -173,6 +174,17 @@ drop silently: they emit `resolution.failed`, auto-retry daily for `retry_days`,
 manual-resolution queue. The two-phase launch preserves the original `detected_at` so cross-stream
 lag math is never skewed by a slow resolution.
 
+The **launch sensor** (`sensors/launch.py`, milestone 4) is the consensus clock: it detects new
+US-listed ETFs by diffing two frozen `company_tickers_mf.json` snapshots (a new `(symbol, seriesId)`
+pair is a new registration), then records each two-phase via `ResolutionMachine.register_launch` —
+`launch.unverified` (timestamp nailed *before* resolution, because a launch datum can't be
+backfilled) → resolve → immediate `launch` on `_system`, or the retry queue if EDGAR hasn't indexed
+it yet. This is the **capture** half; the **corroboration hook** that routes a launch onto
+overlapping live leads (yielding the live cross-stream lag) is the *defined next slice* — it needs a
+launch's concentration industries, which will be derived from its first holdings once §4d's holdings
+ingest lands (ground truth over prose — the same look-through-is-truth logic as the HECO rule). See
+`docs/decisions/2026-07-03-launch-sensor-capture-first.md`.
+
 ---
 
 ## 7. The `pros` CLI (`cli/main.py`)
@@ -218,7 +230,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ## 9. Status — built vs deferred
 
-**Built (committed, 272 tests green):**
+**Built (committed, 277 tests green):**
 - Milestone 1 — vendored primitives, envelope store, WAL registry, fold engine, reactive snapshots,
   S3 sync, config honesty, reindex.
 - Milestone 2 — EDGAR client, fund registry (HECO rule), failed-resolution machine.
@@ -226,10 +238,15 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - Post-M3 design-thread work — the stress-gate recalibration (0.85 crisis-only), spec rev5's amended
   falsification (reversion criterion), the read-only crash-flags diagnostic (box B), and the
   verdict-disposition vocabulary lock-in.
+- Milestone 4 (in progress) — spec rev6 landed as canonical; the **launch sensor**: new-registration
+  detection (MF-map diff) + two-phase recording (the consensus clock, `detected_at` preserved).
 
 **Deferred:**
 - Milestone 3b — dispersion PIT backtest (waits on delisted-constituent price data).
-- Milestone 4 — dispersion (shadow-wired), two-phase launch, rebalance sensors.
+- Milestone 4 (remaining) — dispersion (shadow-wired) and rebalance sensors; the launch
+  **corroboration hook** + holdings-derived concentration — the *defined next slice*, unblocked by
+  §4d holdings ingest (see `docs/decisions/2026-07-03-launch-sensor-capture-first.md`), which yields
+  the live cross-stream lag.
 - Milestone 5 — email (heartbeat + push + dead-man), read-only Streamlit dashboard (incl. the macro
   catalog panel), verdict CLI polish. *(Spec **rev6** — the verdict-vocabulary fold into §5/§8c and the
   box-B record — landed ahead of M5; it is now the canonical spec.)*
@@ -242,7 +259,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ```sh
 uv sync                 # set up the environment
-uv run pytest -q        # 272 tests, offline
+uv run pytest -q        # 277 tests, offline
 uv run pros --help      # the CLI
 uv run pros backtest --from 2019-01-01 --to 2024-12-31 --sweep   # regenerate the acceptance gate
 ```

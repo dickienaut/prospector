@@ -16,8 +16,12 @@ Lag integrity (CONTRACT §4c): all lag math uses the launch payload's `detected_
 resolution time — a fund that takes nine days to resolve must not get a launch timestamp nine
 days late. `launch_lag` reads ONLY that field and raises KeyError rather than fall back.
 
-Routing the completing `launch` onto overlapping live leads is milestone 4; emitting it onto
-`_system` here keeps the record whole in the meantime.
+Two-phase intake lives in `register_launch` (the launch sensor's per-candidate entry point,
+`sensors/launch.py`); the completing `launch` lands on `_system`. Routing it onto overlapping
+live leads — the corroboration hook, and with it the live cross-stream lag — is the DEFINED next
+slice (holdings-derived concentration + hook, built and tested together; see
+`docs/decisions/2026-07-03-launch-sensor-capture-first.md`), because that hook keys on a launch's
+concentration industries, which the live pipeline does not yet populate.
 """
 
 from __future__ import annotations
@@ -122,6 +126,41 @@ class ResolutionMachine:
                                                 excluded.unverified_event_id)""",
             (ticker, now, now, detected_at, unverified_event_id))
         self.registry.conn.commit()
+
+    # -- two-phase launch intake (spec §4c CONTRACT) ------------------------
+
+    def register_launch(self, ticker: str, name_raw: str | None,
+                        detected_at: str) -> str:
+        """The launch sensor's per-candidate entry point (`sensors/launch.py` finds the
+        candidates; this records them). Two phases:
+
+        Phase one, ALWAYS: emit `launch.unverified` onto `_system` (ticker + name_raw +
+        detected_at). This event NEVER keys a lead (the identity rule holds), and its whole job is
+        to nail the detection timestamp into the record BEFORE resolution — a launch timestamp
+        cannot be backfilled, so capture must not wait on verification.
+
+        Phase two: resolve. On success, complete immediately — the completing `launch` on
+        `_system` carries the ORIGINAL `detected_at` and the `launch.unverified` back-reference. On
+        failure, enqueue for retry-then-manual with the same datum, so a fund that resolves nine
+        days late still gets the day-one launch timestamp (lag integrity §4c). `detected_at` is the
+        launch datum, carried verbatim through resolution and never replaced by resolution time.
+
+        Returns 'resolved' (completed this pass) or 'queued' (parked for retry-then-manual).
+        """
+        ticker = ticker.upper()
+        unverified = self.event_store.append({
+            "ts": detected_at, "lead": SYSTEM_LEAD, "type": "launch.unverified",
+            "payload": {"ticker": ticker, "name_raw": name_raw,
+                        "detected_at": detected_at},
+            "schema": 1})
+        result = resolve_ticker(ticker, self.edgar_client)
+        if isinstance(result, Resolution):
+            self._complete(None, result, method="auto", now=self._clock(),
+                           detected_at=detected_at, unverified_ref=unverified.event_id)
+            return "resolved"
+        self.record_failure(ticker, result.reason, result.detail,
+                            detected_at=detected_at, unverified_event_id=unverified.event_id)
+        return "queued"
 
     # -- daily retries ------------------------------------------------------
 
@@ -247,13 +286,21 @@ class ResolutionMachine:
             verified_at=now)
 
     def _complete(self, row: sqlite3.Row | None, resolution: Resolution, *,
-                  method: str, now: str, note: str | None = None) -> FundEntry:
+                  method: str, now: str, note: str | None = None,
+                  detected_at: str | None = None,
+                  unverified_ref: str | None = None) -> FundEntry:
         """Registry entry -> `identity.resolved` -> the completing `launch` (when the two-phase
         launch left a datum to complete) -> queue row 'resolved'. The launch payload carries
         the ORIGINAL `detected_at` and the `launch.unverified` back-reference (lag integrity,
-        CONTRACT §4c); it lands on `_system` — lead routing is milestone 4."""
-        detected_at = row["detected_at"] if row is not None else None
-        unverified_ref = row["unverified_event_id"] if row is not None else None
+        CONTRACT §4c); it lands on `_system` — lead routing is the deferred next slice.
+
+        On the QUEUED path the datum comes off the queue `row`; on the IMMEDIATE two-phase path
+        (`register_launch` resolves in the same pass) there is no row yet, so the caller passes
+        `detected_at`/`unverified_ref` explicitly. Either way the completing launch is honest
+        about when the fund was first detected."""
+        if row is not None:
+            detected_at = row["detected_at"]
+            unverified_ref = row["unverified_event_id"]
         entry = self.build_entry(resolution, detected_at=detected_at, now=now)
         self.fund_registry.upsert(entry)
         self.event_store.append({

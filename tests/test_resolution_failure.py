@@ -15,8 +15,7 @@ from click.testing import CliRunner
 
 import prospector.cli.main as cli_main
 from prospector.identity.resolution import ResolutionMachine, VerificationError, launch_lag
-from prospector.ingest.edgar import (MF_TICKERS_URL, EdgarClient, EdgarError,
-                                     ResolutionFailure, resolve_ticker)
+from prospector.ingest.edgar import MF_TICKERS_URL, EdgarClient, EdgarError
 from prospector.store.envelope import SYSTEM_LEAD, parse_ts
 from prospector.store.event_store import EventStore
 from prospector.store.fund_registry import FundRegistry, IdentityError
@@ -85,19 +84,15 @@ def machine(registry, event_store, funds, clock):
 
 
 def _detect(event_store, machine, clock):
-    """Day D: the two-phase launch's first phase (§4c) plus the recorded failure (§2)."""
-    unverified = event_store.append({
-        "ts": clock(), "lead": SYSTEM_LEAD, "type": "launch.unverified",
-        "payload": {"ticker": SCENARIO["ticker"], "name_raw": SCENARIO["name_raw"],
-                    "detected_at": SCENARIO["detected_at"]},
-        "schema": 1})
-    failure = resolve_ticker(SCENARIO["ticker"], machine.edgar_client)
-    assert isinstance(failure, ResolutionFailure)
-    assert failure.reason == "not_in_mf_map"
-    machine.record_failure(failure.ticker, failure.reason, failure.detail,
-                           detected_at=SCENARIO["detected_at"],
-                           unverified_event_id=unverified.event_id)
-    return unverified
+    """Day D: the two-phase launch's first phase (§4c) plus the recorded failure (§2) — driven
+    through the launch sensor's own intake (`register_launch`), not hand-rolled here, so this
+    scenario exercises the real two-phase code path. Returns the `launch.unverified` event id
+    (the back-reference the eventual completing launch must carry)."""
+    status = machine.register_launch(SCENARIO["ticker"], SCENARIO["name_raw"],
+                                     SCENARIO["detected_at"])
+    assert status == "queued"  # ZZZQ is absent from the MF map — verification defers, not the datum
+    (row,) = machine.registry.events_for_lead(SYSTEM_LEAD, "launch.unverified")
+    return row["event_id"]
 
 
 # -- the scripted scenario (spec test 2) -------------------------------------------------
@@ -156,7 +151,7 @@ def test_detection_retries_escalation_then_manual_resolution(machine, event_stor
     # (lag integrity, CONTRACT §4c) — while its envelope ts is resolution day, eleven days on.
     (launch,) = event_store.read_system(type="launch")
     assert launch.payload["detected_at"] == SCENARIO["detected_at"]
-    assert launch.payload["unverified_ref"] == unverified.event_id
+    assert launch.payload["unverified_ref"] == unverified
     assert launch.payload["series_id"] == "S000087750"
     assert launch.payload["ticker"] == "ZZZQ"
     assert launch.payload["category_draft"] is None
@@ -262,7 +257,7 @@ def test_cli_queue_and_resolve_complete_the_pending_launch(machine, event_store,
     # The CLI path is the same machine: original detected_at + back-reference preserved.
     (launch,) = event_store.read_system(type="launch")
     assert launch.payload["detected_at"] == SCENARIO["detected_at"]
-    assert launch.payload["unverified_ref"] == unverified.event_id
+    assert launch.payload["unverified_ref"] == unverified
     (resolved_event,) = event_store.read_system(type="identity.resolved")
     assert resolved_event.payload["method"] == "manual"
     assert machine.queue_row("ZZZQ")["status"] == "resolved"
