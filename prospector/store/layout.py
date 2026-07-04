@@ -6,6 +6,7 @@
     ingest/prices/{source}/{date}/...          frozen substrate
     ingest/holdings/{series_id}/{date}/...
     ingest/prospectus/{series_id}/{accession}/...   frozen mandate text per filing (milestone 4)
+    ingest/soi/{series_id}/{accession}/...          frozen industry-grouped Schedule of Investments (§4c resolver)
     ingest/edgar/{date}/...
     ingest/etfdb/{date}/...                    (milestone 4)
     registry/funds/{series_id}.json            versioned fund registry objects
@@ -65,6 +66,14 @@ class StoreLayout:
         # version kept immutably so it can diff the stated strategy across accessions — a blob per
         # accession is append-only by construction, never a mutable FundEntry field.
         return self.root / "ingest" / "prospectus" / series_id / accession / name
+
+    def soi_path(self, series_id: str, accession: str, name: str) -> Path:
+        # Keyed on the filing ACCESSION, like prospectus_path (§7): the industry-grouped Schedule of
+        # Investments is frozen per accession so the derived sector concentration is a pure function of
+        # the frozen bytes (extract-on-read, re-derivable by a later parser). The live fetch that writes
+        # here is the M5 EDGAR-SOI-fetch slice (fetch-on-cadence); the read side is exercised now via the
+        # hand-frozen fixtures. Test fixtures are NEVER refreshed by that fetch (offline-determinism).
+        return self.root / "ingest" / "soi" / series_id / accession / name
 
     def edgar_path(self, date: str, name: str) -> Path:
         return self.root / "ingest" / "edgar" / date / name

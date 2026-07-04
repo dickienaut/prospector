@@ -146,13 +146,31 @@ def corroborate(launch: Mapping, holdings: pd.DataFrame | None,
         # Holdings parsed, but the file carries no resolvable GICS sectors (SSGA leaves Sector "-" for
         # active funds — the primary-source reality). We cannot compute an overlap, so we FLAG rather
         # than guess: `sectors_unresolved`, dormant on _system (the launch-side twin of
-        # holdings_unavailable, one level in). Deriving sectors would need an external ticker→GICS
-        # classifier — the deeper unblock, out of this slice.
+        # holdings_unavailable, one level in). This is the DAILY-XLSX blind spot; the SOI sensor
+        # (ingest/soi.py + sensors/soi.py) is its RESOLVER — when the first industry-grouped Schedule
+        # of Investments lands it derives the sectors from the filing and re-runs this routing via
+        # `route_corroboration` below, reaching back with detected_at preserved as T2.
         emit({"ts": now, "lead": SYSTEM_LEAD, "type": "launch",
               "payload": {**base, "concentration_sectors": [], "corroboration": "sectors_unresolved"},
               "schema": 1})
         return {"action": "sectors_unresolved", "sectors": [], "matched": []}
 
+    return route_corroboration(base, sectors, active_lead_sectors, now, emit)
+
+
+def route_corroboration(base: Mapping, sectors: frozenset[str],
+                        active_lead_sectors: Mapping[str, frozenset[str]],
+                        now: str, emit: Callable[[dict], object]) -> dict:
+    """The shared routing tail: given a launch's DERIVED dominant sectors (already thresholded), overlap
+    them against every active lead and either ACCRETE the launch onto each match or record it dormant.
+
+    Extracted from `corroborate` so the two concentration *sources* — the holdings `sector` column and
+    the SOI industry-header derivation (sensors/soi.py) — feed ONE overlap/emit path. The emitted event
+    is identical either way (`type: "launch"`, `corroboration: "match"`, `detected_at` in `base`
+    preserved as T2), so `cross_stream_lag` consumes it unchanged regardless of which source resolved
+    the sectors. `base` is the launch identity dict ({series_id, ticker, detected_at, unverified_ref});
+    `sectors` is NON-EMPTY (the empty/unavailable dispositions belong to the source, which knows whether
+    the emptiness is "no file" vs "file has no sectors")."""
     matched = sorted(lid for lid, ls in active_lead_sectors.items() if overlaps(sectors, ls))
 
     if not matched:
