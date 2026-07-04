@@ -33,7 +33,7 @@ path places, sizes, or recommends a trade.
 
 ## 2. Module map
 
-~5,000 lines of Python, 344 tests (offline). Packages under `prospector/`:
+~5,000 lines of Python, 359 tests (offline). Packages under `prospector/`:
 
 | Package / module | Responsibility | Key entry points |
 |---|---|---|
@@ -53,13 +53,15 @@ path places, sizes, or recommends a trade.
 | `ingest/prices.py` | Price ingest (Yahoo primary / Stooq fallback), frozen pulls, panel builder | `PriceIngest`, `build_panel()` |
 | `ingest/holdings.py` | Holdings ingest (§4d keystone) — SPDR daily CSV → 90%-weight membership, frozen | `HoldingsIngest`, `weight_covering_members()` |
 | `ingest/prospectus.py` | Prospectus fetch/freeze + mandate extraction (§4d) — bs4 → text, strategy section, diff | `ProspectusIngest`, `extract_mandate()`, `diff_mandate()` |
+| `ingest/soi.py` | SOI fetch-freeze (read side) + GICS-industry-grouped sector derivation (§4c resolver) — fund-block isolation → `INDUSTRY — N.N%` parse → industry→sector rollup → reconcile-or-fault | `SoiIngest`, `extract_soi_sectors()`, `dominant_sectors()` |
 | `identity/resolution.py` | Retry-then-manual resolution machine; two-phase-launch intake + completion | `ResolutionMachine`, `register_launch()`, `launch_lag()` |
 | `sensors/xcorr.py` | The excess-correlation pipeline (β-strip → departure z) + the stress gate | `daily_returns`→`departure_z`, `stress_series` |
 | `sensors/dispersion.py` | Intra-basket fracture (§4b) — constituent corr → spectral bipartition → Q departure z; shadow-wired, generous payload | `dispersion_q_series`, `scan()` |
 | `sensors/launch.py` | Launch sensor — new-registration detection (MF-map diff), the consensus clock | `new_registrations()`, `scan()` |
 | `sensors/rebalance.py` | Rebalance accretion (§4d) — holdings-diff → `rebalance` onto live leads; forward-hash routing | `diff_holdings()`, `watching_leads()`, `scan()` |
 | `sensors/mandate.py` | Mandate-diff accretion (§4d) — new prospectus → strategy-section diff → `mandate.changed` / `fault` | `scan()` |
-| `sensors/launch_corroboration.py` | Launch corroboration (§4c) — holdings→sectors → overlap → accrete + signed lag | `sector_concentration()`, `corroborate()`, `cross_stream_lag()` |
+| `sensors/launch_corroboration.py` | Launch corroboration (§4c) — holdings→sectors → overlap → accrete + signed lag; shared routing tail | `sector_concentration()`, `corroborate()`, `route_corroboration()`, `cross_stream_lag()` |
+| `sensors/soi.py` | SOI corroboration (§4c resolver of `sectors_unresolved`) — SOI→sectors → threshold → shared route; fault-on-unreliable; deferred reach-back (T2 preserved) | `scan()` |
 | `sensors/schmitt.py` | Shared hysteresis trigger (no flapping) | `step()`, `state_from_last_event_type()` |
 | `backtest/runner.py` | Replays the sensor over history; concept validation; crash falsification | `run()`, `replay()`, `crash_falsification()` |
 | `backtest/report.py` | The acceptance-gate artifact (recall/precision/falsification/lag) | `build_report()`, `render_markdown()` |
@@ -237,7 +239,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ## 9. Status — built vs deferred
 
-**Built (committed, 344 tests green):**
+**Built (committed, 359 tests green):**
 - Milestone 1 — vendored primitives, envelope store, WAL registry, fold engine, reactive snapshots,
   S3 sync, config honesty, reindex.
 - Milestone 2 — EDGAR client, fund registry (HECO rule), failed-resolution machine.
@@ -255,19 +257,33 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   hook** (existence proof, not a rate); and from **primary-source review** of the real TEKX file — the
   real SSGA daily file is **xlsx** and for an active fund **carries no `Sector` column** ("-"), so
   file-sector-derived concentration is empty and real TEKX resolves **`sectors_unresolved` → dormant**;
-  the +593 was reachable only on the *synthetic* fixture, and the real named unblock is an **external
-  ticker→GICS classifier**. Fixtures are now recorded-real-with-provenance or declared-synthetic. See
-  `docs/decisions/2026-07-04-real-holdings-xlsx-and-blank-sectors.md` and `…-existence-proof.md`.
+  the +593 was reachable only on the *synthetic* fixture. Fixtures are now recorded-real-with-provenance
+  or declared-synthetic. See `docs/decisions/2026-07-04-real-holdings-xlsx-and-blank-sectors.md` and
+  `…-existence-proof.md`.
+- **SOI-derived sector concentration (§4c resolver of `sectors_unresolved`)** — the "ticker→GICS
+  classifier" unblock above was a convergent-prior error: the primary source already publishes the
+  grouping. `ingest/soi.py` + `sensors/soi.py` parse the fund's GICS-industry-grouped Schedule of
+  Investments (`INDUSTRY — N.N%`), roll industry→sector through a **frozen `gics_industry_sector` table**,
+  threshold with the frozen `sector_min_weight`, and route through the shared `route_corroboration` (the
+  holdings and SOI sources now feed one overlap/accrete/lag path). Extraction-unreliable → `fault`, never
+  a wrong sector set. **On real TEKX NPORT-EX the +593 now attaches on primary-source data** (Jul-2025
+  clears {Financials, Industrials, IT, Utilities}); Jan-2026 stays dormant (Utilities 6.4% < floor,
+  threshold frozen — anti-fitting). See `docs/decisions/2026-07-04-soi-derived-sector-concentration.md`.
 
 **Deferred:**
 - Milestone 3b — dispersion **PIT backtest** + NPORT-P parser + delisted-price coverage measurement
   (waits on delisted-constituent price data; ships live burn-in only for now — see
   `docs/decisions/2026-07-03-dispersion-shadow-first.md`).
-- **Holdings-intake coverage** (the named next slice) — per-issuer holdings parsers / NPORT-P
-  look-through, which turns the live cross-stream lag from an *existence proof* into a *representative
-  rate*. Intake was deliberately not widened inside the corroboration slice.
+- **Holdings-intake coverage** (secondary) — per-issuer holdings parsers / NPORT-P look-through, which
+  turns the live cross-stream lag from an *existence proof* into a *representative rate*. Intake was
+  deliberately not widened inside the corroboration slice.
+- **Live EDGAR-SOI-fetch** (M5, tied to `EdgarClient`) — the fetch-on-cadence half of the SOI resolver:
+  `SOI_FORMS` + `latest_soi(submissions)` + accession `index.json` document resolution + `SoiIngest`
+  live pull. The reader is built and tested on hand-frozen fixtures; **drop-and-freeze for tests,
+  fetch-on-cadence for the runner — the two never conflate** (fixtures are never refreshed by fetch).
+  See `docs/decisions/2026-07-04-soi-derived-sector-concentration.md`.
 - Milestone 5 — the live **§9 cadence runner** (calls the sensor `scan`s daily, owns the corroboration
-  retry-until-holdings-land loop and the mandate frozen-prior invariant), email (heartbeat/push/
+  retry-until-holdings/SOI-land loop and the mandate frozen-prior invariant), email (heartbeat/push/
   dead-man), read-only Streamlit (incl. the macro-catalog + launch panels), verdict CLI polish.
 - **v2 (banked, not built)** — the **proto-cluster / pseudo-ETF** layer (spec rev8 Appendix B): a
   price-only, observation-only re-read of dispersion history (the canary is a cluster, never a single
@@ -282,7 +298,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ```sh
 uv sync                 # set up the environment
-uv run pytest -q        # 344 tests, offline
+uv run pytest -q        # 359 tests, offline
 uv run pros --help      # the CLI
 uv run pros backtest --from 2019-01-01 --to 2024-12-31 --sweep   # regenerate the acceptance gate
 ```

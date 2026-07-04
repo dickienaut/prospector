@@ -103,9 +103,32 @@ Design-thread-authorized amendments to CONTRACT defaults are recorded under `doc
   so file-sector-derived concentration is empty and a real launch resolves **`sectors_unresolved` →
   dormant** (a new first-class disposition; the +593 was reachable only on the synthetic fixture).
   **Anti-fitting (CONTRACT):** a dormant real outcome NEVER motivates lowering
-  `corroboration.sector_min_weight`. The real named unblock is now an **external ticker→GICS sector
-  classifier** (the daily file gives holdings, not sectors); holdings-intake coverage (per-issuer /
-  NPORT-P) is secondary — do not widen either ad hoc.
+  `corroboration.sector_min_weight`.
+- **SOI-derived sector concentration — the EDGAR filing carries the GICS grouping; the ticker→GICS
+  classifier is RETIRED (§4c resolver)** — ratified:
+  `docs/decisions/2026-07-04-soi-derived-sector-concentration.md` (design:
+  `docs/2026-07-04-soi-derived-sector-concentration.md`). The prior bullet's "external ticker→GICS
+  classifier" unblock was a **convergent-prior error**: the primary source already publishes the sector
+  grouping. A fund's periodic EDGAR filing renders a **GICS-industry-grouped Schedule of Investments**
+  (`SOFTWARE — 38.7%`, `ELECTRIC UTILITIES — 6.4%`); sector concentration is derived by parsing those
+  industry headers and rolling **industry → GICS sector** through a **frozen `gics_industry_sector`
+  table** (config, CONTRACT — re-freeze only on a GICS structure revision, never a knob). No per-ticker
+  classifier, no third-party feed (a bought feed breaches the primary-source wall). This is the
+  **resolver** of `sectors_unresolved`: when the first SOI lands, `sensors/soi.py` derives `{sector:
+  weight}`, thresholds it with the frozen `sector_min_weight`, and routes via the shared
+  `launch_corroboration.route_corroboration` (holdings + SOI feed **one** overlap/accrete/lag path), the
+  deferred reach-back preserving `detected_at` as T2. **Extraction-unreliable → `fault`, never a wrong
+  sector set** (fund block not isolable / unknown industry / reconcile miss); bs4 owns structure, our
+  code owns which-industry-and-rollup, the human owns significance. **Primary-source findings:** the
+  sector-bearing artifact is the **`NPORT-EX`** exhibit (multi-fund — fund-block isolation is mandatory);
+  the **reconcile-to-`COMMON STOCKS`-total** check caught a mixed-case `SPECIALIZED REITs` the first regex
+  dropped; on real TEKX the Jul-2025 SOI clears `{Financials, Industrials, IT, Utilities}` (Financials
+  10.1% too — filed truth over the spec's 3-sector prose) → **+593 on real data**, and Jan-2026 stays
+  **dormant** (Utilities 6.4% < floor). **Live EDGAR-SOI-fetch is DEFERRED to M5** (tied to `EdgarClient`;
+  `SOI_FORMS`/`latest_soi`/`index.json` doc resolution) — **drop-and-freeze for tests, fetch-on-cadence
+  for the runner; the two never conflate** (fixtures are never refreshed by fetch code). `parse_nport_
+  holdings` stays the labeled §3b stub. Holdings-intake coverage (per-issuer / NPORT-P) remains secondary
+  — do not widen ad hoc.
 
 ## Append-only
 - Nothing under `events/` is ever edited or deleted. Corrections are new events.
