@@ -160,10 +160,16 @@ sector_map:
 # (load-bearing: `overlaps` compares these strings to a lead's basket sectors — a name mismatch would
 # silently never match). Keys are GICS industry names; the parser normalizes both sides (uppercase,
 # "&"->"and", punctuation-insensitive) so filing renderings like "OIL, GAS & CONSUMABLE FUELS" and
-# "SPECIALIZED REITs" match. Sourced from the GICS structure (MSCI / S&P Dow Jones), post the March-2023
-# reclassification. FROZEN: re-freeze only on a GICS structure revision, with a config.changed fossil —
-# never edited to rescue a threshold outcome. An industry absent here -> the SOI parser emits a `fault`
-# (unknown industry), never a silent mis-roll.
+# "SPECIALIZED REITs" match. FROZEN: re-freeze only on a GICS structure revision, with a config.changed
+# fossil — never edited to rescue a threshold outcome. An industry absent here -> the SOI parser emits a
+# `fault` (unknown industry), never a silent mis-roll.
+#
+# VERIFIED against PRIMARY-SOURCE GICS (2026-07-04): diffed row-by-row against MSCI's "GICS structure and
+# definitions effective close of March 17, 2023" xlsx (sheet "GICS structure eff March 2023"), excluding
+# the two discontinued industries (Internet & Direct Marketing Retail; Thrifts & Mortgage Finance).
+# Result: 74/74 exact match, 0 mis-mapped sectors. The design-thread review flagged that the reconcile
+# check guards parsing but not the rollup, so this table was checked against GICS itself, not recall (see
+# docs/decisions/2026-07-04-soi-derived-sector-concentration.md). test_soi_config.py guards its shape.
 gics_industry_sector:
   # Energy
   Energy Equipment & Services: Energy

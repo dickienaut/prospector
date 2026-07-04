@@ -97,6 +97,36 @@ current SOI — is deferred to the M5 runner, tied to the existing `EdgarClient`
 
 `parse_nport_holdings` stays the labeled §3b stub — do not fill it (N-PORT XML carries no GICS).
 
+## Rollup-table verification (design-thread review follow-up)
+
+The design-thread review flagged the one unguarded surface: the **reconcile-to-`COMMON STOCKS` check
+guards parsing, not the rollup.** Reconciling industry percentages to the total is invariant to which
+sector bucket each industry lands in — a mis-mapped `PHARMACEUTICALS → Information Technology` reconciles
+cleanly and yields a wrong sector set silently. The goldens exercise only the ~15–20 industries in
+TEKX/DECO; the other ~54 rows were on the builder's memory — the same convergent-prior surface. (Severity
+is graceful — a rollup error over-fires and is handed to the human, never a silent miss — so this was
+cheap, not urgent; closed here rather than let it drift into the runner.)
+
+**Two guards, both landed:**
+1. **Content verified against primary-source GICS (2026-07-04).** The full 74-row `gics_industry_sector`
+   table was diffed row-by-row against MSCI's **"GICS structure and definitions effective close of March
+   17, 2023"** xlsx (sheet `GICS structure eff March 2023`), read with `openpyxl`, normalized with the
+   parser's own `_norm` (uppercase / `&`→`and` / punctuation-insensitive) so annotation suffixes
+   (`(New Name)`, `(New)`, `(New Code)`) and the two `(Discontinued)` industries (Internet & Direct
+   Marketing Retail; Thrifts & Mortgage Finance) reconcile. **Result: 74 authoritative active industries,
+   74 in the table, 0 missing / 0 extra / 0 mis-mapped.** The table was checked against GICS itself, not
+   recall — the recall was the unverified prior. (The 2023 sub-industry moves — Transaction & Payment
+   Processing → Financials, Data Processing → Industrials — are level-4 and confirm, but don't change, the
+   level-3 industry sectors this table maps.) The MSCI xlsx is not vendored (it embeds MSCI's copyrighted
+   definitions; the project holds a primary-source-wall discipline) — the verification is recorded here
+   and in the `config/prospector.yaml` comment, and is re-runnable by re-downloading the file.
+2. **Structural test (`tests/test_soi_config.py`).** Pins the table's shape so a future edit can't
+   silently break it: every value is one of the 11 canonical GICS sector strings; the value set equals
+   `sector_map`'s values (the overlap vocabulary — drift would silently fail a match); keys are unique;
+   and the table is the complete 74-industry set. Content itself is CONTRACT frozen reference data, so a
+   future change is guarded the same way as `sector_map` — a deliberate `config.changed` fossil, never a
+   silent edit.
+
 ## Method note
 
 Third convergent-prior correction of this arc (after CSV-not-xlsx and the blank `Sector` column), all
