@@ -1,0 +1,17 @@
+Fixture provenance — RECORDED-REAL (not synthetic). See the fixture-provenance discipline in CLAUDE.md.
+
+file:          holdings-daily-us-en-tekx.xlsx
+fund:          State Street Galaxy Transformative Tech Accelerators ETF (TEKX)
+format:        xlsx (Microsoft OOXML; magic bytes PK\x03\x04) — SSGA's real daily-holdings format
+source_url:    https://www.ssga.com/us/en/intermediary/library-content/products/fund-data/etfs/us/holdings-daily-us-en-tekx.xlsx
+fund_page:     https://www.ssga.com/us/en/intermediary/etfs/state-street-galaxy-transformative-tech-accelerators-etf-tekx
+retrieved_at:  2026-07-03 (holdings "As of 01-Jul-2026" per the file's own preamble)
+retrieved_by:  the owner, downloaded from SSGA and dropped into the fixtures folder
+
+why frozen:    The golden fixture that closes the fixture-provenance gap for the launch corroboration
+               slice (§4c). It proved two primary-source facts the synthetic CSV hid: (1) the real
+               file is xlsx, not CSV — forcing xlsx support into ingest/holdings.py; (2) the daily
+               file leaves the Sector column "-" for this active fund, so file-sector-derived
+               concentration yields an empty set → real TEKX resolves to `sectors_unresolved` (dormant),
+               NOT a corroboration. See docs/decisions/2026-07-04-real-holdings-xlsx-and-blank-sectors.md.
+do not edit:   frozen substrate. If SSGA's format changes, freeze a NEW dated file; never edit this one.

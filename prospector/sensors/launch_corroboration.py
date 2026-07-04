@@ -46,19 +46,26 @@ from prospector.store.envelope import SYSTEM_LEAD, parse_ts
 
 # --- Piece 1: holdings-derived concentration (the fragile part, isolated) -----------------------
 
+# SSGA's "not disclosed" markers in the daily file's Sector column. VERIFIED against the real TEKX
+# file (2026-07-03): an ACTIVE/thematic fund discloses holdings but leaves Sector "-" on every row, so
+# these are unresolved, NOT a sector — treating "-" as a sector would forge a phantom {"-"} bucket.
+_UNRESOLVED_SECTOR = frozenset({"", "-"})
+
+
 def sector_concentration(holdings: pd.DataFrame | None, min_weight: float) -> frozenset[str]:
-    """A fund's dominant sectors, DERIVED from its holdings (ground truth, not prose). Aggregate the
-    `sector` field by weight; a sector is 'present' iff it holds ≥ `min_weight` of total fund weight.
-    Rows with an empty sector are ignored. This is the live replacement for the backtest's hand-filled
-    `concentration_industries` — it decides *which* sectors the fund is in, never whether that means
-    anything (that's the overlap + the human)."""
+    """A fund's dominant sectors, DERIVED from its holdings' `sector` field (ground truth, not prose).
+    Aggregate by weight; a sector is 'present' iff it holds ≥ `min_weight` of total fund weight. An
+    unresolved sector ("" or SSGA's "-") is ignored — so a fund whose file carries NO sectors (every
+    active thematic ETF, per primary-source review) yields the **empty set**, which the caller reads
+    as `sectors_unresolved` (dormant), never a phantom match. This decides *which* sectors the fund is
+    in, never whether that means anything (the overlap + the human do that)."""
     if holdings is None or holdings.empty:
         return frozenset()
     by_sector: dict[str, float] = {}
     for _, row in holdings.iterrows():
         sec = str(row.get("sector", "")).strip()
         w = row.get("weight")
-        if not sec or w is None:
+        if sec in _UNRESOLVED_SECTOR or w is None:
             continue
         by_sector[sec] = by_sector.get(sec, 0.0) + float(w)
     return frozenset(sec for sec, w in by_sector.items() if w >= min_weight)
@@ -134,6 +141,18 @@ def corroborate(launch: Mapping, holdings: pd.DataFrame | None,
         return {"action": "holdings_unavailable", "sectors": None, "matched": []}
 
     sectors = sector_concentration(holdings, float(cfg["corroboration"]["sector_min_weight"]))
+
+    if not sectors:
+        # Holdings parsed, but the file carries no resolvable GICS sectors (SSGA leaves Sector "-" for
+        # active funds — the primary-source reality). We cannot compute an overlap, so we FLAG rather
+        # than guess: `sectors_unresolved`, dormant on _system (the launch-side twin of
+        # holdings_unavailable, one level in). Deriving sectors would need an external ticker→GICS
+        # classifier — the deeper unblock, out of this slice.
+        emit({"ts": now, "lead": SYSTEM_LEAD, "type": "launch",
+              "payload": {**base, "concentration_sectors": [], "corroboration": "sectors_unresolved"},
+              "schema": 1})
+        return {"action": "sectors_unresolved", "sectors": [], "matched": []}
+
     matched = sorted(lid for lid, ls in active_lead_sectors.items() if overlaps(sectors, ls))
 
     if not matched:

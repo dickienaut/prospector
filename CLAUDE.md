@@ -3,8 +3,15 @@
 This repo is **Project Prospector**, the offensive twin of the thesis smoke detector. It watches
 the ETF universe for structural novelty and proposes **reading, never orders**.
 
-The canonical spec is `docs/prospector-v1-spec-rev11-2026-07-03.md` (rev11; earlier revs kept as
-history). Read it before changing anything load-bearing. Rev11 folds the mandate-diff precision into
+The canonical spec is `docs/prospector-v1-spec-rev12-2026-07-03.md` (rev12; earlier revs kept as
+history). Read it before changing anything load-bearing. Rev12 folds the launch corroboration hook
+(§4c) to **built** (the M4 capstone) and records its finding at deflated strength — the live lag is
+bounded by holdings coverage, an **existence proof, not a rate** — plus the fixture-provenance honesty.
+Primary-source review then sharpened it: the real SSGA daily file is **xlsx, not CSV**, and for an
+**active fund carries no `Sector` column at all** (all "-"), so file-sector-derived concentration is
+empty → real TEKX → `sectors_unresolved` (dormant), not a corroboration; the +593 was reachable only on
+the synthetic fixture (see `docs/decisions/2026-07-04-real-holdings-xlsx-and-blank-sectors.md`). Rev11
+folds the mandate-diff precision into
 §4d/§7 (raw-HTML frozen per accession, section extracted on *read*; priority-match Strategies→Objective;
 specified extraction-unreliable→`fault` conditions) and adds a **CONTRACT state-source invariant for the
 §9 runner**: the mandate sensor's "prior" is its last *frozen* prospectus blob, never the registry
@@ -90,8 +97,15 @@ Design-thread-authorized amendments to CONTRACT defaults are recorded under `doc
   finding, at full strength:** the live lag is **bounded by holdings coverage, not the hook** —
   `ingest/holdings.py` is SPDR-only, so outside that family the lag is **structurally unmeasurable**;
   the v1 live lag is an **existence proof, not yet a rate**, and `holdings-unavailable → dormant` is the
-  **first-class majority case** (flag the blind spot, never guess). Named next slice:
-  **holdings-intake coverage** (per-issuer parsers / NPORT-P) — do not widen intake ad hoc.
+  **first-class majority case** (flag the blind spot, never guess). **Real-data finding (2026-07-04,
+  `docs/decisions/2026-07-04-real-holdings-xlsx-and-blank-sectors.md`):** the real SSGA daily file is
+  **xlsx** (now handled — pinned `openpyxl`) and for an **active fund carries no `Sector` column** —
+  so file-sector-derived concentration is empty and a real launch resolves **`sectors_unresolved` →
+  dormant** (a new first-class disposition; the +593 was reachable only on the synthetic fixture).
+  **Anti-fitting (CONTRACT):** a dormant real outcome NEVER motivates lowering
+  `corroboration.sector_min_weight`. The real named unblock is now an **external ticker→GICS sector
+  classifier** (the daily file gives holdings, not sectors); holdings-intake coverage (per-issuer /
+  NPORT-P) is secondary — do not widen either ad hoc.
 
 ## Append-only
 - Nothing under `events/` is ever edited or deleted. Corrections are new events.
@@ -151,6 +165,19 @@ leaves a `config.changed` fossil — never by a self-updating rule:
 - Tests are offline: a network guard fails any test that opens a real socket. Recorded fixtures
   live in `tests/fixtures/`.
 - All record times are UTC.
+
+## Fixture provenance
+Every test fixture is either **recorded-real** — carrying a source-URL + retrieval-date header (a
+sidecar for binary files like xlsx) — or **declared synthetic** in-band (a trailer or comment that says
+so). No fixture silently stands in for a real filing. Fixtures were the one input class exempt from the
+freeze-the-substrate discipline (§7 frozen ingest); the launch-corroboration slice is why they no longer
+are — a labeled-synthetic SPDR-format holdings fixture carried a green the real filing had not yet
+earned. Reading the real file broke two shared (convergent) priors the cross-thread review could not:
+the real SSGA daily file is **xlsx, not CSV**, and for an **active fund carries no `Sector` column at
+all** ("-"), so the derivation was proven against *imagined* messiness, not *filed* messiness (the split
+assertion held, so nothing was wrong — the gap was invisible until someone read the real file). When a
+fixture is synthetic, say so where a reader will see it; when it is real, say where it came from and
+when. Primary-source verification is the specific antidote to convergent priors.
 
 ## Documentation (standing practice — document as we build)
 - `ARCHITECTURE.md` (repo root) is the top-level map of what's built and why. **Keep it current**:
