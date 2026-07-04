@@ -31,16 +31,21 @@ from pathlib import Path
 from typing import Callable
 
 import httpx
+import openpyxl
 import pandas as pd
 
 from prospector.primitives.atomic import write_atomic
 from prospector.store.layout import StoreLayout
 
-# SPDR daily holdings endpoint (per-ticker CSV). The live path may need per-fund adjustment for
-# semi-transparent active ETFs that disclose less directly (§4c fallback: tag unresolved rather than
-# guess); the freeze/parse discipline below is source-agnostic and fully tested offline.
+# SPDR daily holdings endpoint. VERIFIED against a real file (2026-07-03): SSGA serves this as an
+# **xlsx**, not a CSV (the earlier `.csv` assumption was never exercised against a real download — a
+# synthetic CSV fixture hid it). `parse_spdr_holdings` reads either format. PRIMARY-SOURCE CAVEAT for
+# §4c: the real daily file for an ACTIVE/thematic fund (e.g. TEKX) leaves the `Sector` column blank
+# ("-") — it discloses holdings but not GICS sectors — so file-sector-derived concentration yields an
+# empty set and the honest disposition is `sectors_unresolved` (tag unresolved, never guess). See
+# docs/decisions/2026-07-04-real-holdings-xlsx-and-blank-sectors.md.
 SPDR_URL_TEMPLATE = ("https://www.ssga.com/us/en/intermediary/library-content/products/fund-data/"
-                     "etfs/us/holdings-daily-us-en-{symbol}.csv")
+                     "etfs/us/holdings-daily-us-en-{symbol}.xlsx")
 
 BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
@@ -92,18 +97,32 @@ def _parse_weight(raw: str) -> float | None:
         return None
 
 
+def _rows_from_body(body: bytes) -> list[list[str]]:
+    """The holdings file's rows as lists of string cells, from EITHER a real SSGA **xlsx** (the live
+    format — zip magic `PK\\x03\\x04`) or a CSV (the synthetic fixtures / any csv source). xlsx cells
+    are stringified (None → "") so the one downstream header-find + row logic is format-agnostic; the
+    Weight cell arrives as a number there (e.g. 7.06), which `_parse_weight` handles like "7.06%"."""
+    if body[:4] == b"PK\x03\x04":  # xlsx is a zip; the CSV path never begins with this
+        wb = openpyxl.load_workbook(io.BytesIO(body), read_only=True, data_only=True)
+        ws = wb.active
+        return [["" if c is None else str(c) for c in row] for row in ws.iter_rows(values_only=True)]
+    text = body.decode("utf-8-sig", errors="replace")  # SPDR CSVs can carry a UTF-8 BOM
+    return list(csv.reader(io.StringIO(text)))
+
+
 def parse_spdr_holdings(body: bytes, ticker: str) -> pd.DataFrame:
-    """Parse a SPDR daily holdings CSV into a tidy membership frame [name, identifier, weight,
-    sector], sorted by weight desc. Robust to the file's shape: a multi-line preamble (fund name /
-    index / 'As of' date / blank), the header row, the holdings, then a footer/disclaimer.
+    """Parse a SPDR daily holdings file (xlsx — the real SSGA format — or CSV) into a tidy membership
+    frame [name, identifier, weight, sector], sorted by weight desc. Robust to the file's shape: a
+    multi-line preamble (fund name / ticker / 'As of' date / blank), the header row, the holdings,
+    then a footer/disclaimer.
 
     We locate the header by content (the row carrying both 'Name' and 'Weight'), then read data rows
     until a blank line or a row with no numeric weight (the footer) — so preamble and disclaimer are
     skipped without a magic skiprows count. Cash/derivative rows are KEPT as recorded (§3: a holding
-    is a holding; the dispersion sensor drops what it can't price, honestly, rather than us guessing
-    here). Raise HoldingsIngestError on a body with no recognizable header/weight column."""
-    text = body.decode("utf-8-sig", errors="replace")  # SPDR CSVs can carry a UTF-8 BOM
-    rows = list(csv.reader(io.StringIO(text)))
+    is a holding). The `Sector` value is kept AS RECORDED too — including SSGA's "-" placeholder for
+    active funds that disclose no GICS sector; `sector_concentration` (§4c) treats "-"/"" as
+    unresolved. Raise HoldingsIngestError on a body with no recognizable header/weight column."""
+    rows = _rows_from_body(body)
 
     header_idx = None
     col: dict[str, int] = {}

@@ -1,6 +1,6 @@
 # Prospector — Architecture
 
-*A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev11-2026-07-03.md`
+*A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev12-2026-07-03.md`
 for the canonical "what to build," and `docs/decisions/` for the "why we changed our minds." Last
 updated after the launch sensor's detection + two-phase recording slice (milestone 4).*
 
@@ -33,7 +33,7 @@ path places, sizes, or recommends a trade.
 
 ## 2. Module map
 
-~5,000 lines of Python, 341 tests (offline). Packages under `prospector/`:
+~5,000 lines of Python, 344 tests (offline). Packages under `prospector/`:
 
 | Package / module | Responsibility | Key entry points |
 |---|---|---|
@@ -237,7 +237,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ## 9. Status — built vs deferred
 
-**Built (committed, 341 tests green):**
+**Built (committed, 344 tests green):**
 - Milestone 1 — vendored primitives, envelope store, WAL registry, fold engine, reactive snapshots,
   S3 sync, config honesty, reindex.
 - Milestone 2 — EDGAR client, fund registry (HECO rule), failed-resolution machine.
@@ -245,17 +245,19 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - Post-M3 design-thread work — the stress-gate recalibration (0.85 crisis-only), spec rev5's amended
   falsification (reversion criterion), the read-only crash-flags diagnostic (box B), and the
   verdict-disposition vocabulary lock-in.
-- Milestone 4 (**sensors complete**) — spec **rev11** canonical; the **launch sensor** (recording,
-  the consensus clock, `detected_at` preserved); **holdings ingest** (§4d keystone); the **dispersion
-  sensor** (§4b, shadow-wired, generous payload banking the proto-cluster substrate); the **rebalance
-  sensor** (§4d accretion, forward-hash routing); the **mandate-diff sensor** (§4d, targeted
-  strategy-section diff, added pinned `beautifulsoup4`); and the **launch corroboration hook** (§4c
-  capstone) — holdings-derived sectors → both-sides overlap → accrete onto the matched lead → the
-  **signed live cross-stream lag** (+593 on TEKX, computed from real events). Its finding, recorded at
-  full strength: **the live lag is bounded by holdings coverage, not the hook — SPDR-only today, so
-  outside that family it is *structurally unmeasurable*; the measured lag is an existence proof, not
-  yet a rate**, and `holdings-unavailable → dormant` is the first-class majority case. See
-  `docs/decisions/2026-07-03-launch-corroboration-existence-proof.md` (+ the rebalance/mandate notes).
+- Milestone 4 (**sensors complete**) — spec **rev12** canonical; the **launch sensor** (recording,
+  the consensus clock, `detected_at` preserved); **holdings ingest** (§4d keystone; now reads real
+  SSGA **xlsx** — pinned `openpyxl`); the **dispersion sensor** (§4b, shadow-wired, generous payload);
+  the **rebalance sensor** (§4d accretion, forward-hash routing); the **mandate-diff sensor** (§4d,
+  targeted strategy-section diff, pinned `beautifulsoup4`); and the **launch corroboration hook** (§4c
+  capstone) — holdings-derived sectors → both-sides overlap → accrete → the **signed** cross-stream lag.
+  Findings, recorded at full/deflated strength: **the live lag is bounded by holdings coverage, not the
+  hook** (existence proof, not a rate); and from **primary-source review** of the real TEKX file — the
+  real SSGA daily file is **xlsx** and for an active fund **carries no `Sector` column** ("-"), so
+  file-sector-derived concentration is empty and real TEKX resolves **`sectors_unresolved` → dormant**;
+  the +593 was reachable only on the *synthetic* fixture, and the real named unblock is an **external
+  ticker→GICS classifier**. Fixtures are now recorded-real-with-provenance or declared-synthetic. See
+  `docs/decisions/2026-07-04-real-holdings-xlsx-and-blank-sectors.md` and `…-existence-proof.md`.
 
 **Deferred:**
 - Milestone 3b — dispersion **PIT backtest** + NPORT-P parser + delisted-price coverage measurement
@@ -280,7 +282,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ```sh
 uv sync                 # set up the environment
-uv run pytest -q        # 341 tests, offline
+uv run pytest -q        # 344 tests, offline
 uv run pros --help      # the CLI
 uv run pros backtest --from 2019-01-01 --to 2024-12-31 --sweep   # regenerate the acceptance gate
 ```
