@@ -106,6 +106,30 @@ mandate:
   min_section_chars: 80     # a shorter extraction is UNRELIABLE (flagged, never diffed)
   max_section_lines: 400    # no boundary within this many lines -> runaway -> UNRELIABLE
 
+soi:
+  # SOI-derived sector concentration (design docs/2026-07-04-soi-derived-sector-concentration.md; the
+  # §4c RESOLVER of `sectors_unresolved`). The daily xlsx leaves Sector "-" for an active fund, but the
+  # fund's periodic EDGAR filing renders a GICS-INDUSTRY-grouped Schedule of Investments — each industry
+  # header carries its % of net assets ("SOFTWARE — 38.7%", "ELECTRIC UTILITIES — 6.4%"). We isolate the
+  # TARGET FUND's block (multi-fund NPORT-EX filings repeat the same industry headers per fund), parse the
+  # "INDUSTRY — N.N%" headers, roll each to a GICS SECTOR via gics_industry_sector below, and RECONCILE
+  # the summed weights to the fund's "COMMON STOCKS — N%" header. Extraction unreliable (fund block not
+  # isolable, an industry name absent from the frozen table, or a reconcile miss) -> a `fault` for manual
+  # review, NEVER a wrong sector set (the mandate-diff extraction-unreliable discipline, §4d). VERIFIED
+  # against real TEKX NPORT-EX (2025-07-31 + 2026-01-31); the reconcile check already earned its keep by
+  # catching a mixed-case "Specialized REITs" the first regex dropped.
+  #
+  # LIVE FETCH IS DEFERRED (M5, tied to EdgarClient) — see the decision doc. These are the READER knobs.
+  forms: [NPORT-EX, N-CSR, N-CSRS]      # forms that render the grouped SOI (the real TEKX docs are NPORT-EX)
+  section_header: schedule of investments   # per-fund SOI title line (matches "CONSOLIDATED SCHEDULE ..." too)
+  common_stocks_header: common stocks       # the equity-block start header ("COMMON STOCKS — N%")
+  common_stocks_total: total common stocks  # the equity-block end boundary ("TOTAL COMMON STOCKS")
+  # Summed industry weights must match the "COMMON STOCKS — N%" header within this tolerance (fraction of
+  # net assets). Loose enough to absorb one-decimal rounding across ~16 industry lines, tight enough that
+  # a genuinely dropped/misparsed industry (the REITs miss was 2.8pp) trips a fault. Both real fixtures
+  # reconcile EXACTLY; this is headroom, not fitting. DEFAULT (tune if real filings prove noisy).
+  reconcile_tolerance: 0.005            # 0.5pp
+
 corroboration:
   # Launch corroboration hook (spec §4c, M4 capstone). A resolved launch's sectors are DERIVED from
   # its first holdings (ground truth, not prose); a direct sector-set overlap with a live lead's
@@ -129,6 +153,109 @@ sector_map:
   XLB: Materials
   XLRE: Real Estate
   XLU: Utilities
+
+# GICS INDUSTRY -> SECTOR rollup (CONTRACT frozen reference data — NOT a sensor knob). The SOI groups
+# holdings by GICS INDUSTRY (74 of them); corroboration overlaps at the SECTOR level (11), so we roll
+# industry -> sector here. Values are the EXACT 11 canonical sector names used in `sector_map` above
+# (load-bearing: `overlaps` compares these strings to a lead's basket sectors — a name mismatch would
+# silently never match). Keys are GICS industry names; the parser normalizes both sides (uppercase,
+# "&"->"and", punctuation-insensitive) so filing renderings like "OIL, GAS & CONSUMABLE FUELS" and
+# "SPECIALIZED REITs" match. FROZEN: re-freeze only on a GICS structure revision, with a config.changed
+# fossil — never edited to rescue a threshold outcome. An industry absent here -> the SOI parser emits a
+# `fault` (unknown industry), never a silent mis-roll.
+#
+# VERIFIED against PRIMARY-SOURCE GICS (2026-07-04): diffed row-by-row against MSCI's "GICS structure and
+# definitions effective close of March 17, 2023" xlsx (sheet "GICS structure eff March 2023"), excluding
+# the two discontinued industries (Internet & Direct Marketing Retail; Thrifts & Mortgage Finance).
+# Result: 74/74 exact match, 0 mis-mapped sectors. The design-thread review flagged that the reconcile
+# check guards parsing but not the rollup, so this table was checked against GICS itself, not recall (see
+# docs/decisions/2026-07-04-soi-derived-sector-concentration.md). test_soi_config.py guards its shape.
+gics_industry_sector:
+  # Energy
+  Energy Equipment & Services: Energy
+  Oil, Gas & Consumable Fuels: Energy
+  # Materials
+  Chemicals: Materials
+  Construction Materials: Materials
+  Containers & Packaging: Materials
+  Metals & Mining: Materials
+  Paper & Forest Products: Materials
+  # Industrials
+  Aerospace & Defense: Industrials
+  Building Products: Industrials
+  Construction & Engineering: Industrials
+  Electrical Equipment: Industrials
+  Industrial Conglomerates: Industrials
+  Machinery: Industrials
+  Trading Companies & Distributors: Industrials
+  Commercial Services & Supplies: Industrials
+  Professional Services: Industrials
+  Air Freight & Logistics: Industrials
+  Passenger Airlines: Industrials
+  Marine Transportation: Industrials
+  Ground Transportation: Industrials
+  Transportation Infrastructure: Industrials
+  # Consumer Discretionary
+  Automobile Components: Consumer Discretionary
+  Automobiles: Consumer Discretionary
+  Household Durables: Consumer Discretionary
+  Leisure Products: Consumer Discretionary
+  Textiles, Apparel & Luxury Goods: Consumer Discretionary
+  Hotels, Restaurants & Leisure: Consumer Discretionary
+  Diversified Consumer Services: Consumer Discretionary
+  Distributors: Consumer Discretionary
+  Broadline Retail: Consumer Discretionary
+  Specialty Retail: Consumer Discretionary
+  # Consumer Staples
+  Consumer Staples Distribution & Retail: Consumer Staples
+  Beverages: Consumer Staples
+  Food Products: Consumer Staples
+  Tobacco: Consumer Staples
+  Household Products: Consumer Staples
+  Personal Care Products: Consumer Staples
+  # Health Care
+  Health Care Equipment & Supplies: Health Care
+  Health Care Providers & Services: Health Care
+  Health Care Technology: Health Care
+  Biotechnology: Health Care
+  Pharmaceuticals: Health Care
+  Life Sciences Tools & Services: Health Care
+  # Financials
+  Banks: Financials
+  Financial Services: Financials
+  Consumer Finance: Financials
+  Capital Markets: Financials
+  Mortgage Real Estate Investment Trusts (REITs): Financials
+  Insurance: Financials
+  # Information Technology
+  IT Services: Information Technology
+  Software: Information Technology
+  Communications Equipment: Information Technology
+  Technology Hardware, Storage & Peripherals: Information Technology
+  Electronic Equipment, Instruments & Components: Information Technology
+  Semiconductors & Semiconductor Equipment: Information Technology
+  # Communication Services
+  Diversified Telecommunication Services: Communication Services
+  Wireless Telecommunication Services: Communication Services
+  Media: Communication Services
+  Entertainment: Communication Services
+  Interactive Media & Services: Communication Services
+  # Utilities  (all three roll to Utilities — TEKX's Jul-2025 10.7% only clears the floor TOGETHER)
+  Electric Utilities: Utilities
+  Gas Utilities: Utilities
+  Multi-Utilities: Utilities
+  Water Utilities: Utilities
+  Independent Power and Renewable Electricity Producers: Utilities
+  # Real Estate
+  Diversified REITs: Real Estate
+  Industrial REITs: Real Estate
+  Hotel & Resort REITs: Real Estate
+  Office REITs: Real Estate
+  Health Care REITs: Real Estate
+  Residential REITs: Real Estate
+  Retail REITs: Real Estate
+  Specialized REITs: Real Estate
+  Real Estate Management & Development: Real Estate
 
 identity:
   retry_days: 10           # daily auto-retry window before the manual-resolution queue

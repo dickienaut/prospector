@@ -1,0 +1,20 @@
+Fixture provenance — RECORDED-REAL (not synthetic)
+
+file:         tekx_soi_2026-01-31.htm
+fund:         State Street Galaxy Transformative Tech Accelerators ETF (TEKX), CIK 1516212, SSGA Active Trust
+document:     NPORT-EX exhibit — (Consolidated) Schedules of Investments (Unaudited), report as-of 2026-01-31
+form:         NPORT-EX (the industry-grouped Schedule of Investments is rendered in this exhibit)
+accession:    0001410368-26-034129
+source_url:   https://www.sec.gov/Archives/edgar/data/1516212/000141036826034129/NPORT_J9GY_16383379_0126.htm
+retrieved_at: 2026-07-04
+retrieved_by: design-thread owner; provided to the build as a Safari .webarchive
+captured_as:  Safari .webarchive -> WebMainResource.WebResourceData (the exact bytes sec.gov served to the browser),
+              extracted via plistlib. Renderer is DFIN ArcReporting (see the HTML comment header).
+note:         Because this was a browser capture, sec.gov's Akamai bot-detection <script> is present in the bytes.
+              It is inert for us — html_to_text() decomposes <script> before any parsing.
+why frozen:   The GICS-industry-grouped SOI is the sector-bearing primary source (§4c SOI resolver). This is the
+              DORMANT snapshot: TEKX Utilities is 6.4% (Electric Utilities only) — below the frozen 0.10 floor —
+              so it misses XLK×XLU and is recorded dormant. Kept to lock the anti-fitting CONTRACT: a dormant
+              real snapshot NEVER motivates lowering corroboration.sector_min_weight.
+do not edit:  frozen substrate. If the filing format changes, freeze a NEW dated file; never edit this one.
+              NEVER refreshed by fetch code — drop-and-freeze for tests, fetch-on-cadence for the runner.

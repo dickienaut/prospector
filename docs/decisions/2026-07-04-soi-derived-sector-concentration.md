@@ -1,0 +1,172 @@
+# SOI-derived sector concentration — the EDGAR filing carries the GICS grouping (the ticker→GICS classifier is retired)
+
+**Ratified:** design thread, 2026-07-04. Design spec: `docs/2026-07-04-soi-derived-sector-concentration.md`.
+Supersedes the "named next slice" of `docs/decisions/2026-07-04-real-holdings-xlsx-and-blank-sectors.md`.
+Folds into the next spec rev.
+
+## The decision
+
+The prior slice concluded the unblock for real-fund sectors was "an external ticker→GICS-sector
+classifier." **That was a convergent-prior error.** The primary source already publishes the sector
+grouping: a fund's periodic EDGAR filing renders a **GICS-industry-grouped Schedule of Investments** —
+each holding under an industry header carrying that industry's percent of net assets (`SOFTWARE — 38.7%`,
+`ELECTRIC UTILITIES — 6.4%`). Sector concentration comes **directly** from parsing those headers and
+rolling **industry → GICS sector** through a frozen table. No per-ticker map, no security master, no
+third-party feed. The SOI path is the **resolver** of the `sectors_unresolved → dormant` disposition the
+daily-xlsx path emits (blank `Sector` column for active funds): when the first industry-grouped SOI lands,
+a deferred pass derives `{sector: weight}`, thresholds it with the frozen `corroboration.sector_min_weight`,
+and routes the launch through the **same** overlap/accrete/lag path as the holdings source — reaching back
+with `detected_at` preserved as T2, so the cross-stream lag measures to detection, not to the SOI's as-of.
+
+## What was built (this slice)
+
+- `prospector/ingest/soi.py` — `SoiIngest` (freeze-per-accession, read side), `extract_soi_sectors`
+  (fund-block isolation → `INDUSTRY — N.N%` parse → industry→sector rollup → reconcile), `dominant_sectors`.
+- `prospector/sensors/soi.py` — `scan(...)`, the deferred accretion pass: fault-on-unreliable, else
+  route via `launch_corroboration.route_corroboration` (extracted so the holdings and SOI sources share
+  one overlap/emit/lag path — the emitted `launch`/`match` event is identical, so `cross_stream_lag` is
+  unchanged).
+- `config/prospector.yaml` — the `soi:` reader block and the frozen `gics_industry_sector:` rollup table.
+- Recorded-real fixtures: `tests/fixtures/soi/tekx_soi_2025-07-31.htm` and `…2026-01-31.htm` (+ sidecars).
+
+## CONTRACT
+
+- **Frozen threshold.** `corroboration.sector_min_weight` (0.10) does not move to rescue a dormant
+  snapshot. Ever. This is the sharpest anti-fitting case yet: TEKX's corroboration turns entirely on
+  whether Utilities reads 10.7% (Jul-2025, clears) or 6.4% (Jan-2026, dormant). The derivation reports
+  the marginal Utilities honestly and lets the as-of truth stand — including the dormant snapshots.
+- **The industry→sector rollup table is frozen reference data, not a tunable.** Sourced from the GICS
+  structure (MSCI / S&P Dow Jones), post the March-2023 reclassification. Values are the **exact 11
+  canonical sector names in `sector_map`** (load-bearing: `overlaps` compares these strings). Re-freeze
+  only on a GICS structure revision, with a `config.changed` fossil — never a sensor knob. An industry
+  absent from the table → a `fault` (unknown industry), never a silent mis-roll.
+- **No third-party sector feed.** A bought feed would breach the primary-source wall. If a constituent's
+  sector were ever genuinely needed at ticker level (it is not, for this slice) it is derivable from the
+  SOI corpus itself, never from an external vendor.
+- **GICS is right for the overlap, wrong for the thesis (HECO, one level down).** For the *mechanical
+  overlap with sector SPDRs*, GICS-to-GICS is correct and consistent (XLK/XLU are themselves GICS-sector
+  funds). But never read the fund's compute×power thesis off its GICS top line — GICS shreds it across
+  Utilities / Industrials / Energy / IT, and files bitcoin miners as "Software" (a taxonomy coincidence,
+  weak thesis meaning; the Utilities leg is the genuinely meaningful one). The overlap is a mechanical
+  screen; the human owns significance.
+- **Parser/meaning/human boundary (same line the mandate-diff draws).** bs4 owns HTML **structure**; this
+  module owns **which fund / which industry / the rollup**; the **human** owns **significance**. The
+  extraction must never grow a "this change is meaningful" opinion.
+
+## Primary-source findings (build-time contact with the real filings)
+
+Both real TEKX SOIs were provided by the owner (egress to `www.sec.gov` is policy-blocked in the build
+environment) as Safari `.webarchive` captures; the `WebMainResource.WebResourceData` — the exact bytes
+sec.gov served — was frozen as the `.htm` fixtures. Reading them corrected/confirmed:
+
+- **Form:** the sector-bearing artifact is the **`NPORT-EX`** exhibit (a multi-fund SSGA Active Trust
+  report), not an N-CSR body. This sets the M5 `SOI_FORMS` finding. (N-PORT *XML* carries no GICS — the
+  rendered SOI in the report is the sector-bearing artifact, as assumed.)
+- **Multi-fund isolation is MANDATORY.** The same industry headers recur across the six funds (TEKX, DECO,
+  HECO, ALLW, PRIV, PRSD); the parser isolates the target fund's block (its titled `SCHEDULE OF
+  INVESTMENTS` → `COMMON STOCKS — N%` → `TOTAL COMMON STOCKS`) before parsing.
+- **Mixed-case industry names.** GICS "Specialized REITs" renders `SPECIALIZED REITs — 2.8%` (lowercase
+  `s`). A first-draft all-uppercase regex silently dropped it — and the **reconcile check caught it** (the
+  parsed industries summed to 96.4% vs the `COMMON STOCKS — 99.2%` header). This is the safety net working
+  as designed: reconcile-to-total turns a missed header into a `fault`, never a silent under-count.
+- **Filed truth over prose (Jul-2025 clears four sectors, not three).** At the 0.10 floor the Jul-2025 SOI
+  clears `{Financials 10.1, Industrials 13.9, Information Technology 52.0, Utilities 10.7}` — Financials
+  (Capital Markets 4.7 + Financial Services 5.4) also clears, which the spec prose's three-sector list
+  omitted. The XLK×XLU match and the **+593** are unaffected (overlap is a subset test: {IT, Utilities} ⊆
+  the derived set). The golden asserts the real four-sector set. Jan-2026 clears `{Information Technology,
+  Industrials}`; Utilities is 6.4% (Electric only) → below the floor → dormant.
+- **The Utilities rollup is the granularity proof.** Jul-2025 Utilities 10.7% = Electric Utilities 5.3 +
+  Independent Power & Renewable Electricity Producers 2.4 + Multi-Utilities 3.0 — three GICS industries
+  that clear the floor **only together**; the industry→sector rollup is exactly what makes the leg present.
+- **Both fixtures reconcile exactly** (99.2% / 99.6%). A derivatives-only fund (ALLW) has no `COMMON
+  STOCKS` block → the parser faults ("COMMON STOCKS block header not found") rather than inventing sectors.
+
+## Deferred — EDGAR-SOI-fetch (fetch-on-cadence), scoped to M5, tied to `EdgarClient`
+
+The **reader** (parse + roll + route + golden tests, on hand-frozen fixtures) is built now. The **live
+fetch** — discovering *which* NPORT-EX/N-CSR accession and *which document within it* carries a fund's
+current SOI — is deferred to the M5 runner, tied to the existing `EdgarClient`:
+
+- `SOI_FORMS` (starting `NPORT-EX`, `N-CSR`, `N-CSRS`) + a `latest_soi(submissions)` mirroring
+  `latest_prospectus`, and accession `index.json` resolution for the non-primary SOI document.
+- `SoiIngest.freeze` is already the write primitive the M5 fetch will go through; `sensors/soi.scan`
+  already takes a `fetch_body` seam (the runner wires it to `EdgarClient`; tests pass a fixture thunk).
+- **Invariant (do not conflate): drop-and-freeze for tests, fetch-on-cadence for the runner.** The frozen
+  `.htm` fixtures are dropped once by hand and are **never** refreshed by fetch code — the offline tests
+  must stay deterministic. The runner's fetch feeds the *live* pipeline only.
+
+`parse_nport_holdings` stays the labeled §3b stub — do not fill it (N-PORT XML carries no GICS).
+
+## Rollup-table verification (design-thread review follow-up)
+
+The design-thread review flagged the one unguarded surface: the **reconcile-to-`COMMON STOCKS` check
+guards parsing, not the rollup.** Reconciling industry percentages to the total is invariant to which
+sector bucket each industry lands in — a mis-mapped `PHARMACEUTICALS → Information Technology` reconciles
+cleanly and yields a wrong sector set silently. The goldens exercise only the ~15–20 industries in
+TEKX/DECO; the other ~54 rows were on the builder's memory — the same convergent-prior surface. (Severity
+is graceful — a rollup error over-fires and is handed to the human, never a silent miss — so this was
+cheap, not urgent; closed here rather than let it drift into the runner.)
+
+**Two guards, both landed:**
+1. **Content verified against primary-source GICS (2026-07-04).** The full 74-row `gics_industry_sector`
+   table was diffed row-by-row against MSCI's **"GICS structure and definitions effective close of March
+   17, 2023"** xlsx (sheet `GICS structure eff March 2023`), read with `openpyxl`, normalized with the
+   parser's own `_norm` (uppercase / `&`→`and` / punctuation-insensitive) so annotation suffixes
+   (`(New Name)`, `(New)`, `(New Code)`) and the two `(Discontinued)` industries (Internet & Direct
+   Marketing Retail; Thrifts & Mortgage Finance) reconcile. **Result: 74 authoritative active industries,
+   74 in the table, 0 missing / 0 extra / 0 mis-mapped.** The table was checked against GICS itself, not
+   recall — the recall was the unverified prior. (The 2023 sub-industry moves — Transaction & Payment
+   Processing → Financials, Data Processing → Industrials — are level-4 and confirm, but don't change, the
+   level-3 industry sectors this table maps.) The MSCI xlsx is not vendored (it embeds MSCI's copyrighted
+   definitions; the project holds a primary-source-wall discipline) — the verification is recorded here
+   and in the `config/prospector.yaml` comment, and is re-runnable by re-downloading the file.
+2. **Structural test (`tests/test_soi_config.py`).** Pins the table's shape so a future edit can't
+   silently break it: every value is one of the 11 canonical GICS sector strings; the value set equals
+   `sector_map`'s values (the overlap vocabulary — drift would silently fail a match); keys are unique;
+   and the table is the complete 74-industry set. Content itself is CONTRACT frozen reference data, so a
+   future change is guarded the same way as `sector_map` — a deliberate `config.changed` fossil, never a
+   silent edit.
+
+## Post-build hardening (2026-07-04 adversarial review)
+
+This slice was built autonomously (a phone session) and then reviewed independently before landing —
+five reviewers across the risk dimensions (parser, GICS table, routing refactor, golden-test honesty,
+CONTRACT/docs), each finding adversarially re-verified. The load-bearing verdicts were positive: the
+GICS table's "0 mis-maps" claim held on an independent GICS reconstruction; the golden test was judged
+genuinely non-tautological (derived sectors re-derived from the real fixtures match); `route_corroboration`
+is a byte-identical code-motion; every CONTRACT holds. Nothing touched the real-data outcome. Four
+low/medium robustness findings were confirmed and fixed (all guards, no threshold moved):
+
+1. **Ambiguous fund-anchor → fault (was the CONTRACT breach).** The section matcher took the FIRST block
+   matching the anchor either-way, with no ambiguity guard — so an anchor that is a substring of two
+   funds (`IG PUBLIC & PRIVATE CREDIT ETF` matches the plain *and* Short-Duration credit funds; the
+   test's own `Digital Asset Ecosystem` matches the plain *and* Hedged funds) silently picked by document
+   order, which could roll up the WRONG fund with `reliable: True` — exactly the "wrong sector set" the
+   module forswears. Now: prefer an exact normalized-title match, fall back to substring only when unique,
+   and **fault on >1 match**. TEKX's stem is unique, so no real outcome changed.
+2. **Wrapped section headers.** `_fund_blocks` matched only single-line `…SCHEDULE OF INVESTMENTS`; the
+   real 2025 DECO/HECO headers render line-wrapped (`…SCHEDULE OF` / `INVESTMENTS`), making those funds
+   invisible and loosening the preceding fund's end-bound. Now handles the wrap, so the end-bound
+   defense-in-depth is functional (TEKX was already saved by its own `COMMON STOCKS` fence).
+3. **`no_dominant_sector` disposition (fossil honesty).** A reliably-parsed but diffuse book (no sector
+   ≥ the floor) yielded an empty set that the SOI caller passed into `route_corroboration` (which
+   documents its input as NON-EMPTY), mislabeling it `dormant_no_match` ("had dominant sectors, none
+   overlapped"). The source now owns the empty case with a distinct, honest label — neither
+   `sectors_unresolved` (the file *does* carry sectors) nor `dormant_no_match` — recorded dormant on
+   `_system`. (A small addition to the corroboration disposition set, noted here for the design thread.)
+4. **Hygiene:** a `None`/empty anchor now faults instead of raising; a GICS name with a `(REITs)`-style
+   qualifier also matches the parenthetical-stripped rendering DFIN sometimes emits (a build-time alias,
+   so the table stays 74 rows); the firing golden now pins the derived sector *set* in-line (symmetry
+   with the dormant golden, so an inflating rollup bug can't hide behind subset-overlap); and the stale
+   ARCHITECTURE test count was corrected. Suite: **367 green** (+4 tests for the new fault/guard paths).
+
+The one finding NOT actioned as a defect: the +593 golden stipulates T1 (the xcorr lead's spawn) as a
+constant rather than a real event — deliberate, since T1's provenance belongs to the xcorr sensor's own
+tests; the golden scopes itself to Assertion B (the lag through real sectors). One finding was refuted.
+
+## Method note
+
+Third convergent-prior correction of this arc (after CSV-not-xlsx and the blank `Sector` column), all
+broken the same way — by primary-source contact, not cross-thread review. The classifier recommendation
+was a default both instances shared; opening the filing dissolved it. The standing habit holds: when a
+load-bearing fact about an external artifact is in question, open the artifact.
