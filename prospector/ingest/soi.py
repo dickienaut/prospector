@@ -96,26 +96,53 @@ def _norm(s: str) -> str:
     return re.sub(r"[^A-Z0-9]+", " ", s.upper().replace("&", " AND ")).strip()
 
 
+def _build_table(raw: Mapping[str, str]) -> dict[str, str]:
+    """Normalize the frozen `gics_industry_sector` config into a `_norm`-keyed lookup. Canonical keys are
+    authoritative; then register a parenthetical-STRIPPED alias for any GICS name that carries a
+    qualifier ("Mortgage Real Estate Investment Trusts (REITs)") so a filing that renders the header
+    WITHOUT the "(REITs)" suffix (DFIN drops it — the real 2025 fixture renders plain "REAL ESTATE
+    INVESTMENT TRUSTS") still rolls up instead of faulting. An alias never clobbers a distinct canonical
+    key, so the table stays 74 rows (test_soi_config) and the aliasing can only reduce spurious faults."""
+    table = {_norm(k): v for k, v in raw.items()}
+    for k, v in raw.items():
+        base = _norm(re.sub(r"\([^)]*\)", " ", k))
+        if base and base not in table:
+            table[base] = v
+    return table
+
+
 def _fund_blocks(lines: list[str], section_header: str) -> list[tuple[str, int]]:
     """Every PRIMARY per-fund SOI section, as `(caps_fund_title, header_line_index)`. A section header
     line ends with the (case-insensitive) `section_header` ("schedule of investments" — also matches
     "consolidated schedule of investments"); a PRIMARY page is one whose next line is NOT "(continued)",
     so each fund contributes exactly one block (its first page, where the COMMON STOCKS block lives). The
-    title is the run of ALL-CAPS lines immediately above the header (the wrapped fund name)."""
-    sh = section_header.lower()
+    title is the run of ALL-CAPS lines immediately above the header (the wrapped fund name).
+
+    Handles BOTH renderings `html_to_text` emits: the header on ONE line, and the DFIN wrap where a caps
+    header splits across "...SCHEDULE OF" / "INVESTMENTS" (real 2025 fixture — DECO/HECO wrap this way).
+    Without the wrap case a whole fund block is invisible, so the PRECEDING fund's end-bound silently
+    spans it (defense-in-depth lost; TEKX only survives because its own COMMON STOCKS fence caps first)."""
+    sh = section_header.lower()             # "schedule of investments"
+    sh_head, sh_tail = sh.rsplit(" ", 1)    # "schedule of", "investments"
     blocks: list[tuple[str, int]] = []
     for i, l in enumerate(lines):
-        if not l.lower().endswith(sh):
+        ll = l.lower()
+        if ll.endswith(sh):
+            title_top = i                   # single-line header
+        elif (ll == sh_tail and _is_caps(l) and i > 0
+              and lines[i - 1].lower().endswith(sh_head) and _is_caps(lines[i - 1])):
+            title_top = i - 1               # wrapped: the caps "...SCHEDULE OF" line sits above "INVESTMENTS"
+        else:
             continue
         nxt = lines[i + 1].lower() if i + 1 < len(lines) else ""
         if "continued" in nxt:  # continuation page, not a fresh fund block
             continue
         parts = []
-        j = i - 1
+        j = title_top - 1
         while j >= 0 and _is_caps(lines[j]):
             parts.append(lines[j])
             j -= 1
-        blocks.append((" ".join(reversed(parts)), i))
+        blocks.append((" ".join(reversed(parts)), i))  # header-END line i marks the section start
     return blocks
 
 
@@ -144,7 +171,7 @@ def extract_soi_sectors(body: bytes, cfg: dict, fund_anchor: str) -> dict:
     do that). `fund_anchor` is the fund's name/ticker used to pick its section (the SOI titles the block
     in caps; a substring match either direction selects it)."""
     soi = cfg["soi"]
-    table = {_norm(k): v for k, v in cfg["gics_industry_sector"].items()}
+    table = _build_table(cfg["gics_industry_sector"])
     tol = float(soi.get("reconcile_tolerance", 0.005))
     lines = [ln for ln in html_to_text(body).split("\n") if ln]
 
@@ -153,17 +180,30 @@ def extract_soi_sectors(body: bytes, cfg: dict, fund_anchor: str) -> dict:
         return {"sectors": {}, "reliable": False, "reason": "no schedule-of-investments section found",
                 "as_of": None}
 
+    # A missing/empty anchor is a fault, not a crash (flag-don't-guess extends to the caller's input).
+    if not fund_anchor:
+        return {"sectors": {}, "reliable": False, "reason": "no fund anchor given", "as_of": None}
     anchor = _norm(fund_anchor)
-    start = end = None
-    for idx, (title, hdr_i) in enumerate(blocks):
-        t = _norm(title)
-        if anchor and (anchor in t or t in anchor):
-            start = hdr_i
-            end = blocks[idx + 1][1] if idx + 1 < len(blocks) else len(lines)
-            break
-    if start is None:
+
+    # Select the target fund's block. Prefer an EXACT normalized-title match; fall back to substring
+    # (either direction) ONLY when unambiguous. An anchor matching MORE THAN ONE block is an unreliable
+    # selection -> fault, NEVER a silent pick by document order (the "extraction-unreliable -> fault,
+    # never a wrong sector set" CONTRACT). E.g. "IG PUBLIC & PRIVATE CREDIT ETF" is a substring of BOTH
+    # the plain and the SHORT DURATION credit funds; first-by-position could roll up the WRONG fund.
+    norm_titles = [_norm(title) for title, _ in blocks]
+    picks = [i for i, t in enumerate(norm_titles) if t == anchor] \
+        or [i for i, t in enumerate(norm_titles) if anchor in t or t in anchor]
+    if len(picks) > 1:
+        return {"sectors": {}, "reliable": False,
+                "reason": (f"fund anchor {fund_anchor!r} is ambiguous — matches {len(picks)} fund blocks "
+                           f"({'; '.join(blocks[i][0] for i in picks)}); refusing to guess"),
+                "as_of": None}
+    if not picks:
         return {"sectors": {}, "reliable": False,
                 "reason": f"fund section not found for anchor {fund_anchor!r}", "as_of": None}
+    idx = picks[0]
+    start = blocks[idx][1]
+    end = blocks[idx + 1][1] if idx + 1 < len(blocks) else len(lines)
 
     as_of = _parse_as_of(lines[start + 1]) if start + 1 < len(lines) else None
 

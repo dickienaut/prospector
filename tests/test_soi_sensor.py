@@ -90,6 +90,26 @@ def test_no_overlap_records_dormant_on_system(layout):
     assert ev["lead"] == SYSTEM_LEAD and ev["payload"]["corroboration"] == "dormant_no_match"
 
 
+def test_reliable_but_no_dominant_sector_records_no_dominant_sector_on_system(layout):
+    # A reliably-parsed but DIFFUSE book — seven sectors each below the 0.10 floor, none dominant. The
+    # source owns the empty case (route_corroboration requires a non-empty set): recorded honestly as
+    # `no_dominant_sector`, NOT mislabeled `dormant_no_match` (which means "had dominant sectors, none
+    # overlapped") nor `sectors_unresolved` (the file DOES carry sectors). detected_at still preserved.
+    pair = xcorr_lead_id([XLK, XLU])
+    active = {pair: frozenset({"Information Technology", "Utilities"})}
+    body = _syn_soi(60.0, [("SOFTWARE", 9.0), ("ELECTRIC UTILITIES", 9.0), ("CAPITAL MARKETS", 9.0),
+                           ("METALS & MINING", 9.0), ("OIL, GAS & CONSUMABLE FUELS", 9.0),
+                           ("AUTOMOBILES", 9.0), ("MACHINERY", 6.0)])
+    events = []
+    res = soi_sensor.scan(LAUNCH, ACC, "Synthetic Tech", active, SoiIngest(layout), CFG, NOW,
+                          events.append, fetch_body=lambda: body)
+    assert res["action"] == "no_dominant_sector" and res["matched"] == []
+    (ev,) = events
+    assert ev["lead"] == SYSTEM_LEAD and ev["payload"]["corroboration"] == "no_dominant_sector"
+    assert ev["payload"]["concentration_sectors"] == []
+    assert ev["payload"]["detected_at"] == "2024-09-09T00:00:00Z"   # T2 still preserved
+
+
 def test_no_blob_and_no_fetch_is_a_noop_never_a_guess(layout):
     # The M5 runner supplies fetch_body; until then a fund with no frozen SOI is simply not resolved yet
     # (no event) rather than guessed.

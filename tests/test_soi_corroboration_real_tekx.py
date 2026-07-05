@@ -46,8 +46,13 @@ def test_jul2025_soi_resolves_the_launch_and_attaches_the_593_lag(layout):
     res = soi_sensor.scan(TEKX, "0001410368-25-011151", ANCHOR, ACTIVE, SoiIngest(layout), CFG, NOW,
                           events.append, fetch_body=lambda: JUL2025)
     assert res["action"] == "corroborated" and res["matched"] == [PAIR]
+    # Pin the DERIVED set in-line (symmetry with the dormant golden): a rollup bug that inflates a spurious
+    # 5th ≥10% sector would keep the subset-overlap green, so the golden must constrain membership itself.
+    assert set(res["sectors"]) == {"Financials", "Industrials", "Information Technology", "Utilities"}
     (ev,) = events
     assert ev["lead"] == PAIR and ev["type"] == "launch" and ev["payload"]["corroboration"] == "match"
+    assert set(ev["payload"]["concentration_sectors"]) == {
+        "Financials", "Industrials", "Information Technology", "Utilities"}
     assert ev["payload"]["detected_at"] == "2024-09-09T00:00:00Z"   # T2 preserved (lag measures to detection)
     assert ev["payload"]["soi_as_of"] == "2025-07-31"               # the resolving filing, for provenance
     # The lag is COMPUTED from the two real timestamps (Assertion B); sectors are checked separately.

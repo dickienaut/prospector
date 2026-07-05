@@ -33,7 +33,7 @@ path places, sizes, or recommends a trade.
 
 ## 2. Module map
 
-~5,000 lines of Python, 359 tests (offline). Packages under `prospector/`:
+~5,000 lines of Python, 367 tests (offline). Packages under `prospector/`:
 
 | Package / module | Responsibility | Key entry points |
 |---|---|---|
@@ -239,7 +239,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ## 9. Status — built vs deferred
 
-**Built (committed, 359 tests green):**
+**Built (committed, 367 tests green):**
 - Milestone 1 — vendored primitives, envelope store, WAL registry, fold engine, reactive snapshots,
   S3 sync, config honesty, reindex.
 - Milestone 2 — EDGAR client, fund registry (HECO rule), failed-resolution machine.
@@ -298,7 +298,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ```sh
 uv sync                 # set up the environment
-uv run pytest -q        # 359 tests, offline
+uv run pytest -q        # 367 tests, offline
 uv run pros --help      # the CLI
 uv run pros backtest --from 2019-01-01 --to 2024-12-31 --sweep   # regenerate the acceptance gate
 ```

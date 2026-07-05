@@ -75,4 +75,16 @@ def scan(launch: Mapping, accession: str, fund_anchor: str,
     base = {"series_id": series_id, "ticker": ticker, "detected_at": launch["detected_at"],
             "unverified_ref": launch.get("unverified_ref"),
             "soi_accession": accession, "soi_as_of": res["as_of"]}
+
+    if not sectors:
+        # Reliable parse, but NO GICS sector clears the frozen floor — a genuinely diffuse equity book.
+        # The SOURCE owns the empty case (route_corroboration documents `sectors` as NON-EMPTY): this is
+        # neither `sectors_unresolved` (the file DOES carry sectors here) nor `dormant_no_match` (there is
+        # no dominant sector that failed to overlap). Record it honestly as `no_dominant_sector`, dormant
+        # on _system — surveyable, and never a false or mislabeled claim in the append-only record.
+        emit({"ts": now, "lead": SYSTEM_LEAD, "type": "launch",
+              "payload": {**base, "concentration_sectors": [], "corroboration": "no_dominant_sector"},
+              "schema": 1})
+        return {"action": "no_dominant_sector", "sectors": [], "matched": []}
+
     return route_corroboration(base, sectors, active_lead_sectors, now, emit)

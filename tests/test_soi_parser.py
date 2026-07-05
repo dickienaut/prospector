@@ -66,12 +66,37 @@ def test_jan2026_real_soi_is_dormant_utilities_below_floor():
 
 def test_multi_fund_isolation_selects_the_target_funds_block():
     # The same industry headers recur across the six funds; the anchor must isolate TEKX's block, not
-    # blend it with DECO's. A different anchor yields a materially different derivation.
+    # blend it with DECO's. A different anchor yields a materially different derivation. DECO's anchor
+    # carries "Galaxy" so it does NOT also match the sibling HEDGED fund (see the ambiguity test below).
     tekx = extract_soi_sectors(JAN2026, CFG, TEKX)["sectors"]
-    deco = extract_soi_sectors(JAN2026, CFG, "Digital Asset Ecosystem")["sectors"]
+    deco = extract_soi_sectors(JAN2026, CFG, "Galaxy Digital Asset Ecosystem")["sectors"]
     assert round(tekx["Information Technology"], 3) == 0.519
     assert round(deco["Information Technology"], 3) == 0.615        # a different fund -> different numbers
     assert tekx != deco
+
+
+def test_ambiguous_anchor_faults_never_guesses_by_document_order():
+    # "Digital Asset Ecosystem" is a substring of BOTH the plain and the HEDGED sibling fund. Picking the
+    # first by document order could isolate the WRONG fund with reliable:True — a wrong sector set, the
+    # worst outcome. The parser must FAULT on an ambiguous anchor (extraction-unreliable → fault).
+    r = extract_soi_sectors(JAN2026, CFG, "Digital Asset Ecosystem")
+    assert not r["reliable"] and r["sectors"] == {} and "ambiguous" in r["reason"]
+
+
+def test_missing_anchor_faults_rather_than_crashing():
+    # A launch whose name never resolved could reach the pass with a None/empty anchor; that is a fault
+    # for manual review, never an uncaught AttributeError that aborts the whole deferred pass.
+    for bad in (None, "", "   "):
+        r = extract_soi_sectors(JAN2026, CFG, bad)
+        assert not r["reliable"] and r["sectors"] == {}
+
+
+def test_wrapped_section_header_fund_is_isolable():
+    # In the real 2025 filing the DECO/HECO headers render line-WRAPPED ("...SCHEDULE OF" / "INVESTMENTS")
+    # rather than on one line; without wrap handling those funds are invisible to section detection. The
+    # anchor must still isolate the wrapped fund's block (and reconcile), proving detection is robust.
+    r = extract_soi_sectors(JUL2025, CFG, "Galaxy Digital Asset Ecosystem")
+    assert r["reliable"] and r["as_of"] == "2025-07-31" and r["sectors"]
 
 
 # === Extraction-unreliable → fault, never a wrong sector set (the §4d discipline) ===============

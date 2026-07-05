@@ -127,6 +127,43 @@ cheap, not urgent; closed here rather than let it drift into the runner.)
    future change is guarded the same way as `sector_map` — a deliberate `config.changed` fossil, never a
    silent edit.
 
+## Post-build hardening (2026-07-04 adversarial review)
+
+This slice was built autonomously (a phone session) and then reviewed independently before landing —
+five reviewers across the risk dimensions (parser, GICS table, routing refactor, golden-test honesty,
+CONTRACT/docs), each finding adversarially re-verified. The load-bearing verdicts were positive: the
+GICS table's "0 mis-maps" claim held on an independent GICS reconstruction; the golden test was judged
+genuinely non-tautological (derived sectors re-derived from the real fixtures match); `route_corroboration`
+is a byte-identical code-motion; every CONTRACT holds. Nothing touched the real-data outcome. Four
+low/medium robustness findings were confirmed and fixed (all guards, no threshold moved):
+
+1. **Ambiguous fund-anchor → fault (was the CONTRACT breach).** The section matcher took the FIRST block
+   matching the anchor either-way, with no ambiguity guard — so an anchor that is a substring of two
+   funds (`IG PUBLIC & PRIVATE CREDIT ETF` matches the plain *and* Short-Duration credit funds; the
+   test's own `Digital Asset Ecosystem` matches the plain *and* Hedged funds) silently picked by document
+   order, which could roll up the WRONG fund with `reliable: True` — exactly the "wrong sector set" the
+   module forswears. Now: prefer an exact normalized-title match, fall back to substring only when unique,
+   and **fault on >1 match**. TEKX's stem is unique, so no real outcome changed.
+2. **Wrapped section headers.** `_fund_blocks` matched only single-line `…SCHEDULE OF INVESTMENTS`; the
+   real 2025 DECO/HECO headers render line-wrapped (`…SCHEDULE OF` / `INVESTMENTS`), making those funds
+   invisible and loosening the preceding fund's end-bound. Now handles the wrap, so the end-bound
+   defense-in-depth is functional (TEKX was already saved by its own `COMMON STOCKS` fence).
+3. **`no_dominant_sector` disposition (fossil honesty).** A reliably-parsed but diffuse book (no sector
+   ≥ the floor) yielded an empty set that the SOI caller passed into `route_corroboration` (which
+   documents its input as NON-EMPTY), mislabeling it `dormant_no_match` ("had dominant sectors, none
+   overlapped"). The source now owns the empty case with a distinct, honest label — neither
+   `sectors_unresolved` (the file *does* carry sectors) nor `dormant_no_match` — recorded dormant on
+   `_system`. (A small addition to the corroboration disposition set, noted here for the design thread.)
+4. **Hygiene:** a `None`/empty anchor now faults instead of raising; a GICS name with a `(REITs)`-style
+   qualifier also matches the parenthetical-stripped rendering DFIN sometimes emits (a build-time alias,
+   so the table stays 74 rows); the firing golden now pins the derived sector *set* in-line (symmetry
+   with the dormant golden, so an inflating rollup bug can't hide behind subset-overlap); and the stale
+   ARCHITECTURE test count was corrected. Suite: **367 green** (+4 tests for the new fault/guard paths).
+
+The one finding NOT actioned as a defect: the +593 golden stipulates T1 (the xcorr lead's spawn) as a
+constant rather than a real event — deliberate, since T1's provenance belongs to the xcorr sensor's own
+tests; the golden scopes itself to Assertion B (the lag through real sectors). One finding was refuted.
+
 ## Method note
 
 Third convergent-prior correction of this arc (after CSV-not-xlsx and the blank `Sector` column), all
