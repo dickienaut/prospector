@@ -53,6 +53,12 @@ BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.3
 # The tidy membership frame's columns.
 MEMBER_COLUMNS = ("name", "identifier", "weight", "sector")
 
+# A full holdings file's parsed FRACTIONAL weights sum to ~1.0 (a whole portfolio). This band is an
+# order-of-magnitude sanity gate on _parse_weight's percent assumption, NOT a precise-sum check — cash and
+# rounding move the sum a few percent; a percent-vs-fraction UNIT error moves it 100x (H1, the review's
+# one silent-failure class). Outside the band -> HoldingsIngestError (a fault), never a silent mis-scale.
+_WEIGHT_SUM_MIN, _WEIGHT_SUM_MAX = 0.5, 1.5
+
 
 class HoldingsIngestError(Exception):
     """Typed holdings-ingest failure: a non-2xx HTTP status (`status` set when known), an unknown
@@ -155,6 +161,19 @@ def parse_spdr_holdings(body: bytes, ticker: str) -> pd.DataFrame:
 
     if not members:
         raise HoldingsIngestError(f"header found but no holdings rows in body for {ticker}")
+
+    # Weight-units sanity (H1) — the check that lived only in the test now lives in the parser.
+    # _parse_weight always divides by 100 on the belief the file is in PERCENT; a file already expressed
+    # in FRACTIONS would be scaled 100x too small — invisible downstream (coverage is scale-invariant) but
+    # fatal to the ABSOLUTE sector_min_weight gate (§4c), silently resolving every fund `dormant` and the
+    # cross-stream lag would never fire. A full holdings file's fractional weights sum to a whole portfolio
+    # (~1.0); an order-of-magnitude miss means the unit assumption is wrong -> fault, never a silent 100x.
+    total_weight = sum(m["weight"] for m in members)
+    if not (_WEIGHT_SUM_MIN <= total_weight <= _WEIGHT_SUM_MAX):
+        raise HoldingsIngestError(
+            f"holdings weights for {ticker} sum to {total_weight:.4f}, outside the plausible "
+            f"[{_WEIGHT_SUM_MIN}, {_WEIGHT_SUM_MAX}] portfolio band — the percent-vs-fraction unit "
+            f"assumption looks wrong (a file already in fractions is silently scaled 100x too small)")
 
     frame = pd.DataFrame(members, columns=list(MEMBER_COLUMNS))
     # Stable order: weight desc, then name — the canonical order the coverage cut and the payload use.
