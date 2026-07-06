@@ -14,9 +14,31 @@ import pytest
 from prospector.fold.snapshots import SnapshotDivergenceError, write_snapshot
 from prospector.primitives.atomic import sha256_file
 from prospector.store.envelope import validate
+from prospector.store.layout import ts_compact
 
 TS = "2026-07-14T13:00:00Z"
 STATE = {"status": "active", "event_count": 3, "latest_z": 2.7}
+
+
+# -- S2: ts_compact is sub-second-lossless, so same-second snapshots don't collide ----------------
+
+def test_ts_compact_is_lossless_across_subsecond_instants():
+    # Whole-second form is unchanged (backward-compatible); sub-second instants are distinguished.
+    assert ts_compact("2026-07-14T13:00:00Z") == "20260714T130000Z"
+    a = ts_compact("2026-07-14T13:00:00.100000Z")
+    b = ts_compact("2026-07-14T13:00:00.900000Z")
+    assert a == "20260714T130000_100000Z" and a != b
+
+
+def test_two_subsecond_snapshots_same_second_do_not_collide_or_diverge(layout, registry):
+    # S2 end-to-end: the runner's reactive policy can snapshot one lead twice in the SAME wall-clock
+    # second on a state change. With a lossless compact form the two DIFFERENT states land on DISTINCT
+    # files — no SnapshotDivergenceError abort. (Pre-fix both mapped to …130000Z and the second raised.)
+    first = write_snapshot(layout, registry, "lead_x", {"status": "active"}, "state_change",
+                           "2026-07-14T13:00:00.100000Z")
+    second = write_snapshot(layout, registry, "lead_x", {"status": "reverted"}, "state_change",
+                            "2026-07-14T13:00:00.900000Z")
+    assert first != second and first.exists() and second.exists()
 
 
 # -- identical state: first-write-wins, no fault, no raise ---------------------

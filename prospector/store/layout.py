@@ -25,9 +25,20 @@ from prospector.store.envelope import parse_ts
 def ts_compact(ts: str) -> str:
     """ISO-8601 UTC -> filename-safe compact form: 2026-07-14T13:00:00Z -> 20260714T130000Z.
     (Colons are legal in S3 keys but hostile everywhere else; the envelope `ts` field itself
-    stays full ISO.)"""
+    stays full ISO.)
+
+    Sub-second precision is preserved (S2): a whole-second ts stays `…130000Z` (backward-compatible),
+    but a ts carrying microseconds appends them (`…130000_123456Z`), so two instants in the SAME
+    wall-clock second produce DISTINCT compact forms. Without this the runner's reactive policy could
+    snapshot one lead twice in the same second (a state change), both would map to
+    `snapshots/{lead}/{ts}.json`, and the second write would hit write_snapshot's divergence check ->
+    SnapshotDivergenceError aborts the run. The form stays filename-safe (digits + `T`/`_`/`Z`, no colon)
+    and one-way (never parsed back), so appending is lossless without changing the whole-second form."""
     dt = parse_ts(ts)
-    return dt.strftime("%Y%m%dT%H%M%S") + "Z"
+    base = dt.strftime("%Y%m%dT%H%M%S")
+    if dt.microsecond:
+        base += f"_{dt.microsecond:06d}"
+    return base + "Z"
 
 
 class StoreLayout:

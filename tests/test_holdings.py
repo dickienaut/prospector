@@ -71,6 +71,19 @@ def test_parse_header_but_no_rows_raises():
         parse_spdr_holdings(body, "XLK")
 
 
+def test_parse_faults_on_fraction_scaled_weights_never_mis_scales_silently():
+    # H1: a file already expressed in FRACTIONS (0.60/0.40, not 60%/40%) would be ÷100'd to 0.006/0.004,
+    # summing to ~0.01 — a silent 100x-small scale, invisible to coverage (scale-invariant) but fatal to
+    # the ABSOLUTE sector_min_weight gate (§4c: every fund would resolve dormant). The weight-units sanity
+    # check faults on the implausible sum instead of mis-scaling — the check that used to live only in the
+    # test now lives in the parser. (A well-formed percent file sums to ~1.0 and passes; see the fixtures.)
+    body = (b"Name,Ticker,Identifier,Weight,Sector\n"
+            b"APPLE INC,AAPL,037833100,0.60,Information Technology\n"
+            b"NEXTERA ENERGY INC,NEE,65339F101,0.40,Utilities\n")
+    with pytest.raises(HoldingsIngestError, match="unit"):
+        parse_spdr_holdings(body, "SYN")
+
+
 # -- weight_covering_members --------------------------------------------------
 
 def test_coverage_truncates_through_ninety_percent():
