@@ -33,7 +33,7 @@ path places, sizes, or recommends a trade.
 
 ## 2. Module map
 
-~5,000 lines of Python, 367 tests (offline). Packages under `prospector/`:
+~5,300 lines of Python, 380 tests (offline). Packages under `prospector/`:
 
 | Package / module | Responsibility | Key entry points |
 |---|---|---|
@@ -67,7 +67,9 @@ path places, sizes, or recommends a trade.
 | `backtest/report.py` | The acceptance-gate artifact (recall/precision/falsification/lag) | `build_report()`, `render_markdown()` |
 | `backtest/corroboration.py` | Cross-stream corroboration scoring (sector→keyword) | `score_all()` |
 | `backtest/beta_diagnostic.py` | **Read-only** crash-flags diagnostic (never wired to the sensor) | `scoped_beta_slice()`, `two_clock_read()` |
-| `cli/main.py` | The `pros` CLI — read surfaces + verdict/identity/backtest | `cli` |
+| `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push; **thin spine** (launch-recording wired; other sensors + new logic are spec-cited SLOTS) | `run_tick()` |
+| `runner/deps.py` / `runner/notify.py` / `runner/runlog.py` | Injected seam bundle; the `Notifier` transport (`NullNotifier` until the M5 email slice); per-tick run-log (§9g, its own `runs` table, telemetry — never a lead event) | `RunnerDeps`, `NullNotifier`, `RunLog`, `write_run_log()` |
+| `cli/main.py` | The `pros` CLI — read surfaces + verdict/identity/backtest + the `run` cadence entrypoint | `cli` |
 
 Vendoring note: `primitives/` and the registry structure are ported from the sibling repo's
 `ltee_archive/` — *disciplines and query shapes only*, with the trading ontology stripped and the
@@ -198,11 +200,14 @@ ingest lands (ground truth over prose — the same look-through-is-truth logic a
 
 ## 7. The `pros` CLI (`cli/main.py`)
 
-Read-only except three writers (verdict, manual identity resolve, store reindex). **No run-now, no
-capture trigger, no recompute-on-demand** — cadence is the discipline.
+Read-only except four writers (verdict, manual identity resolve, store reindex, and the `run`
+cadence tick). **No run-now, no capture trigger, no recompute-on-demand** — cadence is the discipline;
+`pros run` is a *cadence entrypoint* (one invocation = one tick, cron-invoked), not an on-demand
+recompute (its only option is `--store`).
 
 | command | what it does |
 |---|---|
+| `pros run` | Execute ONE cadence tick (§9): config honesty → ingest → sensors → identity retries → snapshots → push-on-state-change. The scheduled entrypoint (cron invokes it; scheduling is M7) |
 | `pros lead list` / `lead show <id>` | Read-only lead views (folds of the record) |
 | `pros verdict <id> <disposition> [-m note]` | Append a verdict (see below); a changed mind supersedes |
 | `pros identity resolve <ticker> --series-id S######` | Manual resolution-queue path (EDGAR-verified) |
@@ -239,7 +244,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ## 9. Status — built vs deferred
 
-**Built (committed, 367 tests green):**
+**Built (committed, 380 tests green):**
 - Milestone 1 — vendored primitives, envelope store, WAL registry, fold engine, reactive snapshots,
   S3 sync, config honesty, reindex.
 - Milestone 2 — EDGAR client, fund registry (HECO rule), failed-resolution machine.
@@ -269,6 +274,17 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   a wrong sector set. **On real TEKX NPORT-EX the +593 now attaches on primary-source data** (Jul-2025
   clears {Financials, Industrials, IT, Utilities}); Jan-2026 stays dormant (Utilities 6.4% < floor,
   threshold frozen — anti-fitting). See `docs/decisions/2026-07-04-soi-derived-sector-concentration.md`.
+- **Milestone 5 — the runner skeleton (the thin spine, build-order step 1)** — `prospector/runner/` +
+  `pros run`: the §9 cadence driver. It sequences the deterministic sensors in the CONTRACT run order
+  (config-honesty-first → ingest → sensors → identity retries → capture no-op → reactive snapshots →
+  push), adds **no intelligence**, and is stateless between ticks (between-tick state recovered from the
+  fossil record, §9f — no side cache). Proven end to end through **one** vertical, launch-recording
+  (§4c: mf-tickers diff → `launch.scan` → identity retries), with the run-log (§9g), soft-fault-vs-fatal
+  exception granularity, and the `fold.state_changed`-pinned push (§10) all landed and offline-tested
+  (fixture clock, two-cold-runs determinism). The two Claude-Science runner-blockers are in: **H1**
+  (holdings weight-units sanity) and **S2** (sub-second-lossless `ts_compact`). Spec:
+  `docs/prospector-m5-runner-spec-2026-07-05.md`; build record + follow-on sequencing:
+  `docs/decisions/2026-07-06-m5-runner-skeleton.md`.
 
 **Deferred:**
 - Milestone 3b — dispersion **PIT backtest** + NPORT-P parser + delisted-price coverage measurement
@@ -282,9 +298,13 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   live pull. The reader is built and tested on hand-frozen fixtures; **drop-and-freeze for tests,
   fetch-on-cadence for the runner — the two never conflate** (fixtures are never refreshed by fetch).
   See `docs/decisions/2026-07-04-soi-derived-sector-concentration.md`.
-- Milestone 5 — the live **§9 cadence runner** (calls the sensor `scan`s daily, owns the corroboration
-  retry-until-holdings/SOI-land loop and the mandate frozen-prior invariant), email (heartbeat/push/
-  dead-man), read-only Streamlit (incl. the macro-catalog + launch panels), verdict CLI polish.
+- Milestone 5 — the remaining build-order steps on top of the landed runner skeleton (above): **step 2**
+  the SOI-fetch wired to `EdgarClient` (§9b); **step 3** the deferred corroboration/SOI retry-until-lands
+  loop (§9d) + the mandate frozen-prior invariant (§9c) + the dispersion shadow clock (§9e) — the
+  genuinely-new runner logic, currently spec-cited SLOTS in `runner/runner.py`; **step 4** email
+  (heartbeat/push/dead-man, deterministic templating) + the dormant-pile coverage report; **step 5** the
+  read-only Streamlit (incl. the macro-catalog + launch + coverage panels). Runner-path integrity fixes
+  (I1/B1/B2/H4, from the Claude-Science review) land before the identity/HECO path is leaned on hard.
 - **v2 (banked, not built)** — the **proto-cluster / pseudo-ETF** layer (spec rev8 Appendix B): a
   price-only, observation-only re-read of dispersion history (the canary is a cluster, never a single
   name, and never the trade). v1's only action is the generous dispersion payload that banks its
