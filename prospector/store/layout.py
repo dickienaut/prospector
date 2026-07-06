@@ -11,6 +11,7 @@
     ingest/etfdb/{date}/...                    (milestone 4)
     registry/funds/{series_id}.json            versioned fund registry objects
     baselines/{date}/...
+    runs/{date}_{run_id}.json                  per-tick operational run-log (milestone 5, §9g)
     registry.sqlite                            WAL index — uploaded only via .backup snapshot
     backtest/                                  synthetic history — NEVER under events/ (CONTRACT)
 """
@@ -95,8 +96,17 @@ class StoreLayout:
     def baselines_path(self, date: str, name: str) -> Path:
         return self.root / "baselines" / date / name
 
+    def runs_path(self, date: str, run_id: str) -> Path:
+        # One run-log object per tick (spec §9g): operational telemetry, NOT a lead event. The
+        # date prefix keeps a day's runs adjacent; the run_id makes the name unique within a day.
+        # The runs/ tree is the truth; the `runs` index table (runner/runlog.py) is queryable over it.
+        return self.root / "runs" / f"{date}_{run_id}.json"
+
     def events_root(self) -> Path:
         return self.root / "events"
+
+    def runs_root(self) -> Path:
+        return self.root / "runs"
 
     def snapshots_root(self) -> Path:
         return self.root / "snapshots"

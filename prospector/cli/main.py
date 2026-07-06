@@ -96,6 +96,54 @@ def store_reindex(store_path):
                f"skipped={counts['skipped']}")
 
 
+# -- run (the M5 cadence entrypoint — NOT a run-now surface, spec §9) --------------
+
+@cli.command("run")
+@_store_option
+def run(store_path):
+    """Execute ONE cadence tick: config honesty -> ingest -> sensors -> identity retries ->
+    snapshots -> push-on-state-change (spec §9). This is the scheduled ENTRYPOINT — cron/EventBridge
+    invokes it (scheduling itself is milestone 7). It is NOT a run-now surface: one invocation is one
+    tick, it records on cadence and pushes on state change, and there is deliberately no flag to
+    recompute or capture on demand (CLAUDE.md, no-run-now CONTRACT). The runner adds no intelligence;
+    it sequences the deterministic sensors and never touches a trade path (firewall CONTRACT)."""
+    import time
+    from uuid import uuid4
+
+    from prospector.primitives.atomic import write_atomic
+    from prospector.runner import RunnerDeps, run_tick
+    from prospector.runner.notify import NullNotifier
+
+    layout = _layout(store_path)  # a writer: Registry() below creates the store if absent
+    cfg, cfg_hash = load_config(_CONFIG_PATH)
+    edgar_cfg = cfg.get("edgar") or {}
+    user_agent = edgar_cfg.get("user_agent")
+    if not user_agent:
+        raise click.ClickException(
+            "edgar.user_agent missing from config/prospector.yaml — SEC requires a declared "
+            "User-Agent")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    tick_date = now[:10]
+
+    registry = Registry(layout.registry_path())
+    try:
+        # persist wired so every EDGAR pull is frozen before parse (§3, §9a).
+        edgar_client = EdgarClient(
+            str(user_agent),
+            max_per_sec=float(edgar_cfg.get("max_requests_per_sec", 8.0)),
+            persist=lambda name, body: write_atomic(layout.edgar_path(tick_date, name), body))
+        deps = RunnerDeps(
+            layout=layout, registry=registry, event_store=EventStore(layout, registry),
+            edgar_client=edgar_client, notifier=NullNotifier(), cfg=cfg, cfg_hash=cfg_hash,
+            now=now, run_id=uuid4().hex, monotonic=time.monotonic)
+        runlog = run_tick(deps)
+    finally:
+        registry.close()
+    click.echo(f"run {runlog.run_id} date={runlog.date} "
+               f"config_changed={runlog.config_changed} pushed={runlog.pushed} "
+               f"faults={len(runlog.faults)}")
+
+
 # -- lead (read-only views) -----------------------------------------------------
 
 @cli.group("lead")
