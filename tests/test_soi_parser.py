@@ -130,3 +130,64 @@ def test_parser_returns_only_structural_keys_never_a_significance_opinion():
     # dict is exactly the structural contract; no "meaningful"/"significant"/"verdict" leaks in.
     r = extract_soi_sectors(JUL2025, CFG, TEKX)
     assert set(r) == {"sectors", "reliable", "reason", "as_of"}
+
+
+# === H4 — the plain-REIT alias (proves the gap: faults without it, rolls up with it) =============
+
+def test_h4_plain_reit_header_faults_without_the_alias_and_rolls_up_with_it():
+    # DFIN can render the equity-REIT industry GROUP as a single collapsed "REAL ESTATE INVESTMENT TRUSTS"
+    # header instead of the specific sub-industries (Diversified/Specialized/… REITs). That header is NOT
+    # itself a GICS industry, so the canonical 74-row table alone faults on it; the explicit
+    # gics_industry_alias rolls it to Real Estate. (No real fixture exercises this — in both TEKX filings
+    # the plain header appears only under CORPORATE BONDS & NOTES, a bond-issuer class the COMMON STOCKS
+    # bracket excludes — so it is proven synthetically; see the SOI-fetch decision doc.)
+    body = _syn_soi("SYNTHETIC REIT ETF", 60.0,
+                    [("SOFTWARE", 50.0), ("REAL ESTATE INVESTMENT TRUSTS", 10.0)])
+
+    # WITHOUT the alias: the plain header is an unknown industry -> fault, never a silent mis-roll.
+    no_alias = {**CFG, "gics_industry_alias": {}}
+    bare = extract_soi_sectors(body, no_alias, "Synthetic REIT")
+    assert not bare["reliable"] and bare["sectors"] == {}
+    assert "unknown GICS industry" in bare["reason"] and "REAL ESTATE INVESTMENT TRUSTS" in bare["reason"]
+
+    # WITH the alias (the shipped config): rolls up to Real Estate and reconciles to COMMON STOCKS 60%.
+    ok = extract_soi_sectors(body, CFG, "Synthetic REIT")
+    assert ok["reliable"], ok["reason"]
+    assert round(ok["sectors"]["Real Estate"], 3) == 0.10
+    assert ok["sectors"]["Information Technology"] == 0.50
+    assert abs(sum(ok["sectors"].values()) - 0.60) < 1e-9
+
+
+def test_h4_alias_does_not_perturb_the_real_tekx_goldens():
+    # The alias can only ADD a key; the two real TEKX derivations must be byte-for-byte unchanged (the
+    # plain header never enters TEKX's COMMON STOCKS block). Anti-regression for the +593 / dormant goldens.
+    no_alias = {**CFG, "gics_industry_alias": {}}
+    for body in (JUL2025, JAN2026):
+        assert extract_soi_sectors(body, CFG, TEKX) == extract_soi_sectors(body, no_alias, TEKX)
+
+
+# === §9b robustness items — the section detector (regression) ====================================
+
+def test_consolidated_header_detected_and_continuation_page_skipped():
+    # Two §9b robustness items at once: the section detector must accept the "CONSOLIDATED SCHEDULE OF
+    # INVESTMENTS" prefix AND skip a "(continued)" continuation page. The continuation repeats the SAME
+    # caps fund title, so if it were treated as a fresh block the anchor would match TWO blocks and fault
+    # as ambiguous — reliable:True therefore proves both the prefix match and the continuation skip.
+    fund = "SYNTHETIC CONSOLIDATED ETF"
+    body = (
+        "<!-- SYNTHETIC SOI — fabricated for tests, NOT a real filing -->"
+        "<html><body><div>Table of Contents</div>"
+        f"<div>{fund}</div><div>CONSOLIDATED SCHEDULE OF INVESTMENTS</div>"
+        "<div>January 31, 2026 (Unaudited)</div>"
+        "<div>COMMON STOCKS — 60.0%</div>"
+        "<div>SOFTWARE — 50.0%</div><div>Holding A 1,000 2,000</div>"
+        "<div>ELECTRIC UTILITIES — 10.0%</div><div>Holding B 1,000 2,000</div>"
+        "<div>TOTAL COMMON STOCKS 999</div><div>TOTAL INVESTMENTS — 100.0%</div>"
+        # continuation page for the SAME fund — must be SKIPPED (next line is "(continued)"):
+        f"<div>{fund}</div><div>CONSOLIDATED SCHEDULE OF INVESTMENTS</div><div>(continued)</div>"
+        "<div>SOFTWARE — 50.0%</div><div>Holding C 1,000 2,000</div>"
+        "</body></html>"
+    ).encode()
+    r = extract_soi_sectors(body, CFG, "Synthetic Consolidated")
+    assert r["reliable"], r["reason"]
+    assert dominant_sectors(r["sectors"], FLOOR) == frozenset({"Information Technology", "Utilities"})

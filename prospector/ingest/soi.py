@@ -96,18 +96,33 @@ def _norm(s: str) -> str:
     return re.sub(r"[^A-Z0-9]+", " ", s.upper().replace("&", " AND ")).strip()
 
 
-def _build_table(raw: Mapping[str, str]) -> dict[str, str]:
-    """Normalize the frozen `gics_industry_sector` config into a `_norm`-keyed lookup. Canonical keys are
-    authoritative; then register a parenthetical-STRIPPED alias for any GICS name that carries a
-    qualifier ("Mortgage Real Estate Investment Trusts (REITs)") so a filing that renders the header
-    WITHOUT the "(REITs)" suffix (DFIN drops it — the real 2025 fixture renders plain "REAL ESTATE
-    INVESTMENT TRUSTS") still rolls up instead of faulting. An alias never clobbers a distinct canonical
-    key, so the table stays 74 rows (test_soi_config) and the aliasing can only reduce spurious faults."""
+def _build_table(raw: Mapping[str, str], aliases: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Normalize the frozen `gics_industry_sector` config into a `_norm`-keyed lookup, then layer two
+    alias sources on top — NEITHER clobbering a canonical key, so the canonical set stays 74 rows
+    (test_soi_config) and aliasing can only REDUCE spurious faults:
+
+      (1) a parenthetical-STRIPPED alias for any GICS name that carries a qualifier — e.g. "Mortgage Real
+          Estate Investment Trusts (REITs)" -> "MORTGAGE REAL ESTATE INVESTMENT TRUSTS" -> Financials — so
+          a filing that drops the "(REITs)" suffix (DFIN does) still rolls up; and
+      (2) explicit `gics_industry_alias` entries (`aliases`) for filing renderings that are not GICS
+          industries but unambiguously denote one — notably the PLAIN "REAL ESTATE INVESTMENT TRUSTS"
+          header (DFIN's collapsed rendering of the equity-REIT industry GROUP; mortgage REITs carry the
+          explicit "MORTGAGE" prefix, so a plain, unprefixed header is equity -> Real Estate).
+
+    NB mechanism (1) alone does NOT produce the plain "REAL ESTATE INVESTMENT TRUSTS" key — stripping
+    "(REITs)" from the mortgage row yields "MORTGAGE REAL ESTATE INVESTMENT TRUSTS", not the plain form —
+    so the plain header rolls up ONLY via the explicit alias (2). The two TEKX NPORT-EX fixtures never
+    exercise it inside an equity block: there the plain header appears only under CORPORATE BONDS & NOTES
+    (a bond-issuer class the COMMON STOCKS bracket excludes), so they parse reliable regardless."""
     table = {_norm(k): v for k, v in raw.items()}
-    for k, v in raw.items():
+    for k, v in raw.items():                       # (1) parenthetical-strip aliases (the MORTGAGE one)
         base = _norm(re.sub(r"\([^)]*\)", " ", k))
         if base and base not in table:
             table[base] = v
+    for k, v in (aliases or {}).items():            # (2) explicit rendering-variant aliases (H4: plain REIT)
+        nk = _norm(k)
+        if nk and nk not in table:
+            table[nk] = v
     return table
 
 
@@ -171,7 +186,7 @@ def extract_soi_sectors(body: bytes, cfg: dict, fund_anchor: str) -> dict:
     do that). `fund_anchor` is the fund's name/ticker used to pick its section (the SOI titles the block
     in caps; a substring match either direction selects it)."""
     soi = cfg["soi"]
-    table = _build_table(cfg["gics_industry_sector"])
+    table = _build_table(cfg["gics_industry_sector"], cfg.get("gics_industry_alias"))
     tol = float(soi.get("reconcile_tolerance", 0.005))
     lines = [ln for ln in html_to_text(body).split("\n") if ln]
 

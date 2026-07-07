@@ -49,11 +49,11 @@ path places, sizes, or recommends a trade.
 | `primitives/sqlite_backup.py` | Consistent WAL-safe SQLite snapshot (native `.backup`) | `backup_sqlite()` |
 | `fold/fold.py` | The pure fold: state, verdict supersession, unknown-type handling | `fold()`, `active_nonshadow()`, `VERDICT_VOCAB` |
 | `config.py` | Load YAML → (config, canonical hash); `config.changed` emission | `load_config()`, `check_config_honesty()` |
-| `ingest/edgar.py` | EDGAR client (declared UA, rate-limited, freeze-the-substrate) | `EdgarClient`, `resolve_ticker()` |
+| `ingest/edgar.py` | EDGAR client (declared UA, rate-limited, freeze-the-substrate); §2 resolution keyed on ticker OR the detected series (I1); SOI-target resolution (§9b) | `EdgarClient` (`filing_index()`), `resolve_ticker()`, `resolve_series()`, `confirm_prospectus()`, `latest_soi()`, `resolve_soi_document()`, `resolve_soi_target()` |
 | `ingest/prices.py` | Price ingest (Yahoo primary / Stooq fallback), frozen pulls, panel builder | `PriceIngest`, `build_panel()` |
 | `ingest/holdings.py` | Holdings ingest (§4d keystone) — SPDR daily CSV → 90%-weight membership, frozen | `HoldingsIngest`, `weight_covering_members()` |
 | `ingest/prospectus.py` | Prospectus fetch/freeze + mandate extraction (§4d) — bs4 → text, strategy section, diff | `ProspectusIngest`, `extract_mandate()`, `diff_mandate()` |
-| `ingest/soi.py` | SOI fetch-freeze (read side) + GICS-industry-grouped sector derivation (§4c resolver) — fund-block isolation → `INDUSTRY — N.N%` parse → industry→sector rollup → reconcile-or-fault | `SoiIngest`, `extract_soi_sectors()`, `dominant_sectors()` |
+| `ingest/soi.py` | SOI fetch-freeze (read side) + GICS-industry-grouped sector derivation (§4c resolver) — fund-block isolation → `INDUSTRY — N.N%` parse → industry→sector rollup (+ `gics_industry_alias` rendering variants) → reconcile-or-fault | `SoiIngest`, `extract_soi_sectors()`, `dominant_sectors()` |
 | `identity/resolution.py` | Retry-then-manual resolution machine; two-phase-launch intake + completion | `ResolutionMachine`, `register_launch()`, `launch_lag()` |
 | `sensors/xcorr.py` | The excess-correlation pipeline (β-strip → departure z) + the stress gate | `daily_returns`→`departure_z`, `stress_series` |
 | `sensors/dispersion.py` | Intra-basket fracture (§4b) — constituent corr → spectral bipartition → Q departure z; shadow-wired, generous payload | `dispersion_q_series`, `scan()` |
@@ -285,6 +285,16 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   (holdings weight-units sanity) and **S2** (sub-second-lossless `ts_compact`). Spec:
   `docs/prospector-m5-runner-spec-2026-07-05.md`; build record + follow-on sequencing:
   `docs/decisions/2026-07-06-m5-runner-skeleton.md`.
+- **Milestone 5 — SOI-fetch (build-order step 2)** — the fetch-on-cadence half of the SOI resolver, in
+  the ingest layer: `SOI_FORMS` + `latest_soi(submissions)` (form-priority: NPORT-EX over N-CSR/N-CSRS,
+  the reader's verified artifact) + `EdgarClient.filing_index()` + `resolve_soi_document()` (the
+  non-primary exhibit, refuse-to-guess on ambiguity) composed into `resolve_soi_target()` — the
+  coordinates the step-3 retry loop hands to `sensors/soi.scan`'s `fetch_body` seam. **H4** folded in: a
+  `gics_industry_alias` config map registers the plain `REAL ESTATE INVESTMENT TRUSTS` header (DFIN's
+  collapsed equity-REIT rendering → Real Estate), keeping the 74-row canonical table pure; the
+  `_build_table` docstring's inaccurate aliasing claim is corrected. All offline (synthetic
+  submissions/index fixtures; **drop-and-freeze for tests, fetch-on-cadence for the runner — never
+  conflated**). See `docs/decisions/2026-07-06-soi-fetch.md`.
 
 **Deferred:**
 - Milestone 3b — dispersion **PIT backtest** + NPORT-P parser + delisted-price coverage measurement
@@ -293,18 +303,22 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - **Holdings-intake coverage** (secondary) — per-issuer holdings parsers / NPORT-P look-through, which
   turns the live cross-stream lag from an *existence proof* into a *representative rate*. Intake was
   deliberately not widened inside the corroboration slice.
-- **Live EDGAR-SOI-fetch** (M5, tied to `EdgarClient`) — the fetch-on-cadence half of the SOI resolver:
-  `SOI_FORMS` + `latest_soi(submissions)` + accession `index.json` document resolution + `SoiIngest`
-  live pull. The reader is built and tested on hand-frozen fixtures; **drop-and-freeze for tests,
-  fetch-on-cadence for the runner — the two never conflate** (fixtures are never refreshed by fetch).
-  See `docs/decisions/2026-07-04-soi-derived-sector-concentration.md`.
-- Milestone 5 — the remaining build-order steps on top of the landed runner skeleton (above): **step 2**
-  the SOI-fetch wired to `EdgarClient` (§9b); **step 3** the deferred corroboration/SOI retry-until-lands
-  loop (§9d) + the mandate frozen-prior invariant (§9c) + the dispersion shadow clock (§9e) — the
-  genuinely-new runner logic, currently spec-cited SLOTS in `runner/runner.py`; **step 4** email
-  (heartbeat/push/dead-man, deterministic templating) + the dormant-pile coverage report; **step 5** the
-  read-only Streamlit (incl. the macro-catalog + launch + coverage panels). Runner-path integrity fixes
-  (I1/B1/B2/H4, from the Claude-Science review) land before the identity/HECO path is leaned on hard.
+- Milestone 5 — the remaining build-order steps on top of the landed runner skeleton + SOI-fetch
+  (above): **step 3** the deferred corroboration/SOI retry-until-lands loop (§9d — it enumerates the
+  `sectors_unresolved` launches, calls `resolve_soi_target` on the retry schedule, and drives
+  `sensors/soi.scan`) + the mandate frozen-prior invariant (§9c) + the dispersion shadow clock (§9e) —
+  the genuinely-new runner logic, currently spec-cited SLOTS in `runner/runner.py`; then the **read-only
+  Streamlit** dashboard (§11, incl. the macro-catalog + launch + coverage panels — the current priority);
+  **email** (§10 heartbeat/push/dead-man + the dormant-pile coverage report) follows as a nice-to-have.
+- **Milestone 5 — identity-integrity fixes I1/B1/B2 (landed 2026-07-06)** — the runner-path prerequisites
+  hardening the HECO reused-ticker guarantee before live cadence. **I1**: `sensors/launch.scan` threads
+  the *detected* series id into `register_launch` → `resolve_series` (+ the `detected_series_id` retry-
+  queue column), so identity keys on the detected series, never a `matches[0]` re-derive by ticker; plus
+  the `ambiguous_symbol` fault in `resolve_ticker`. **B1** (owner-ratified scope): resolve-by-series fixes
+  the identity half; the residual trust-wide `prospectus_accession` is deferred (needs filing-header parse
+  — the mandate-diff gate — or a §2 `FundEntry` field). **B2**: `confirm_prospectus` flags
+  `older_filings_unread` when `filings.files[]` pages exist, instead of a silent `no_prospectus`; full
+  pagination deferred. See `docs/decisions/2026-07-06-identity-integrity.md`. (**H4** landed with step 2.)
 - **v2 (banked, not built)** — the **proto-cluster / pseudo-ETF** layer (spec rev8 Appendix B): a
   price-only, observation-only re-read of dispersion history (the canary is a cluster, never a single
   name, and never the trade). v1's only action is the generous dispersion payload that banks its

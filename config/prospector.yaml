@@ -257,6 +257,20 @@ gics_industry_sector:
   Specialized REITs: Real Estate
   Real Estate Management & Development: Real Estate
 
+# GICS-industry ALIASES: filing renderings that are NOT themselves GICS industries but unambiguously
+# denote one. Kept SEPARATE from gics_industry_sector so that table stays EXACTLY the 74 canonical GICS
+# industries (test_soi_config-guarded, CONTRACT-frozen); _build_table merges these on top, and an alias
+# never clobbers a canonical key. Extend only for a proven filing-rendering variant, never to rescue a
+# threshold outcome (same discipline as the frozen table); a change leaves a config.changed fossil.
+#   - "Real Estate Investment Trusts" (H4): DFIN sometimes renders the equity-REIT industry GROUP as a
+#     single collapsed header instead of the specific sub-industries (Diversified/Specialized/… REITs).
+#     Mortgage REITs always carry the explicit "MORTGAGE" prefix (their own Financials row), so a plain,
+#     unprefixed header is equity -> Real Estate. (Not observed in the two TEKX equity blocks — there the
+#     plain header appears only under CORPORATE BONDS & NOTES, a bond-issuer class the COMMON STOCKS
+#     bracket excludes — so this is a defensive alias proven synthetically; see the SOI-fetch decision doc.)
+gics_industry_alias:
+  Real Estate Investment Trusts: Real Estate
+
 identity:
   retry_days: 10           # daily auto-retry window before the manual-resolution queue
 

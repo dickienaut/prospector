@@ -10,9 +10,11 @@ decision doc; this file guards the invariants that can be checked without the ex
 from pathlib import Path
 
 from prospector.config import load_config
+from prospector.ingest.soi import _build_table, _norm
 
 CFG, _ = load_config(str(Path(__file__).parent.parent / "config" / "prospector.yaml"))
 TABLE = CFG["gics_industry_sector"]
+ALIAS = CFG.get("gics_industry_alias", {})
 
 # The 11 canonical GICS sectors — the ONLY legal rollup targets, and the exact strings a lead's basket
 # sectors carry (via config sector_map), so `launch_corroboration.overlaps` can match on them.
@@ -46,3 +48,30 @@ def test_table_is_the_complete_gics_industry_set():
     # fault real filings (unknown-industry) rather than roll them; pin the full count so an accidental
     # deletion is caught. (Re-freeze this only on a GICS structure revision, with a config.changed fossil.)
     assert len(TABLE) == 74, f"expected 74 GICS industries, found {len(TABLE)}"
+
+
+# -- gics_industry_alias: filing-rendering variants that are NOT GICS industries (H4) --------------
+
+def test_alias_values_are_canonical_gics_sectors():
+    # An alias rolls a filing rendering straight to a sector, bypassing the reconcile check's blindness to
+    # the rollup (same failure mode as the canonical table) — so its targets must be canonical too.
+    bad = {k: v for k, v in ALIAS.items() if v not in GICS_SECTORS}
+    assert not bad, f"non-canonical sector values in gics_industry_alias: {bad}"
+
+
+def test_alias_keys_do_not_shadow_canonical_industries():
+    # An alias is for a NON-GICS rendering; if its _norm key equaled a canonical industry's, it would be a
+    # dead entry (the canonical wins in _build_table) and a sign of confusion. Keep the two sets disjoint.
+    canon = {_norm(k) for k in TABLE}
+    clash = {k for k in ALIAS if _norm(k) in canon}
+    assert not clash, f"alias keys shadow canonical industries: {clash}"
+
+
+def test_build_table_merges_the_alias_without_growing_the_canonical_set():
+    # The runtime lookup = 74 canonical rows + parenthetical-strip aliases + explicit aliases. The plain
+    # "REAL ESTATE INVESTMENT TRUSTS" header (H4) resolves ONLY with the alias — it is not produced by the
+    # parenthetical strip (that yields the MORTGAGE form) — and the canonical config stays 74 rows.
+    key = _norm("Real Estate Investment Trusts")
+    assert key not in _build_table(TABLE)                 # the gap, without the alias
+    assert _build_table(TABLE, ALIAS)[key] == "Real Estate"  # closed, with it
+    assert len(TABLE) == 74

@@ -165,6 +165,35 @@ def test_detection_retries_escalation_then_manual_resolution(machine, event_stor
     assert machine.manual_queue() == []
 
 
+def test_i1_retry_resolves_on_the_stored_detected_series(registry, event_store, funds, clock):
+    # I1 across the retry boundary: a launch that fails at register time (EDGAR hasn't indexed the
+    # series yet) keeps the DETECTED series on the queue, and the retry resolves ON THAT SERIES — never
+    # a re-derive by ticker. Proves the pass actually FIRES on late indexing, not merely that it's called.
+    ready = {"v": False}
+    sid, cik = "S000000777", 777
+
+    def fetch(url, headers):
+        if url == MF_TICKERS_URL:
+            data = [[cik, sid, "C000000777", "LATE"]] if ready["v"] else []  # indexed only once ready
+            return json.dumps({"fields": ["cik", "seriesId", "classId", "symbol"],
+                               "data": data}).encode("utf-8")
+        if url == f"https://data.sec.gov/submissions/CIK{cik:010d}.json":
+            return json.dumps({"name": "Late Trust", "filings": {"recent": {
+                "accessionNumber": ["0000000777-26-000001"], "filingDate": ["2026-06-01"],
+                "form": ["485BPOS"], "primaryDocument": ["p.htm"]}}}).encode("utf-8")
+        raise EdgarError("no fixture", status=404)
+
+    machine = ResolutionMachine(registry, event_store, funds,
+                                make_client(fetch), retry_days=10, clock=clock)
+    status = machine.register_launch("LATE", None, clock(), series_id=sid)
+    assert status == "queued"                                       # series not yet indexed
+    assert machine.queue_row("LATE")["detected_series_id"] == sid   # the DETECTED series rides the queue
+    ready["v"] = True                                              # EDGAR indexes the series
+    out = machine.run_retries()
+    assert out["resolved"] == ["LATE"]                             # resolved ON THE STORED SERIES
+    assert funds.get(sid) is not None
+
+
 def test_repeat_failure_keeps_first_failed_at(machine, event_store, clock):
     machine.record_failure("ZZZQ", "not_in_mf_map", "absent")
     clock.advance(days=2)

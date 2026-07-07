@@ -13,3 +13,4 @@ uv.lock
 *.pem
 credentials
 .aws/
+.vscode

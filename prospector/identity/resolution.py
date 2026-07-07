@@ -30,8 +30,8 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Mapping
 
-from prospector.ingest.edgar import (PROSPECTUS_FORMS, EdgarClient, Resolution,
-                                     resolve_ticker)
+from prospector.ingest.edgar import (EdgarClient, Resolution, confirm_prospectus,
+                                     resolve_series, resolve_ticker)
 from prospector.store.envelope import SYSTEM_LEAD, parse_ts
 from prospector.store.event_store import EventStore
 from prospector.store.fund_registry import (SERIES_ID_RE, FundEntry, FundRegistry,
@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS resolution_queue (
     last_attempt_at     TEXT NOT NULL,
     attempts            INTEGER NOT NULL DEFAULT 1,
     detected_at         TEXT,
+    detected_series_id  TEXT,       -- the launch's DETECTED series (I1): retries resolve on it, not the ticker
     unverified_event_id TEXT,
     resolved_series_id  TEXT,
     note                TEXT
@@ -100,12 +101,14 @@ class ResolutionMachine:
 
     def record_failure(self, ticker: str, reason: str, detail: str,
                        detected_at: str | None = None,
-                       unverified_event_id: str | None = None) -> None:
+                       unverified_event_id: str | None = None,
+                       series_id: str | None = None) -> None:
         """A failed resolution enters the record and the queue — countable, never silent
         (spec §2 CONTRACT): `resolution.failed` onto `_system`, then the queue row goes (back)
         to 'retrying'. The first failure's `first_failed_at` is kept — the retry window counts
         from it — and so are the original `detected_at`/`unverified_event_id`, the two-phase
-        launch's lag datum and back-reference (§4c)."""
+        launch's lag datum and back-reference (§4c), and the DETECTED `series_id` (I1) so a retry
+        resolves on the series, never a re-derive by ticker. All three are kept (COALESCE) once set."""
         ticker = ticker.upper()
         now = self._clock()
         self.event_store.append({
@@ -115,22 +118,24 @@ class ResolutionMachine:
         self.registry.conn.execute(
             """INSERT INTO resolution_queue
                  (ticker, status, first_failed_at, last_attempt_at, attempts,
-                  detected_at, unverified_event_id)
-               VALUES (?, 'retrying', ?, ?, 1, ?, ?)
+                  detected_at, detected_series_id, unverified_event_id)
+               VALUES (?, 'retrying', ?, ?, 1, ?, ?, ?)
                ON CONFLICT(ticker) DO UPDATE SET
                  status = 'retrying',
                  last_attempt_at = excluded.last_attempt_at,
                  attempts = attempts + 1,
                  detected_at = COALESCE(resolution_queue.detected_at, excluded.detected_at),
+                 detected_series_id = COALESCE(resolution_queue.detected_series_id,
+                                               excluded.detected_series_id),
                  unverified_event_id = COALESCE(resolution_queue.unverified_event_id,
                                                 excluded.unverified_event_id)""",
-            (ticker, now, now, detected_at, unverified_event_id))
+            (ticker, now, now, detected_at, series_id, unverified_event_id))
         self.registry.conn.commit()
 
     # -- two-phase launch intake (spec §4c CONTRACT) ------------------------
 
     def register_launch(self, ticker: str, name_raw: str | None,
-                        detected_at: str) -> str:
+                        detected_at: str, series_id: str | None = None) -> str:
         """The launch sensor's per-candidate entry point (`sensors/launch.py` finds the
         candidates; this records them). Two phases:
 
@@ -139,11 +144,17 @@ class ResolutionMachine:
         to nail the detection timestamp into the record BEFORE resolution — a launch timestamp
         cannot be backfilled, so capture must not wait on verification.
 
-        Phase two: resolve. On success, complete immediately — the completing `launch` on
+        Phase two: resolve. When the launch sensor supplies the DETECTED `series_id` (the frozen
+        mf-map diff pair — it always does, §4c/I1), resolution keys on THAT series (`resolve_series`)
+        and only VERIFIES it, never re-deriving which series the ticker means — on a reused ticker
+        (the HECO guarantee) `resolve_ticker`'s `matches[0]` can pick the wrong one, defeating the
+        whole series-keying identity layer. `series_id=None` (a caller with no detected series) falls
+        back to the ticker re-derive. On success, complete immediately — the completing `launch` on
         `_system` carries the ORIGINAL `detected_at` and the `launch.unverified` back-reference. On
-        failure, enqueue for retry-then-manual with the same datum, so a fund that resolves nine
-        days late still gets the day-one launch timestamp (lag integrity §4c). `detected_at` is the
-        launch datum, carried verbatim through resolution and never replaced by resolution time.
+        failure, enqueue for retry-then-manual with the same datum (and the detected series, so the
+        retry resolves on the series too), so a fund that resolves nine days late still gets the
+        day-one launch timestamp (lag integrity §4c). `detected_at` is carried verbatim through
+        resolution and never replaced by resolution time.
 
         Returns 'resolved' (completed this pass) or 'queued' (parked for retry-then-manual).
         """
@@ -153,13 +164,15 @@ class ResolutionMachine:
             "payload": {"ticker": ticker, "name_raw": name_raw,
                         "detected_at": detected_at},
             "schema": 1})
-        result = resolve_ticker(ticker, self.edgar_client)
+        result = (resolve_series(series_id, ticker, self.edgar_client) if series_id
+                  else resolve_ticker(ticker, self.edgar_client))
         if isinstance(result, Resolution):
             self._complete(None, result, method="auto", now=self._clock(),
                            detected_at=detected_at, unverified_ref=unverified.event_id)
             return "resolved"
         self.record_failure(ticker, result.reason, result.detail,
-                            detected_at=detected_at, unverified_event_id=unverified.event_id)
+                            detected_at=detected_at, unverified_event_id=unverified.event_id,
+                            series_id=series_id)
         return "queued"
 
     # -- daily retries ------------------------------------------------------
@@ -176,7 +189,11 @@ class ResolutionMachine:
             "SELECT * FROM resolution_queue WHERE status = 'retrying' "
             "ORDER BY first_failed_at, ticker").fetchall()
         for row in rows:
-            result = resolve_ticker(row["ticker"], self.edgar_client)
+            # Resolve on the DETECTED series (I1) when the queue kept one; else re-derive by ticker
+            # (a pre-I1 row or a caller with no detected series).
+            detected_sid = row["detected_series_id"]
+            result = (resolve_series(detected_sid, row["ticker"], self.edgar_client) if detected_sid
+                      else resolve_ticker(row["ticker"], self.edgar_client))
             now = self._clock()
             if isinstance(result, Resolution):
                 self._complete(row, result, method="auto", now=now)
@@ -238,23 +255,14 @@ class ResolutionMachine:
         try:
             subs = self.edgar_client.submissions(cik)
             name = str(subs["name"])
-            recent = subs["filings"]["recent"]
-            forms, dates = recent["form"], recent["filingDate"]
-            # Most recent prospectus-family filing (same rule as resolve_ticker).
-            best: int | None = None
-            for i, form in enumerate(forms):
-                if form in PROSPECTUS_FORMS and (best is None or dates[i] > dates[best]):
-                    best = i
+            accession, _reason, detail = confirm_prospectus(subs, cik)  # same confirm as the auto path (B1/B2)
         except Exception as e:
             raise VerificationError(
                 f"EDGAR verify of {series_id}: submissions CIK{cik:010d}: {e}") from e
-        if best is None:
-            raise VerificationError(
-                f"CIK{cik:010d} has no {'/'.join(PROSPECTUS_FORMS)} filing — "
-                f"cannot verify {series_id}")
+        if accession is None:
+            raise VerificationError(f"{detail} — cannot verify {series_id}")
         return Resolution(series_id=series_id, class_ids=class_ids, cik=cik, name=name,
-                          prospectus_accession=str(recent["accessionNumber"][best]),
-                          ticker=ticker)
+                          prospectus_accession=accession, ticker=ticker)
 
     # -- completion (shared by auto and manual) --------------------------------
 

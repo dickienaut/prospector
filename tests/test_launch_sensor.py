@@ -152,3 +152,40 @@ def test_cold_scan_flags_everything_a_reminder_to_seed_the_prior_snapshot():
     # which is why the runner freezes a seed snapshot at deploy rather than scanning cold (§9).
     empty = {"fields": MF["fields"], "data": []}
     assert len(new_registrations(MF, empty)) == len(MF["data"])
+
+
+# -- I1: scan registers the DETECTED series, never the re-derived ticker (the HECO reuse guarantee) --
+
+def _reuse_mf():
+    """MF map at a ticker-reuse transition: REUSE lists under BOTH an old and a new (cik, series)."""
+    return {"fields": ["cik", "seriesId", "classId", "symbol"],
+            "data": [[111, "S000000111", "C000000111", "REUSE"],
+                     [222, "S000000222", "C000000222", "REUSE"]]}
+
+
+def _reuse_client():
+    def fetch(url, headers):
+        if url == MF_TICKERS_URL:
+            return json.dumps(_reuse_mf()).encode()
+        if url == "https://data.sec.gov/submissions/CIK0000000222.json":
+            return json.dumps({"name": "New Trust", "filings": {"recent": {
+                "accessionNumber": ["0000000222-26-000001"], "filingDate": ["2026-06-01"],
+                "form": ["485BPOS"], "primaryDocument": ["p.htm"]}}}).encode()
+        raise EdgarError(f"no fixture for {url}", status=404)
+    return EdgarClient(UA, fetch=fetch, clock=lambda: 0.0, sleep=lambda s: None)
+
+
+def test_i1_scan_registers_the_detected_series_under_ticker_reuse(registry, event_store, funds):
+    # End-to-end: the reused ticker's map lists BOTH series. scan threads the DETECTED series, so the
+    # fund registers under the NEW series — never whichever one matches[0] (by ticker) would pick.
+    machine = ResolutionMachine(registry, event_store, funds, _reuse_client(),
+                                retry_days=10, clock=lambda: NOW)
+    current = _reuse_mf()
+    prior = {"fields": current["fields"],
+             "data": [r for r in current["data"] if r[1] != "S000000222"]}  # new series absent before
+    out = scan(current, prior, machine, NOW)
+    assert out == {"resolved": ["REUSE"], "queued": []}
+    assert funds.get("S000000222") is not None    # the DETECTED series is registered
+    assert funds.get("S000000111") is None         # the reused ticker's OLD series is NOT
+    (resolved,) = event_store.read_system(type="identity.resolved")
+    assert resolved.payload == {"ticker": "REUSE", "series_id": "S000000222", "method": "auto"}
