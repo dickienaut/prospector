@@ -38,11 +38,13 @@ from prospector.config import check_config_honesty
 from prospector.fold.fold import active_nonshadow, fold, state_changed
 from prospector.fold.snapshots import SnapshotConfig, should_snapshot, write_snapshot
 from prospector.identity.resolution import ResolutionMachine
-from prospector.ingest.edgar import resolve_soi_target
+from prospector.ingest.edgar import latest_prospectus, prospectus_history, resolve_soi_target
+from prospector.ingest.prospectus import ProspectusIngest
 from prospector.ingest.soi import SoiIngest
 from prospector.runner.deps import RunnerDeps
 from prospector.runner.runlog import RunLog, write_run_log
 from prospector.sensors import launch as launch_sensor
+from prospector.sensors import mandate as mandate_sensor
 from prospector.sensors import soi as soi_sensor
 from prospector.sensors.launch_corroboration import (lead_sectors, pending_soi_resolution,
                                                      series_id_sectors)
@@ -242,10 +244,16 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
     except Exception as e:  # a batch-level failure is a soft fault, never a run-abort (§9g)
         runlog.sensors["soi_corroboration"] = "fault"
         _emit_fault(store, "soi.corroboration", e, now, faults)
-    #    §4d rebalance / mandate — SLOT. SUBTLE BIT #2 (mandate, §9c): the diff's prior is the last
-    #        FROZEN prospectus blob, never the registry `prospectus_accession` field — an identity
-    #        pass earlier in THIS run may advance that field, so reading the prior from it would
-    #        diff against a "prior" that was never actually frozen. Source from the blob store.
+    # §4d mandate-diff — WIRED (SUBTLE BIT #2 / §9c): the diff's prior is the last FROZEN prospectus
+    #      blob (`has_frozen`), never the registry `prospectus_accession` field — an identity pass earlier
+    #      in THIS run may advance that field, so reading the prior from it would diff the new filing
+    #      against itself and miss a real change. (Rebalance, the holdings-diff sibling, stays a SLOT — it
+    #      needs holdings ingest, a separate vertical.)
+    try:
+        _run_mandate(deps, store, now, faults, runlog, machine.fund_registry)
+    except Exception as e:  # a batch-level failure is a soft fault, never a run-abort (§9g)
+        runlog.sensors["mandate"] = "fault"
+        _emit_fault(store, "mandate", e, now, faults)
 
     # 4. IDENTITY RETRIES (§9-run-order-4). Drain the retry-then-manual queue; nothing evaporates.
     try:
@@ -260,25 +268,79 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
     runlog.sensors["capture"] = "slot"
 
 
-def _active_lead_sectors(deps: RunnerDeps, fund_registry: FundRegistry) -> dict:
-    """`{active lead_id -> its sector set}` for the corroboration overlap (§4d forward-hash), assembled
-    live: resolve the sector-ETF universe tickers to series_ids via the registry, bridge to GICS
-    sectors (config `sector_map`), and `lead_sectors()` over the ACTIVE (non-shadow) leads. Returns {}
-    when the universe isn't resolved yet or no leads are active — `soi.scan` then records
-    `dormant_no_match` honestly (there is simply no live lead to overlap; the overlap coverage is
-    bounded by the xcorr/dispersion sensors, which are their own SLOTs)."""
-    universe = deps.cfg.get("universe") or {}
-    sector_map = deps.cfg.get("sector_map") or {}
+def _lead_context(deps: RunnerDeps, fund_registry: FundRegistry) -> tuple[dict, list]:
+    """The shared corroboration/audit context: the sector-ETF universe tickers resolved to series_ids
+    (via the registry), and the currently ACTIVE (non-shadow) lead ids (folded from the record — §9f).
+    Used by the §9d SOI overlap and the §4d mandate routing (both forward-hash the universe against the
+    active leads). Returns `(ticker_to_series_id, active_lead_ids)`; either may be empty (nothing
+    registered / no live lead), which the callers handle honestly."""
     ticker_to_series_id: dict[str, str] = {}
-    for ticker in universe.get("sectors", []):
+    for ticker in (deps.cfg.get("universe") or {}).get("sectors", []):
         entry = fund_registry.by_ticker(ticker)
         if entry is not None:
             ticker_to_series_id[ticker] = entry.series_id
-    s2sec = series_id_sectors(sector_map, ticker_to_series_id)
     active_ids = [s["lead"] for s in active_nonshadow(
         fold(deps.registry.events_for_lead(lead))
         for lead in deps.registry.all_leads() if lead != SYSTEM_LEAD)]
+    return ticker_to_series_id, active_ids
+
+
+def _active_lead_sectors(deps: RunnerDeps, fund_registry: FundRegistry) -> dict:
+    """`{active lead_id -> its sector set}` for the corroboration overlap (§4d forward-hash): the
+    `_lead_context` universe bridged to GICS sectors (config `sector_map`), `lead_sectors()` over the
+    active leads. Returns {} when the universe isn't resolved yet or no leads are active — `soi.scan`
+    then records `dormant_no_match` honestly (the overlap coverage is bounded by the xcorr/dispersion
+    sensors, their own SLOTs)."""
+    ticker_to_series_id, active_ids = _lead_context(deps, fund_registry)
+    s2sec = series_id_sectors(deps.cfg.get("sector_map") or {}, ticker_to_series_id)
     return lead_sectors(list(ticker_to_series_id.values()), s2sec, active_ids)
+
+
+def _last_frozen_prospectus(prospectus: ProspectusIngest, series_id: str, subs: dict,
+                            current_accession: str) -> str | None:
+    """The §9c mandate prior: the most-recent prospectus filing we hold FROZEN that isn't the current
+    one — sourced from the blob store (`has_frozen`), NEVER the registry `prospectus_accession` field
+    (an identity pass earlier in THIS run may have advanced that field to the new filing, so reading the
+    prior from it would diff the new filing against itself and miss a real change). None if we hold no
+    prior frozen (mandate.scan then baselines the current)."""
+    for f in prospectus_history(subs):  # newest-first
+        if f["accession"] != current_accession and prospectus.has_frozen(series_id, f["accession"]):
+            return f["accession"]
+    return None
+
+
+def _run_mandate(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog,
+                 fund_registry: FundRegistry) -> None:
+    """§4d mandate-diff on cadence + the §9c frozen-prior invariant (SUBTLE BIT #2). For each registered
+    (watched) fund: fetch submissions, take the latest prospectus (current) and — as the prior — the
+    last FROZEN prospectus from the blob store (`_last_frozen_prospectus`, NEVER the registry field,
+    §9c). `mandate.scan` freezes the current (freeze-before-diff), diffs the principal-investment-
+    strategy section against the frozen prior, and routes `mandate.changed` (a SILENT corroboration onto
+    the live leads it touches, else `_system`) or a `fault` on unreliable extraction — never a wrong
+    change (a false `mandate.changed` is worse than a missed one). Per-fund failure is a soft fault
+    (§9g); the pass goes on. SILENT (§10): `mandate.changed` never pushes; the human adjudicates
+    cosmetic-vs-substantive.
+
+    This runs REAL execution from day one — a baseline on first sight, a diff once a fund files a new
+    prospectus across cadences — self-sufficient (records on `_system` even with no live lead). The
+    holdings-diff sibling (rebalance) stays a SLOT: it needs holdings ingest, a separate vertical."""
+    prospectus = ProspectusIngest(deps.layout, deps.edgar_client)
+    ticker_to_series_id, active_ids = _lead_context(deps, fund_registry)
+    universe_ids = list(ticker_to_series_id.values())
+    mandate_cfg = deps.cfg.get("mandate") or {}
+    for entry in fund_registry.all_funds():
+        try:
+            subs = deps.edgar_client.submissions(int(entry.cik))
+            cur = latest_prospectus(subs)
+            if cur is None:
+                continue  # no prospectus-family filing on record for this fund
+            prior = _last_frozen_prospectus(prospectus, entry.series_id, subs, cur["accession"])
+            mandate_sensor.scan(entry.series_id, entry.ticker_current, int(entry.cik),
+                                cur["accession"], cur["primary_doc"], prior,
+                                universe_ids, active_ids, prospectus, mandate_cfg, now, store.append)
+        except Exception as e:  # one fund's failure never blinds the others (§9g)
+            _emit_fault(store, "mandate", e, now, faults)
+    runlog.sensors["mandate"] = "ran"
 
 
 def _run_soi_corroboration(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog,

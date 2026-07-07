@@ -208,6 +208,22 @@ def latest_prospectus(submissions: dict) -> dict | None:
             "form": str(forms[best]), "filing_date": str(dates[best])}
 
 
+def prospectus_history(submissions: dict) -> list[dict]:
+    """All prospectus-family filings in a submissions dict, NEWEST-FIRST, each as
+    `{accession, primary_doc, form, filing_date}`. `latest_prospectus` is effectively `[0]`; the mandate
+    frozen-prior walk (§9c) uses the rest to find the most-recent filing it holds FROZEN. `recent` is
+    newest-first, so preserving that order keeps this consistent with `latest_prospectus`."""
+    try:
+        recent = submissions["filings"]["recent"]
+        forms, dates = recent["form"], recent["filingDate"]
+        accs, docs = recent["accessionNumber"], recent["primaryDocument"]
+    except (KeyError, TypeError):
+        return []
+    return [{"accession": str(accs[i]), "primary_doc": str(docs[i]),
+             "form": str(forms[i]), "filing_date": str(dates[i])}
+            for i, form in enumerate(forms) if form in PROSPECTUS_FORMS]
+
+
 def latest_soi(submissions: dict) -> dict | None:
     """The SOI-bearing filing to fetch, as `{accession, primary_doc, form, filing_date}` — or None if
     there is none. Mirrors `latest_prospectus`, but with a FORM-PRIORITY rule instead of pure

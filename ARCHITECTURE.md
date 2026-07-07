@@ -67,7 +67,7 @@ path places, sizes, or recommends a trade.
 | `backtest/report.py` | The acceptance-gate artifact (recall/precision/falsification/lag) | `build_report()`, `render_markdown()` |
 | `backtest/corroboration.py` | Cross-stream corroboration scoring (sector→keyword) | `score_all()` |
 | `backtest/beta_diagnostic.py` | **Read-only** crash-flags diagnostic (never wired to the sensor) | `scoped_beta_slice()`, `two_clock_read()` |
-| `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push; launch-recording (§4c) + the §9d deferred SOI-corroboration retry pass wired; other sensors + §9c/§9e are spec-cited SLOTS | `run_tick()` |
+| `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push; launch-recording (§4c), the §9d deferred SOI-corroboration retry pass, and the §4d mandate-diff pass (§9c frozen-prior) wired; xcorr/dispersion/rebalance + §9e are spec-cited SLOTS | `run_tick()` |
 | `runner/deps.py` / `runner/notify.py` / `runner/runlog.py` | Injected seam bundle; the `Notifier` transport (`NullNotifier` until the M5 email slice); per-tick run-log (§9g, its own `runs` table, telemetry — never a lead event) | `RunnerDeps`, `NullNotifier`, `RunLog`, `write_run_log()` |
 | `cli/main.py` | The `pros` CLI — read surfaces + verdict/identity/backtest + the `run` cadence entrypoint | `cli` |
 
@@ -303,11 +303,22 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - **Holdings-intake coverage** (secondary) — per-issuer holdings parsers / NPORT-P look-through, which
   turns the live cross-stream lag from an *existence proof* into a *representative rate*. Intake was
   deliberately not widened inside the corroboration slice.
-- Milestone 5 — the remaining build-order steps on top of the landed runner skeleton + SOI-fetch + §9d
-  (above): **step 3 remainder** the mandate frozen-prior invariant (§9c) + the dispersion shadow clock
-  (§9e) — spec-cited SLOTS in `runner/runner.py`; then the **read-only Streamlit** dashboard (§11, incl.
-  the macro-catalog + launch + coverage panels — the current priority); **email** (§10
-  heartbeat/push/dead-man + the dormant-pile coverage report) follows as a nice-to-have.
+- Milestone 5 — the remaining build-order steps on top of the landed runner skeleton + SOI-fetch + §9d +
+  §9c (above): **step 3 remainder** the dispersion shadow clock (§9e — pulls in `PriceIngest`, since
+  dispersion consumes a price panel; those prices then also serve xcorr §4a); then the **read-only
+  Streamlit** dashboard (§11, incl. the macro-catalog + launch + coverage panels — the current priority);
+  **email** (§10 heartbeat/push/dead-man + the dormant-pile coverage report) follows as a nice-to-have.
+  **xcorr (§4a) — the primary lead spawner — is the big step-4 slot**: it's when the runner starts
+  spawning its main leads and the dormant pile fills; it pairs with the dashboard (firings + a surface to
+  see them) as the "runner earns its keep" moment.
+- **Milestone 5 — §4d mandate-diff on cadence + §9c frozen-prior (landed 2026-07-06)** — the runner runs
+  the mandate-diff each tick (`_run_mandate`): for each registered fund, `latest_prospectus` (current) +
+  the last **frozen** prospectus as the prior (`_last_frozen_prospectus` via `prospectus_history` +
+  `has_frozen` — **never** the registry `prospectus_accession` field, which an intra-run identity pass may
+  advance, §9c), then `mandate.scan` (freeze → diff strategy section → `mandate.changed` silent / `fault`).
+  Real execution from day one (baseline, then diffs across cadences); self-sufficient (records on
+  `_system` with no lead). Proven by the invariant gate (the diff uses the frozen prior, not the advanced
+  field). See `docs/decisions/2026-07-06-mandate-9c.md`.
 - **Milestone 5 — §9d deferred SOI-corroboration retry loop (landed 2026-07-06)** — the runner now drives
   the deferred SOI resolution each tick (`_run_soi_corroboration`): `pending_soi_resolution` folds the
   `sectors_unresolved` launches from the events (§9f, never a side table), `resolve_soi_target` (step 2)
