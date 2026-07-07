@@ -67,7 +67,7 @@ path places, sizes, or recommends a trade.
 | `backtest/report.py` | The acceptance-gate artifact (recall/precision/falsification/lag) | `build_report()`, `render_markdown()` |
 | `backtest/corroboration.py` | Cross-stream corroboration scoring (sector→keyword) | `score_all()` |
 | `backtest/beta_diagnostic.py` | **Read-only** crash-flags diagnostic (never wired to the sensor) | `scoped_beta_slice()`, `two_clock_read()` |
-| `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push; **thin spine** (launch-recording wired; other sensors + new logic are spec-cited SLOTS) | `run_tick()` |
+| `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push; launch-recording (§4c) + the §9d deferred SOI-corroboration retry pass wired; other sensors + §9c/§9e are spec-cited SLOTS | `run_tick()` |
 | `runner/deps.py` / `runner/notify.py` / `runner/runlog.py` | Injected seam bundle; the `Notifier` transport (`NullNotifier` until the M5 email slice); per-tick run-log (§9g, its own `runs` table, telemetry — never a lead event) | `RunnerDeps`, `NullNotifier`, `RunLog`, `write_run_log()` |
 | `cli/main.py` | The `pros` CLI — read surfaces + verdict/identity/backtest + the `run` cadence entrypoint | `cli` |
 
@@ -303,13 +303,20 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - **Holdings-intake coverage** (secondary) — per-issuer holdings parsers / NPORT-P look-through, which
   turns the live cross-stream lag from an *existence proof* into a *representative rate*. Intake was
   deliberately not widened inside the corroboration slice.
-- Milestone 5 — the remaining build-order steps on top of the landed runner skeleton + SOI-fetch
-  (above): **step 3** the deferred corroboration/SOI retry-until-lands loop (§9d — it enumerates the
-  `sectors_unresolved` launches, calls `resolve_soi_target` on the retry schedule, and drives
-  `sensors/soi.scan`) + the mandate frozen-prior invariant (§9c) + the dispersion shadow clock (§9e) —
-  the genuinely-new runner logic, currently spec-cited SLOTS in `runner/runner.py`; then the **read-only
-  Streamlit** dashboard (§11, incl. the macro-catalog + launch + coverage panels — the current priority);
-  **email** (§10 heartbeat/push/dead-man + the dormant-pile coverage report) follows as a nice-to-have.
+- Milestone 5 — the remaining build-order steps on top of the landed runner skeleton + SOI-fetch + §9d
+  (above): **step 3 remainder** the mandate frozen-prior invariant (§9c) + the dispersion shadow clock
+  (§9e) — spec-cited SLOTS in `runner/runner.py`; then the **read-only Streamlit** dashboard (§11, incl.
+  the macro-catalog + launch + coverage panels — the current priority); **email** (§10
+  heartbeat/push/dead-man + the dormant-pile coverage report) follows as a nice-to-have.
+- **Milestone 5 — §9d deferred SOI-corroboration retry loop (landed 2026-07-06)** — the runner now drives
+  the deferred SOI resolution each tick (`_run_soi_corroboration`): `pending_soi_resolution` folds the
+  `sectors_unresolved` launches from the events (§9f, never a side table), `resolve_soi_target` (step 2)
+  fetches each, and `sensors/soi.scan` reaches back preserving `detected_at` as **T2**. Bounded by
+  `corroboration.retry_horizon_days` (365, DEFAULT); a not-yet (`resolve_soi_target` → None) stays
+  `sectors_unresolved`, re-attempted; per-launch failures are soft faults. Live yield is bounded (input
+  from the unwired holdings-corroboration SLOT; overlap from the xcorr/dispersion SLOTs; anchor =
+  `entry.name`, needs a stable stem) — mechanism landed and tested (the three-property fires-not-called
+  gate). See `docs/decisions/2026-07-06-soi-corroboration-retry-9d.md`.
 - **Milestone 5 — identity-integrity fixes I1/B1/B2 (landed 2026-07-06)** — the runner-path prerequisites
   hardening the HECO reused-ticker guarantee before live cadence. **I1**: `sensors/launch.scan` threads
   the *detected* series id into `register_launch` → `resolve_series` (+ the `detected_series_id` retry-

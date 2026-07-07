@@ -138,6 +138,13 @@ corroboration:
   # on _system (the honest coverage gap; the tool sees SPDR-format holdings only today). The backtest
   # keyword matcher + curated launch table stay in the backtest; the live path never uses them.
   sector_min_weight: 0.10   # a sector is "present" in a launch iff >= 10% of fund weight
+  # §9d deferred-pass retry horizon: keep re-attempting a `sectors_unresolved` launch's SOI resolution
+  # until its sectors land OR its detection ages past this many days, after which it stays
+  # dormant-terminal and is surfaced for deliberate survey (never re-fetched forever). A SAFETY VALVE
+  # against re-fetching ancient launches, deliberately GENEROUS: a fund's first sector-bearing NPORT-EX
+  # is filed 60 days after a fiscal quarter-end, so a fund that lists just after one can wait the better
+  # part of a year for its first — a year's headroom catches that reliably. DEFAULT (tune to real cadence).
+  retry_horizon_days: 365
 
 # SPDR ticker -> canonical GICS sector name (the launch's holdings carry these names; a lead's basket
 # maps to one via this). Stable data — a fund's legal sector designation, never changes.

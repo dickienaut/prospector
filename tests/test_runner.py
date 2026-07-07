@@ -107,6 +107,7 @@ def test_first_run_seeds_prior_and_records_no_launches(layout, registry):
     # flagging the whole universe as launches (§9a). The current map is still frozen.
     runlog = run_tick(_deps(layout, registry, _fetch_mf_only([XLK_ROW])))
     assert runlog.sensors["launch"] == "seeded"
+    assert runlog.sensors["soi_corroboration"] == "ran"  # the §9d SLOT is reached (no pending -> no-op)
     assert registry.events_for_lead(SYSTEM_LEAD, "launch.unverified") == []
     assert layout.edgar_path(NOW[:10], "company_tickers_mf.json").is_file()  # frozen substrate
     assert runlog.pushed is False and runlog.config_changed is False
