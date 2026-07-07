@@ -71,7 +71,9 @@ def scan(current: dict, prior: dict, machine: ResolutionMachine,
     funds that resolved immediately vs. those parked in the retry-then-manual queue. The runner
     calls this daily with the freshly frozen MF snapshot and the prior one (§9)."""
     out: dict[str, list[str]] = {"resolved": [], "queued": []}
-    for symbol, _series_id in new_registrations(current, prior):
-        status = machine.register_launch(symbol, name_raw=None, detected_at=now)
+    for symbol, series_id in new_registrations(current, prior):
+        # Thread the DETECTED series id (I1): resolution keys on it, never re-derives which series the
+        # ticker means (matches[0] can pick wrong on a reused ticker — the HECO guarantee).
+        status = machine.register_launch(symbol, name_raw=None, detected_at=now, series_id=series_id)
         out[status].append(symbol)
     return out

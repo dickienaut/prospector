@@ -9,7 +9,8 @@ import pytest
 
 from prospector.ingest.edgar import (MF_TICKERS_URL, PROSPECTUS_FORMS, EdgarClient, EdgarError,
                                      Resolution, ResolutionFailure, SoiTarget, latest_soi,
-                                     resolve_soi_document, resolve_soi_target, resolve_ticker)
+                                     resolve_series, resolve_soi_document, resolve_soi_target,
+                                     resolve_ticker)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 EDGAR = FIXTURES / "edgar"
@@ -295,6 +296,115 @@ def test_persist_not_called_on_failure():
     with pytest.raises(EdgarError):
         client.mf_tickers()
     assert records == []
+
+
+# -- I1: resolve on the DETECTED series, not the re-derived ticker (the HECO reused-ticker rule) -----
+
+def _mf(rows):
+    """A minimal MF ticker map: rows are [cik, seriesId, classId, symbol]."""
+    return {"fields": ["cik", "seriesId", "classId", "symbol"], "data": rows}
+
+
+def _prospectus_subs(name, accession, date="2026-06-01"):
+    return {"name": name, "filings": {"recent": {
+        "accessionNumber": [accession], "filingDate": [date], "form": ["485BPOS"],
+        "primaryDocument": ["p.htm"]}}}
+
+
+def _reuse_client():
+    """A client whose MF map lists ticker REUSE under BOTH an old and a new (cik, series) — the
+    ticker-reuse transition window (the HECO case), where matches[0] is a coin-flip."""
+    mf = _mf([[111, "S000000111", "C000000111", "REUSE"],
+              [222, "S000000222", "C000000222", "REUSE"]])
+
+    def fetch(url, headers):
+        if url == MF_TICKERS_URL:
+            return json.dumps(mf).encode()
+        if url == "https://data.sec.gov/submissions/CIK0000000222.json":
+            return json.dumps(_prospectus_subs("New Trust", "0000000222-26-000001")).encode()
+        if url == "https://data.sec.gov/submissions/CIK0000000111.json":
+            return json.dumps(_prospectus_subs("Old Trust", "0000000111-20-000001",
+                                               "2020-01-01")).encode()
+        raise EdgarError(f"no fixture for {url}", status=404)
+
+    client, _, _ = make_client(fetch)
+    return client
+
+
+def test_i1_reused_ticker_is_ambiguous_to_resolve_ticker():
+    # On a reuse transition the ticker alone maps to two (cik, series): resolve_ticker must FAULT, never
+    # silently pick matches[0] by document order (the trap I1 exists to defeat).
+    r = resolve_ticker("REUSE", _reuse_client())
+    assert isinstance(r, ResolutionFailure) and r.reason == "ambiguous_symbol"
+    assert "S000000111" in r.detail and "S000000222" in r.detail
+
+
+def test_i1_resolve_series_keys_on_the_detected_series():
+    # Threaded the DETECTED series, resolution is unambiguous and correct — the series is the key, never
+    # the ticker. The SAME ticker resolves to whichever series was detected.
+    client = _reuse_client()
+    new = resolve_series("S000000222", "REUSE", client)
+    assert isinstance(new, Resolution)
+    assert new.series_id == "S000000222" and new.cik == 222
+    assert new.prospectus_accession == "0000000222-26-000001" and new.ticker == "REUSE"
+    old = resolve_series("S000000111", "REUSE", client)
+    assert isinstance(old, Resolution) and old.series_id == "S000000111" and old.cik == 111
+
+
+def test_resolve_series_absent_series_is_not_in_mf_map():
+    r = resolve_series("S000999999", "REUSE", _reuse_client())
+    assert isinstance(r, ResolutionFailure) and r.reason == "not_in_mf_map"
+    assert "S000999999" in r.detail
+
+
+def test_resolve_series_aggregates_all_class_rows():
+    # A multi-class series: resolve_series collects every class id for the (cik, series), like the
+    # ticker path, but keyed on the detected series.
+    mf = _mf([[300, "S000000300", "C000000301", "MCLS"],
+              [300, "S000000300", "C000000302", "MCLS2"]])
+
+    def fetch(url, headers):
+        if url == MF_TICKERS_URL:
+            return json.dumps(mf).encode()
+        if url == "https://data.sec.gov/submissions/CIK0000000300.json":
+            return json.dumps(_prospectus_subs("Multi Trust", "0000000300-26-000001")).encode()
+        raise EdgarError("no fixture", status=404)
+
+    client, _, _ = make_client(fetch)
+    r = resolve_series("S000000300", "MCLS", client)
+    assert isinstance(r, Resolution) and r.class_ids == ["C000000301", "C000000302"]
+
+
+# -- B2: older filings under filings.files[] are flagged, never silently no_prospectus ---------------
+
+def test_b2_older_filings_unread_is_flagged_not_silent_no_prospectus():
+    # A long-lived registrant: no prospectus in filings.recent, but older pages exist in filings.files[].
+    # 'no prospectus in recent' is INCONCLUSIVE — flag it (pagination deferred), never wrongly queue it.
+    base_recent = {"accessionNumber": ["x-26-1"], "filingDate": ["2026-01-01"],
+                   "form": ["NPORT-P"], "primaryDocument": ["d.xml"]}  # a filing, but not prospectus-family
+    with_files = {"name": "Ancient Trust", "filings": {
+        "recent": base_recent,
+        "files": [{"name": "CIK0000000500-submissions-001.json", "filingCount": 1200,
+                   "filingFrom": "1998-01-01", "filingTo": "2010-01-01"}]}}
+    no_files = {"name": "Small Trust", "filings": {"recent": base_recent}}  # recent is complete
+
+    def client_for(subs):
+        def fetch(url, headers):
+            if url == MF_TICKERS_URL:
+                return json.dumps(_mf([[500, "S000000500", "C000000500", "OLD"]])).encode()
+            if url == "https://data.sec.gov/submissions/CIK0000000500.json":
+                return json.dumps(subs).encode()
+            raise EdgarError("no fixture", status=404)
+        c, _, _ = make_client(fetch)
+        return c
+
+    for resolver in (lambda c: resolve_ticker("OLD", c),
+                     lambda c: resolve_series("S000000500", "OLD", c)):
+        flagged = resolver(client_for(with_files))
+        assert isinstance(flagged, ResolutionFailure) and flagged.reason == "older_filings_unread"
+        assert "filings.files[]" in flagged.detail
+        # Control: with no older pages, 'no prospectus in recent' IS conclusive.
+        assert resolver(client_for(no_files)).reason == "no_prospectus"
 
 
 # -- SOI-fetch (§9b): latest_soi form-priority selection --------------------------------

@@ -49,7 +49,7 @@ path places, sizes, or recommends a trade.
 | `primitives/sqlite_backup.py` | Consistent WAL-safe SQLite snapshot (native `.backup`) | `backup_sqlite()` |
 | `fold/fold.py` | The pure fold: state, verdict supersession, unknown-type handling | `fold()`, `active_nonshadow()`, `VERDICT_VOCAB` |
 | `config.py` | Load YAML → (config, canonical hash); `config.changed` emission | `load_config()`, `check_config_honesty()` |
-| `ingest/edgar.py` | EDGAR client (declared UA, rate-limited, freeze-the-substrate) + SOI-target resolution (§9b — which accession, which exhibit doc) | `EdgarClient` (`filing_index()`), `resolve_ticker()`, `latest_soi()`, `resolve_soi_document()`, `resolve_soi_target()` |
+| `ingest/edgar.py` | EDGAR client (declared UA, rate-limited, freeze-the-substrate); §2 resolution keyed on ticker OR the detected series (I1); SOI-target resolution (§9b) | `EdgarClient` (`filing_index()`), `resolve_ticker()`, `resolve_series()`, `confirm_prospectus()`, `latest_soi()`, `resolve_soi_document()`, `resolve_soi_target()` |
 | `ingest/prices.py` | Price ingest (Yahoo primary / Stooq fallback), frozen pulls, panel builder | `PriceIngest`, `build_panel()` |
 | `ingest/holdings.py` | Holdings ingest (§4d keystone) — SPDR daily CSV → 90%-weight membership, frozen | `HoldingsIngest`, `weight_covering_members()` |
 | `ingest/prospectus.py` | Prospectus fetch/freeze + mandate extraction (§4d) — bs4 → text, strategy section, diff | `ProspectusIngest`, `extract_mandate()`, `diff_mandate()` |
@@ -310,8 +310,15 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   the genuinely-new runner logic, currently spec-cited SLOTS in `runner/runner.py`; then the **read-only
   Streamlit** dashboard (§11, incl. the macro-catalog + launch + coverage panels — the current priority);
   **email** (§10 heartbeat/push/dead-man + the dormant-pile coverage report) follows as a nice-to-have.
-  Runner-path integrity fixes **I1/B1/B2** (from the Claude-Science review) land before the
-  identity/HECO path is leaned on live (**H4** already landed with step 2).
+- **Milestone 5 — identity-integrity fixes I1/B1/B2 (landed 2026-07-06)** — the runner-path prerequisites
+  hardening the HECO reused-ticker guarantee before live cadence. **I1**: `sensors/launch.scan` threads
+  the *detected* series id into `register_launch` → `resolve_series` (+ the `detected_series_id` retry-
+  queue column), so identity keys on the detected series, never a `matches[0]` re-derive by ticker; plus
+  the `ambiguous_symbol` fault in `resolve_ticker`. **B1** (owner-ratified scope): resolve-by-series fixes
+  the identity half; the residual trust-wide `prospectus_accession` is deferred (needs filing-header parse
+  — the mandate-diff gate — or a §2 `FundEntry` field). **B2**: `confirm_prospectus` flags
+  `older_filings_unread` when `filings.files[]` pages exist, instead of a silent `no_prospectus`; full
+  pagination deferred. See `docs/decisions/2026-07-06-identity-integrity.md`. (**H4** landed with step 2.)
 - **v2 (banked, not built)** — the **proto-cluster / pseudo-ETF** layer (spec rev8 Appendix B): a
   price-only, observation-only re-read of dispersion history (the canary is a cluster, never a single
   name, and never the trade). v1's only action is the generous dispersion payload that banks its
