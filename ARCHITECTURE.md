@@ -70,6 +70,7 @@ path places, sizes, or recommends a trade.
 | `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push. WIRED: §9a sector-prices panel ingest (`_build_sector_panel`, P1 guard), **§4a xcorr — the PRIMARY live spawner** (`_run_xcorr`; universe→series_id from the mf map, §9f state, LIVE/paging/ceiling-counting), launch-recording (§4c), the §9d deferred SOI-corroboration retry, the §4d mandate-diff (§9c frozen-prior). SLOTS: dispersion (§4b) / rebalance + §9e | `run_tick()` |
 | `runner/deps.py` / `runner/notify.py` / `runner/runlog.py` | Injected seam bundle; the `Notifier` transport (`NullNotifier` until the M5 email slice); per-tick run-log (§9g, its own `runs` table, telemetry — never a lead event) | `RunnerDeps`, `NullNotifier`, `RunLog`, `write_run_log()` |
 | `cli/main.py` | The `pros` CLI — read surfaces + verdict/identity/backtest + the `run` cadence entrypoint | `cli` |
+| `dashboard/views.py` / `dashboard/app.py` | The §11 **read-only** Streamlit dashboard — pure, tested view-models (folds of the record) + a thin `st.*` render shell. No recompute/autorefresh/run-now. Streamlit is an OPTIONAL extra (`uv sync --extra dashboard`); `views` is streamlit-free | `rank_active_leads()`, `dormant_pile()`, `heartbeat()`, `main()` |
 
 Vendoring note: `primitives/` and the registry structure are ported from the sibling repo's
 `ltee_archive/` — *disciplines and query shapes only*, with the trading ontology stripped and the
@@ -311,11 +312,22 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   `MembershipSnapshot` + a constituent price panel keyed by member CUSIPs; runner holdings wiring is a
   SLOT, only XLK has a fixture), so it cannot spawn a real shadow lead — cannot start the §9e burn-in
   clock — until that vertical exists, regardless of ordering. Corrected order: **§9a sector-prices panel
-  (landed) → xcorr-live (§4a, landed) → read-only Streamlit dashboard (§11, NEXT — the priority: real
-  xcorr firings + launch corroborations + the dormant pile; the dispersion shadow panel renders honestly-
-  empty)**. Then the **dispersion + burn-in vertical** (§9e + the holdings/constituent-price path — this
-  is where **holdings-intake coverage** is confronted as its own slice, when its consumer is built), and
-  **email** (§10) last, a nice-to-have. "Runner earns its keep" = xcorr-live + dashboard, together.
+  (landed) → xcorr-live (§4a, landed) → read-only Streamlit dashboard (§11, landed)**. NEXT: the
+  **dispersion + burn-in vertical** (§9e + the holdings/constituent-price path — this is where
+  **holdings-intake coverage** is confronted as its own slice, when its consumer is built), and
+  **email** (§10) last, a nice-to-have. "Runner earns its keep" = xcorr-live + dashboard, now both landed.
+- **Milestone 5 — §11 read-only Streamlit dashboard (landed 2026-07-07)** — the surface that renders the
+  fossil record. Greenfield build, architected as **pure, tested view-models** (`dashboard/views.py` — no
+  streamlit import, no writes, no recompute) + a **thin `st.*` render shell** (`app.py`); streamlit is an
+  OPTIONAL extra (`uv sync --extra dashboard`) so the core stays lean/offline. Panels (spec §11): the
+  weekly dead-man + §8a ceiling tripwire up top; ranked active leads (**the live xcorr firings surface
+  here**); the dispersion shadow/burn-in panel (**honestly-empty** until §4b — "not yet wired", never a
+  faked record); launch survey; the coverage/**dormant-pile** blindness map (ranked, latest-disposition-
+  per-fund); the read-only **macro catalog** (`off-thesis-real` — never a trade/tilt trigger, never an
+  alert stream); manual-resolution queue; fault log; run history; unknown-type + registry-health; per-lead
+  thaw-backward timeline. CONTRACT honored: read-only, no recompute/autorefresh/run-now; the firewall grep
+  guards it. Proven by 12 view-model tests + a skip-guarded headless `AppTest` render smoke. See
+  `docs/decisions/2026-07-07-dashboard-11.md`.
 - **Milestone 5 — §4a xcorr wired LIVE into the runner (landed 2026-07-07)** — the runner's PRIMARY lead-
   spawner. Built the missing `xcorr.scan` orchestrator (the pipeline was pure math + the backtest's replay;
   there was no per-tick driver): drive returns→β-strip→residual-corr→Fisher-z→departure-z once, then per

@@ -21,6 +21,13 @@ dependencies = [
     "openpyxl>=3.1.5",
 ]
 
+[project.optional-dependencies]
+# The §11 read-only dashboard. OPTIONAL so the core (runner, sensors, tests) stays lean and offline —
+# the dashboard's data-shaping lives in pure view-models (prospector/dashboard/views.py, no streamlit
+# import, fully tested); only the thin render shell (app.py) needs streamlit. Install to view it:
+#   uv sync --extra dashboard   then   PROSPECTOR_STORE=./store streamlit run prospector/dashboard/app.py
+dashboard = ["streamlit>=1.40"]
+
 [project.scripts]
 pros = "prospector.cli.main:cli"
 
