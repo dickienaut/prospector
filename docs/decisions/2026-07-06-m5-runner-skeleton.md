@@ -147,6 +147,12 @@ Wiring launch-recording end to end changed that for one of them:
   parser. (Also surfaced in verification: `ingest/soi.py`'s docstring claims the plain header "still rolls
   up instead of faulting" via aliasing — that stated *mechanism* is inaccurate; fold the docstring fix
   into step 2.)
+  **Correction (2026-07-06, when step 2 landed — `docs/decisions/2026-07-06-soi-fetch.md`):** the "real
+  IG-Credit equity blocks" framing above is wrong. In both real TEKX NPORT-EX fixtures the plain header
+  sits under `CORPORATE BONDS & NOTES` (a bond-issuer BICS class), and that fund has **no COMMON STOCKS
+  block** — the parser faults on the missing equity block before reaching the REIT line, so no real
+  fixture exercises H4. It is proven **synthetically**; its appearance in a real equity block stays
+  unverified until live cadence. The alias (config → Real Estate) + the docstring fix landed as planned.
 
 **Order:** this skeleton (committed) → **step 2 (SOI-fetch) with H4 folded in** → **I1/B1/B2 before live
 cadence** → step 3 (deferred retry §9d + mandate frozen-prior §9c + shadow clock §9e) → step 4 (email +

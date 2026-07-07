@@ -18,6 +18,12 @@ exponential backoff on 429/403 before raising a typed EdgarError.
 Freeze the substrate (§3): when `persist` is wired, every successful raw response body is
 handed over BEFORE parsing (the runner points it at layout.edgar_path(date, name) +
 write_atomic; tests wire a recorder).
+
+SOI-target resolution (§9b): `resolve_soi_target` finds *which* accession + *which exhibit
+document within it* carries a fund's current GICS-industry-grouped Schedule of Investments
+(`latest_soi` picks the accession by form priority; `filing_index` + `resolve_soi_document`
+pick the non-primary exhibit). It returns coordinates only — the runner's deferred pass (§9d,
+step 3) fetches the bytes and hands them to `sensors/soi.scan`. The parse lives in ingest/soi.py.
 """
 
 from __future__ import annotations
@@ -34,6 +40,14 @@ SUBMISSIONS_URL_TEMPLATE = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
 
 # The prospectus family (§2): a registry entry requires at least one of these on file.
 PROSPECTUS_FORMS = ("485BPOS", "485APOS", "497", "N-1A")
+
+# The SOI family (§9b): forms that render a GICS-industry-grouped Schedule of Investments. ORDER IS
+# PRIORITY, not just membership — `latest_soi` returns the newest of the FIRST non-empty tier, so an
+# NPORT-EX is preferred over a newer N-CSR/N-CSRS. The reader (ingest/soi.py) is verified ONLY against
+# NPORT-EX; a newest-by-date rule could route it an unverified N-CSR report structure — the exact
+# flag-don't-guess violation the module forbids. N-PORT (the non-EX XML) carries NO GICS grouping and
+# must never be listed here.
+SOI_FORMS = ("NPORT-EX", "N-CSR", "N-CSRS")
 
 _MAX_ATTEMPTS = 3
 _BACKOFF_BASE_SECONDS = 1.0
@@ -68,6 +82,20 @@ class ResolutionFailure:
     ticker: str
     reason: str  # 'not_in_mf_map' | 'no_prospectus' | 'http_error'
     detail: str
+
+
+@dataclass(frozen=True)
+class SoiTarget:
+    """Coordinates for a fund's current SOI document (§9b): which accession, and which exhibit document
+    WITHIN it carries the GICS-industry-grouped Schedule of Investments — NOT the NPORT-EX
+    `primaryDocument` (`primary_doc.xml`, the N-PORT XML, which carries no GICS). The runner's deferred
+    pass (§9d, step 3) fetches `primary_doc` for `accession` via `EdgarClient.filing_text` and hands the
+    bytes to `sensors/soi.scan`'s `fetch_body` seam."""
+    cik: int
+    accession: str
+    primary_doc: str   # the resolved sector-bearing exhibit .htm, NEVER primary_doc.xml
+    form: str
+    filing_date: str
 
 
 class EdgarClient:
@@ -146,6 +174,15 @@ class EdgarClient:
         url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc}/{primary_doc}"
         return self._get(url, f"{acc}_{primary_doc}")
 
+    def filing_index(self, cik: int, accession: str) -> dict:
+        """An accession's file manifest (`index.json`) from EDGAR Archives — rate-limited and frozen via
+        `persist` like every other pull (§3). The SOI-bearing document is a NON-primary exhibit within an
+        NPORT-EX accession (its `primaryDocument` is `primary_doc.xml`, the GICS-less N-PORT XML), so the
+        exhibit `.htm` must be resolved from this manifest — see `resolve_soi_document` (§9b)."""
+        acc = accession.replace("-", "")
+        url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc}/index.json"
+        return json.loads(self._get(url, f"{acc}_index.json"))
+
 
 def latest_prospectus(submissions: dict) -> dict | None:
     """The most-recent prospectus-family filing in a submissions dict, as
@@ -169,6 +206,82 @@ def latest_prospectus(submissions: dict) -> dict | None:
         return None
     return {"accession": str(accs[best]), "primary_doc": str(docs[best]),
             "form": str(forms[best]), "filing_date": str(dates[best])}
+
+
+def latest_soi(submissions: dict) -> dict | None:
+    """The SOI-bearing filing to fetch, as `{accession, primary_doc, form, filing_date}` — or None if
+    there is none. Mirrors `latest_prospectus`, but with a FORM-PRIORITY rule instead of pure
+    newest-by-date: walk `SOI_FORMS` in order and return the newest filing of the FIRST form-tier that
+    has any filing (NPORT-EX preferred; N-CSR/N-CSRS fallback only). The reader is verified solely
+    against NPORT-EX, so a slightly older NPORT-EX beats a newer N-CSR — a date rule would silently route
+    the parser an unverified report structure (flag-don't-guess, §9b). Within a tier, `recent` is
+    newest-first, so strict `>` on filing date keeps the later filing on a same-day tie (as
+    latest_prospectus).
+
+    `primary_doc` is EDGAR's `primaryDocument` — for NPORT-EX that is `primary_doc.xml` (no GICS); the
+    caller resolves the sector-bearing exhibit via `filing_index` + `resolve_soi_document`."""
+    try:
+        recent = submissions["filings"]["recent"]
+        forms, dates = recent["form"], recent["filingDate"]
+        accs, docs = recent["accessionNumber"], recent["primaryDocument"]
+    except (KeyError, TypeError):
+        return None
+    for tier in SOI_FORMS:  # priority order, not newest-across-all-forms
+        best: int | None = None
+        for i, form in enumerate(forms):
+            if form == tier and (best is None or dates[i] > dates[best]):
+                best = i
+        if best is not None:
+            return {"accession": str(accs[best]), "primary_doc": str(docs[best]),
+                    "form": str(forms[best]), "filing_date": str(dates[best])}
+    return None
+
+
+def resolve_soi_document(index: dict) -> str | None:
+    """The sector-bearing SOI HTML exhibit within an accession's `index.json`, or None to FAULT.
+    Manifest shape: `{"directory": {"item": [{"name": ..., "type": ...}, ...]}}`. Keep the `.htm`/`.html`
+    items, drop the `{acc}-index.htm` cover page and any `primary_doc.*` (the N-PORT XML). EXACTLY ONE
+    survivor -> it (the real TEKX exhibit is `NPORT_J9C7_54705771_0725.htm`); ZERO or MORE THAN ONE ->
+    None, refusing to guess (the anchor-ambiguity discipline, ingest/soi.py). The caller turns a None
+    into a fault / not-yet, NEVER a wrong document — a wrong exhibit is a wrong sector set (§9b)."""
+    try:
+        items = index["directory"]["item"]
+    except (KeyError, TypeError):
+        return None
+    candidates: list[str] = []
+    for it in items:
+        name = str(it.get("name", "")) if isinstance(it, dict) else ""
+        low = name.lower()
+        if not (low.endswith(".htm") or low.endswith(".html")):
+            continue
+        if low.endswith("-index.htm") or low.endswith("-index.html"):
+            continue
+        if low.startswith("primary_doc."):
+            continue
+        candidates.append(name)
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def resolve_soi_target(cik: int, client: EdgarClient) -> SoiTarget | None:
+    """Resolve a fund's current SOI document coordinates: `submissions` -> `latest_soi` -> `filing_index`
+    -> `resolve_soi_document`. Returns a `SoiTarget`, or None when there is no SOI filing yet (a NOT-YET,
+    re-attempted next run — §9d) or the exhibit can't be uniquely resolved (the caller faults). Any
+    network/parse error becomes None, mirroring `resolve_ticker`'s countable-failure discipline: a
+    failure here must never raise up the deferred-pass pipeline. (Distinguishing not-yet from fault, and
+    the retry schedule, are the runner's job in step 3 / §9d — this only resolves coordinates.)"""
+    try:
+        subs = client.submissions(int(cik))
+        soi = latest_soi(subs)
+        if soi is None:
+            return None
+        index = client.filing_index(int(cik), soi["accession"])
+        doc = resolve_soi_document(index)
+        if doc is None:
+            return None
+        return SoiTarget(cik=int(cik), accession=soi["accession"], primary_doc=doc,
+                         form=soi["form"], filing_date=soi["filing_date"])
+    except Exception:
+        return None
 
 
 def resolve_ticker(ticker: str, client: EdgarClient) -> Resolution | ResolutionFailure:

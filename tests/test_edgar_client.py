@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 
 from prospector.ingest.edgar import (MF_TICKERS_URL, PROSPECTUS_FORMS, EdgarClient, EdgarError,
-                                     Resolution, ResolutionFailure, resolve_ticker)
+                                     Resolution, ResolutionFailure, SoiTarget, latest_soi,
+                                     resolve_soi_document, resolve_soi_target, resolve_ticker)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 EDGAR = FIXTURES / "edgar"
@@ -294,3 +295,169 @@ def test_persist_not_called_on_failure():
     with pytest.raises(EdgarError):
         client.mf_tickers()
     assert records == []
+
+
+# -- SOI-fetch (§9b): latest_soi form-priority selection --------------------------------
+# Synthetic submissions dicts (obviously test-constructed, in-band) — the selection logic is a pure
+# function of the columnar `filings.recent`, so no recorded fixture is needed here.
+
+def _subs(rows):
+    """rows: list of (form, filingDate, accessionNumber, primaryDocument) -> a submissions dict."""
+    forms, dates, accs, docs = ([r[i] for r in rows] for i in range(4))
+    return {"filings": {"recent": {"form": forms, "filingDate": dates,
+                                   "accessionNumber": accs, "primaryDocument": docs}}}
+
+
+def test_latest_soi_prefers_nport_ex_even_when_ncsr_is_newer():
+    # Priority-tier, NOT newest-across-forms: the reader is verified only on NPORT-EX, so a newer N-CSR
+    # must never win over an NPORT-EX. (NPORT-P is the non-EX N-PORT XML — no GICS — and is never picked.)
+    subs = _subs([
+        ("NPORT-EX", "2025-07-31", "0001410368-25-011151", "primary_doc.xml"),
+        ("N-CSR",    "2025-12-01", "0000000000-25-000002", "ncsr.htm"),        # newer, lower tier
+        ("NPORT-P",  "2025-08-15", "0000000000-25-000003", "primary_doc.xml"),  # never selected
+    ])
+    got = latest_soi(subs)
+    assert got["form"] == "NPORT-EX"
+    assert got["accession"] == "0001410368-25-011151"
+    assert got["filing_date"] == "2025-07-31"
+
+
+def test_latest_soi_ignores_nport_non_ex_and_unknown_forms():
+    subs = _subs([
+        ("NPORT-P", "2025-08-15", "acc1", "primary_doc.xml"),
+        ("485BPOS", "2025-09-01", "acc2", "pros.htm"),
+    ])
+    assert latest_soi(subs) is None
+
+
+def test_latest_soi_falls_back_through_the_tiers():
+    # No NPORT-EX -> the next tier (N-CSR) wins over the lowest (N-CSRS), regardless of date.
+    subs = _subs([
+        ("N-CSRS", "2025-11-01", "acc-s", "ncsrs.htm"),   # newer, but lowest tier
+        ("N-CSR",  "2025-09-01", "acc-r", "ncsr.htm"),
+    ])
+    got = latest_soi(subs)
+    assert got["form"] == "N-CSR" and got["accession"] == "acc-r"
+
+
+def test_latest_soi_same_day_tie_keeps_the_later_filing():
+    # `recent` is newest-first, so strict > keeps the earlier index (the later filing) on a same-day tie.
+    subs = _subs([
+        ("NPORT-EX", "2025-07-31", "acc-later", "primary_doc.xml"),   # listed first == later filing
+        ("NPORT-EX", "2025-07-31", "acc-earlier", "primary_doc.xml"),
+    ])
+    assert latest_soi(subs)["accession"] == "acc-later"
+
+
+def test_latest_soi_missing_columns_returns_none():
+    assert latest_soi({}) is None
+    assert latest_soi({"filings": {"recent": {}}}) is None
+
+
+# -- SOI-fetch (§9b): filing_index + resolve_soi_document -------------------------------
+
+def _index(names):
+    return {"directory": {"item": [{"name": n} for n in names]}}
+
+
+def test_filing_index_url_shape_and_persist_name():
+    seen = {}
+
+    def fetch(url, headers):
+        seen["url"] = url
+        return json.dumps(_index(["x.htm"])).encode()
+
+    records = []
+    client, _, _ = make_client(fetch, persist=lambda name, body: records.append(name))
+    idx = client.filing_index(1516212, "0001410368-25-011151")
+    assert seen["url"] == ("https://www.sec.gov/Archives/edgar/data/1516212/"
+                           "000141036825011151/index.json")
+    assert idx["directory"]["item"][0]["name"] == "x.htm"
+    assert records == ["000141036825011151_index.json"]  # frozen via persist (§3), like every pull
+
+
+def test_filing_index_retries_429_via_get():
+    # index.json fetch inherits the throttle + backoff of _get, same as mf_tickers/submissions.
+    attempts = []
+
+    def flaky(url, headers):
+        attempts.append(url)
+        if len(attempts) <= 1:
+            raise EdgarError("slow down", status=429)
+        return json.dumps(_index([])).encode()
+
+    client, _, sleeps = make_client(flaky)
+    client.filing_index(1, "acc-0")
+    assert len(attempts) == 2 and sleeps == [1.0]
+
+
+def test_resolve_soi_document_picks_the_lone_exhibit():
+    idx = _index(["primary_doc.xml", "NPORT_J9C7_54705771_0725.htm",
+                  "0001410368-25-011151-index.htm"])
+    assert resolve_soi_document(idx) == "NPORT_J9C7_54705771_0725.htm"
+
+
+def test_resolve_soi_document_faults_on_multiple_htm_exhibits():
+    # Two candidate exhibits -> refuse to guess (None), not a first-by-order pick (a wrong doc is a
+    # wrong sector set — the anchor-ambiguity discipline).
+    idx = _index(["primary_doc.xml", "exhibit_a.htm", "exhibit_b.htm", "0001-index.htm"])
+    assert resolve_soi_document(idx) is None
+
+
+def test_resolve_soi_document_faults_on_zero_exhibits_and_never_picks_index_or_primary():
+    assert resolve_soi_document(_index(["primary_doc.xml", "0001-index.htm"])) is None
+    assert resolve_soi_document({}) is None  # malformed manifest -> None, not a crash
+
+
+# -- SOI-fetch (§9b): resolve_soi_target end-to-end coordinate resolution ---------------
+# Synthetic submissions + index.json (in-band, obviously test-constructed). The exhibit name matches the
+# real frozen fixture (NPORT_J9C7_54705771_0725.htm) so the coordinates point at a real document, but the
+# submissions/index responses are NOT recorded-real and are never used to refresh the frozen .htm.
+
+def _soi_client(cik, rows, index_names):
+    acc = rows[0][2]
+    accdash = acc.replace("-", "")
+    subs_url = f"https://data.sec.gov/submissions/CIK{cik:010d}.json"
+    index_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accdash}/index.json"
+
+    def fetch(url, headers):
+        if url == subs_url:
+            return json.dumps(_subs(rows)).encode()
+        if url == index_url:
+            return json.dumps(_index(index_names)).encode()
+        raise EdgarError(f"no fixture for {url}", status=404)
+
+    client, _, _ = make_client(fetch)
+    return client
+
+
+def test_resolve_soi_target_happy_path_returns_coordinates():
+    cik, acc, doc = 1516212, "0001410368-25-011151", "NPORT_J9C7_54705771_0725.htm"
+    client = _soi_client(cik, [("NPORT-EX", "2025-07-31", acc, "primary_doc.xml")],
+                         ["primary_doc.xml", doc, "0001410368-25-011151-index.htm"])
+    target = resolve_soi_target(cik, client)
+    assert isinstance(target, SoiTarget)
+    assert target.cik == cik and target.accession == acc
+    assert target.primary_doc == doc and target.form == "NPORT-EX"
+    assert target.filing_date == "2025-07-31"
+
+
+def test_resolve_soi_target_none_when_no_soi_filing_yet():
+    # A not-yet: submissions exist but carry no SOI-form filing -> None (re-attempted next run, §9d).
+    client = _soi_client(1, [("485BPOS", "2025-01-01", "acc-p", "pros.htm")], [])
+    assert resolve_soi_target(1, client) is None
+
+
+def test_resolve_soi_target_none_on_ambiguous_document():
+    cik, acc = 2, "0000000000-25-000001"
+    client = _soi_client(cik, [("NPORT-EX", "2025-07-31", acc, "primary_doc.xml")],
+                         ["a.htm", "b.htm"])  # two exhibits -> resolve_soi_document faults -> None
+    assert resolve_soi_target(cik, client) is None
+
+
+def test_resolve_soi_target_none_on_http_error_never_raises():
+    def fetch(url, headers):
+        raise EdgarError("edgar down", status=500)
+
+    client, _, _ = make_client(fetch)
+    assert resolve_soi_target(3, client) is None  # countable-failure discipline; never up the pipeline
