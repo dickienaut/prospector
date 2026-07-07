@@ -39,6 +39,8 @@ from prospector.fold.fold import active_nonshadow, fold, state_changed
 from prospector.fold.snapshots import SnapshotConfig, should_snapshot, write_snapshot
 from prospector.identity.resolution import ResolutionMachine
 from prospector.ingest.edgar import latest_prospectus, prospectus_history, resolve_soi_target
+from prospector.ingest.prices import (PriceIngestError, build_panel, guard_live_source,
+                                       required_pull_start)
 from prospector.ingest.prospectus import ProspectusIngest
 from prospector.ingest.soi import SoiIngest
 from prospector.runner.deps import RunnerDeps
@@ -201,11 +203,11 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
         deps.registry, store, FundRegistry(deps.layout, deps.registry, store),
         deps.edgar_client, retry_days=retry_days, clock=lambda: now)
 
-    # 2. INGEST (§9a). Thin spine drives only mf-tickers (the launch input). Freeze-before-parse:
-    #    the EdgarClient's `persist` seam (wired in deps to layout.edgar_path) writes the raw body
-    #    BEFORE mf_tickers() returns the parsed dict, so a corrupt body is still a postmortem
-    #    artifact. A fetch failure is a SOFT fault (§9a), never a run-abort.
-    #    SLOT: prices / holdings / submissions ingest — follow-on verticals.
+    # 2. INGEST (§9a). Freeze-before-parse throughout: the EdgarClient's `persist` seam (wired in
+    #    deps to layout.edgar_path) writes the raw body BEFORE mf_tickers() returns the parsed dict,
+    #    and PriceIngest.pull freezes each price body before parse — so a corrupt body is still a
+    #    postmortem artifact. A fetch failure is a SOFT fault (§9a), never a run-abort.
+    #    SLOT: holdings / submissions ingest — follow-on verticals (prices now wired below).
     current_mf = None
     try:
         current_mf = deps.edgar_client.mf_tickers()
@@ -214,8 +216,15 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
         runlog.ingests["mf_tickers"] = "fault"
         _emit_fault(store, "ingest.mf_tickers", e, now, faults)
 
+    # §9a PRICES ingest — WIRED. Build the sector-ETF correlation grid (config `universe`: the 11
+    #    SPDRs + SPY) ONCE per tick — the shared price substrate the §4a xcorr spawner consumes (next
+    #    slice) and, later, §4b dispersion, so both read one frozen grid. P1 GUARD: `guard_live_source`
+    #    fails closed on an unverified Stooq (its `Close` is only ASSUMED adjusted; a wrong-return base
+    #    is exactly P1's hazard). The panel is a built-and-frozen artifact with no consumer THIS slice.
+    _panel = _build_sector_panel(deps, store, now, faults, runlog)  # consumed by _run_xcorr next slice
+
     # 3. SENSORS in CONTRACT sub-order (§4a -> §4b -> §4c -> §4d):
-    #    §4a xcorr      — SLOT (follow-on).
+    #    §4a xcorr      — SLOT (follow-on; consumes `_panel` above).
     #    §4b dispersion — SLOT (follow-on). SUBTLE BIT #4 lives here: the dispersion shadow clock
     #        (§9e) surfaces burn-in readiness in the heartbeat/dashboard, but the runner NEVER
     #        auto-promotes shadow->paging — that is a human config flip that leaves a config.changed
@@ -266,6 +275,51 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
     # 5. CAPTURE — no-op until M6 (§9-run-order-5). The slot exists now so M6 plugs in without
     #    reshaping the run order.
     runlog.sensors["capture"] = "slot"
+
+
+def _build_sector_panel(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog):
+    """§9a prices ingest — the sector-ETF correlation grid (config `universe`: the 11 SPDRs + SPY),
+    the shared price substrate the §4a xcorr and (later) §4b dispersion spawner passes consume. Pull
+    each ticker's adjusted closes from the LIVE primary source (config `prices.primary`), FREEZE
+    before parse (§3, via the built `PriceIngest.pull`), and assemble the wide panel with `build_panel`.
+
+    P1 GUARD (§3): `guard_live_source` fails closed when the live source is an unverified Stooq —
+    `parse_stooq` only ASSUMES `Close` is adjusted, and an unadjusted close silently corrupts every
+    return across a split/dividend (the base of the sensor stack). Yahoo (primary) reads `adjclose`.
+
+    Granularity (§9g): the guard trip and each per-ticker fetch/parse failure (and an empty frame) are
+    SOFT faults — recorded on `_system`, the column skipped, the pass continues; never a run-abort.
+    Returns the panel, or None if the guard tripped or no ticker landed (the xcorr pass then records
+    'skipped')."""
+    uni = deps.cfg.get("universe") or {}
+    tickers = list(uni.get("sectors") or [])
+    if uni.get("market"):
+        tickers.append(uni["market"])
+    source = (deps.cfg.get("prices") or {}).get("primary", "yahoo")
+    try:
+        guard_live_source(source, deps.cfg)  # P1: refuse an unverified adjusted-close source, loud
+    except PriceIngestError as e:
+        runlog.ingests["prices"] = "fault"
+        _emit_fault(store, "ingest.prices", e, now, faults)
+        return None
+    start = required_pull_start(now[:10], deps.cfg)
+    end = now[:10]
+    frames = []
+    for t in tickers:
+        try:
+            frame = deps.price_ingest.pull(t, source, start, end)  # freeze-before-parse (§3)
+            if frame.empty:  # a valid body with no rows contributes no column (never a fabricated one)
+                _emit_fault(store, "ingest.prices", f"{t}: empty price frame (no rows)", now, faults)
+                continue
+            frames.append(frame)
+        except Exception as e:  # one ticker's failure never blinds the grid (§9g)
+            _emit_fault(store, "ingest.prices", f"{t}: {e}", now, faults)
+    if not frames:
+        runlog.ingests["prices"] = "skipped" if not tickers else "fault"
+        return None
+    panel = build_panel(frames)
+    runlog.ingests["prices"] = "ran"
+    return panel
 
 
 def _lead_context(deps: RunnerDeps, fund_registry: FundRegistry) -> tuple[dict, list]:

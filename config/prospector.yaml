@@ -341,6 +341,13 @@ prices:
   # so a future flip back is data-honest. Stooq wants lowercase + ".us" for US ETFs — the
   # symbol map lives here so a source quirk never leaks into identity.
   stooq_suffix: ".us"
+  # P1 GUARD (§3). Stooq's parser reads the CSV `Close` and only ASSUMES it is split/dividend-
+  # adjusted — never verified against a known corporate action (Yahoo's `adjclose` is genuinely
+  # adjusted). An unadjusted close silently corrupts every return across a split, the base of the
+  # whole sensor stack. So Stooq is fail-closed as a LIVE source (`guard_live_source`) until this
+  # flag is set true, backed by a recorded-real split fixture (the NVDA-2024 10:1 check). Zero cost
+  # today: Yahoo is primary and Stooq's endpoint is JS-gated. Flip only after the fixture proves it.
+  stooq_adjusted_verified: false
 
 edgar:
   user_agent: "Prospector/1.0 (lyle.e.dickie@gmail.com)"

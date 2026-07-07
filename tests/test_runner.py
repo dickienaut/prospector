@@ -20,6 +20,7 @@ import pytest
 
 from prospector.config import load_config
 from prospector.ingest.edgar import MF_TICKERS_URL, EdgarClient, EdgarError
+from prospector.ingest.prices import PriceIngest, PriceIngestError
 from prospector.primitives.atomic import write_atomic
 from prospector.runner import RunnerDeps, run_tick
 from prospector.runner.notify import NullNotifier
@@ -79,13 +80,27 @@ def _fetch_mf_only(current_rows):
     return fetch
 
 
+def _yahoo_ok_body() -> bytes:
+    """A minimal valid Yahoo v8 body (one row). The §9a prices ingest now runs EVERY tick, so tests
+    that don't exercise prices just need a clean, parseable body per ticker — no fault, no push."""
+    return json.dumps({"chart": {"result": [{
+        "timestamp": [1704067200],
+        "indicators": {"adjclose": [{"adjclose": [100.0]}]}}], "error": None}}).encode("utf-8")
+
+
+def _price_fetch_ok(url, headers):
+    return _yahoo_ok_body()
+
+
 def _deps(layout, registry, fetch, *, now=NOW, notifier=None, event_store=None,
-          cfg=None, cfg_hash=None, run_id="run_test"):
+          cfg=None, cfg_hash=None, run_id="run_test", price_fetch=None):
     base_cfg, base_hash = load_config(CONFIG)
     return RunnerDeps(
         layout=layout, registry=registry,
         event_store=event_store if event_store is not None else EventStore(layout, registry),
         edgar_client=_edgar(layout, now[:10], fetch),
+        # Frozen price pulls are pinned to the tick date so they land under prices_path deterministically.
+        price_ingest=PriceIngest(layout, fetch=price_fetch or _price_fetch_ok, clock=lambda: now[:10]),
         notifier=notifier if notifier is not None else NullNotifier(),
         cfg=cfg if cfg is not None else base_cfg,
         cfg_hash=cfg_hash if cfg_hash is not None else base_hash,
@@ -186,6 +201,53 @@ def test_ingest_failure_is_a_soft_fault_that_continues_and_pushes(layout, regist
     assert runlog.ingests["mf_tickers"] == "fault"
     assert runlog.sensors["identity_retries"] == "ran"   # the run continued past the fault
     assert runlog.pushed is True and len(notifier.pushes) == 1  # a fault always pushes
+
+
+# -- §9a prices ingest: the sector-ETF panel is built and frozen ----------------------------
+
+def test_prices_panel_is_built_and_frozen(layout, registry):
+    # The runner builds the sector-ETF correlation grid every tick and FREEZES each pull before parse
+    # (§3/§9a) — the shared substrate xcorr (§4a) will consume. Prove: every universe ticker's raw
+    # body lands under prices_path (the frozen substrate), and the ingest ran clean.
+    runlog = run_tick(_deps(layout, registry, _fetch_mf_only([XLK_ROW])))
+    assert runlog.ingests["prices"] == "ran"
+    cfg, _ = load_config(CONFIG)
+    tickers = list(cfg["universe"]["sectors"]) + [cfg["universe"]["market"]]
+    for t in tickers:
+        assert layout.prices_path("yahoo", NOW[:10], f"{t}.json").is_file()  # frozen substrate (§3)
+
+
+def test_prices_per_ticker_failure_is_a_soft_fault(layout, registry):
+    # One ticker's price fetch 404s; the others land, the grid still builds, the run goes on — a
+    # per-unit SOFT fault (§9g), never a run-abort. The failed pull froze nothing (fetch raises before
+    # write_atomic). (A fault pushes — that is the dead-man, not the subject of this test.)
+    def price_fetch(url, headers):
+        if "XLK" in url.upper():
+            raise PriceIngestError("no XLK price fixture", status=404)
+        return _yahoo_ok_body()
+
+    runlog = run_tick(_deps(layout, registry, _fetch_mf_only([XLK_ROW]), price_fetch=price_fetch))
+    assert runlog.ingests["prices"] == "ran"                       # the grid still built from the rest
+    faults = registry.events_for_lead(SYSTEM_LEAD, "fault")
+    assert any(json.loads(f["payload"])["subsystem"] == "ingest.prices" for f in faults)
+    assert not layout.prices_path("yahoo", NOW[:10], "XLK.json").is_file()  # failed pull froze nothing
+
+
+def test_p1_guard_fails_closed_on_unverified_stooq_live_source(layout, registry):
+    # P1 (§3): with Stooq forced as the live primary and stooq_adjusted_verified false, the guard fails
+    # CLOSED — the prices ingest is a fault (no panel), recorded on _system. parse_stooq only ASSUMES
+    # `Close` is adjusted; a live unverified Stooq would silently corrupt every return across a split.
+    import copy
+    cfg, cfg_hash = load_config(CONFIG)
+    cfg = copy.deepcopy(cfg)
+    cfg["prices"]["primary"] = "stooq"                       # force the unverified source live
+    assert cfg["prices"]["stooq_adjusted_verified"] is False
+    runlog = run_tick(_deps(layout, registry, _fetch_mf_only([XLK_ROW]), cfg=cfg, cfg_hash=cfg_hash))
+    assert runlog.ingests["prices"] == "fault"
+    faults = [json.loads(f["payload"]) for f in registry.events_for_lead(SYSTEM_LEAD, "fault")]
+    assert any(f["subsystem"] == "ingest.prices" and "P1" in f["message"] for f in faults)
+    # Fail-closed means NOTHING was pulled/frozen from the unverified source.
+    assert not (layout.root / "ingest" / "prices" / "stooq").exists()
 
 
 # -- run-log is written, indexed, and NOT a lead event --------------------------------------

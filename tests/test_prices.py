@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 
 from prospector.ingest.prices import (CALENDAR_PER_TRADING_DAY, PriceIngest, PriceIngestError,
-                                      build_panel, parse_stooq, parse_yahoo,
+                                      build_panel, guard_live_source, parse_stooq, parse_yahoo,
                                       required_pull_start, warmup_days)
 
 WINDOWS_CFG = {"windows": {"corr_days": 63, "baseline_days": 252, "stress_days": 21}}
@@ -172,6 +172,30 @@ def test_build_panel_duplicate_ticker_raises():
     b = parse_yahoo(_yahoo_body([_D2], [101.0]), "XLK")
     with pytest.raises(ValueError, match="duplicate ticker"):
         build_panel([a, b])
+
+
+# -- P1 guard: Stooq fails closed as a live source until verified --------------
+
+def test_guard_live_source_allows_yahoo():
+    # Yahoo reads `adjclose` (genuinely adjusted) — never gated.
+    guard_live_source("yahoo", {"prices": {"primary": "yahoo"}})  # no raise
+
+
+def test_guard_live_source_refuses_unverified_stooq():
+    # parse_stooq only ASSUMES `Close` is adjusted; unverified Stooq must never go live (P1).
+    with pytest.raises(PriceIngestError, match="P1"):
+        guard_live_source("stooq", {"prices": {"stooq_adjusted_verified": False}})
+
+
+def test_guard_live_source_refuses_stooq_when_flag_absent():
+    # Absent flag is treated as false — fail closed, not open (the safe default for a return base).
+    with pytest.raises(PriceIngestError, match="P1"):
+        guard_live_source("stooq", {})
+
+
+def test_guard_live_source_allows_verified_stooq():
+    # Once a recorded-real split fixture proves adjustment and the flag is flipped, Stooq is allowed.
+    guard_live_source("stooq", {"prices": {"stooq_adjusted_verified": True}})  # no raise
 
 
 # -- warmup arithmetic --------------------------------------------------------

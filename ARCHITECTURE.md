@@ -50,7 +50,7 @@ path places, sizes, or recommends a trade.
 | `fold/fold.py` | The pure fold: state, verdict supersession, unknown-type handling | `fold()`, `active_nonshadow()`, `VERDICT_VOCAB` |
 | `config.py` | Load YAML → (config, canonical hash); `config.changed` emission | `load_config()`, `check_config_honesty()` |
 | `ingest/edgar.py` | EDGAR client (declared UA, rate-limited, freeze-the-substrate); §2 resolution keyed on ticker OR the detected series (I1); SOI-target resolution (§9b) | `EdgarClient` (`filing_index()`), `resolve_ticker()`, `resolve_series()`, `confirm_prospectus()`, `latest_soi()`, `resolve_soi_document()`, `resolve_soi_target()` |
-| `ingest/prices.py` | Price ingest (Yahoo primary / Stooq fallback), frozen pulls, panel builder | `PriceIngest`, `build_panel()` |
+| `ingest/prices.py` | Price ingest (Yahoo primary → `adjclose` / Stooq fallback), frozen pulls, panel builder; P1 fail-closed guard (Stooq's `Close` is only *assumed* adjusted — gated as a live source until verified) | `PriceIngest`, `build_panel()`, `guard_live_source()` |
 | `ingest/holdings.py` | Holdings ingest (§4d keystone) — SPDR daily CSV → 90%-weight membership, frozen | `HoldingsIngest`, `weight_covering_members()` |
 | `ingest/prospectus.py` | Prospectus fetch/freeze + mandate extraction (§4d) — bs4 → text, strategy section, diff | `ProspectusIngest`, `extract_mandate()`, `diff_mandate()` |
 | `ingest/soi.py` | SOI fetch-freeze (read side) + GICS-industry-grouped sector derivation (§4c resolver) — fund-block isolation → `INDUSTRY — N.N%` parse → industry→sector rollup (+ `gics_industry_alias` rendering variants) → reconcile-or-fault | `SoiIngest`, `extract_soi_sectors()`, `dominant_sectors()` |
@@ -67,7 +67,7 @@ path places, sizes, or recommends a trade.
 | `backtest/report.py` | The acceptance-gate artifact (recall/precision/falsification/lag) | `build_report()`, `render_markdown()` |
 | `backtest/corroboration.py` | Cross-stream corroboration scoring (sector→keyword) | `score_all()` |
 | `backtest/beta_diagnostic.py` | **Read-only** crash-flags diagnostic (never wired to the sensor) | `scoped_beta_slice()`, `two_clock_read()` |
-| `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push; launch-recording (§4c), the §9d deferred SOI-corroboration retry pass, and the §4d mandate-diff pass (§9c frozen-prior) wired; xcorr/dispersion/rebalance + §9e are spec-cited SLOTS | `run_tick()` |
+| `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push. WIRED: §9a sector-prices panel ingest (`_build_sector_panel`, P1 guard), launch-recording (§4c), the §9d deferred SOI-corroboration retry pass, the §4d mandate-diff pass (§9c frozen-prior). SLOTS: xcorr (§4a, next) / dispersion / rebalance + §9e | `run_tick()` |
 | `runner/deps.py` / `runner/notify.py` / `runner/runlog.py` | Injected seam bundle; the `Notifier` transport (`NullNotifier` until the M5 email slice); per-tick run-log (§9g, its own `runs` table, telemetry — never a lead event) | `RunnerDeps`, `NullNotifier`, `RunLog`, `write_run_log()` |
 | `cli/main.py` | The `pros` CLI — read surfaces + verdict/identity/backtest + the `run` cadence entrypoint | `cli` |
 
@@ -244,7 +244,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ## 9. Status — built vs deferred
 
-**Built (committed, 380 tests green):**
+**Built (committed, 423 tests green):**
 - Milestone 1 — vendored primitives, envelope store, WAL registry, fold engine, reactive snapshots,
   S3 sync, config honesty, reindex.
 - Milestone 2 — EDGAR client, fund registry (HECO rule), failed-resolution machine.
@@ -303,14 +303,30 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - **Holdings-intake coverage** (secondary) — per-issuer holdings parsers / NPORT-P look-through, which
   turns the live cross-stream lag from an *existence proof* into a *representative rate*. Intake was
   deliberately not widened inside the corroboration slice.
-- Milestone 5 — the remaining build-order steps on top of the landed runner skeleton + SOI-fetch + §9d +
-  §9c (above): **step 3 remainder** the dispersion shadow clock (§9e — pulls in `PriceIngest`, since
-  dispersion consumes a price panel; those prices then also serve xcorr §4a); then the **read-only
-  Streamlit** dashboard (§11, incl. the macro-catalog + launch + coverage panels — the current priority);
-  **email** (§10 heartbeat/push/dead-man + the dormant-pile coverage report) follows as a nice-to-have.
-  **xcorr (§4a) — the primary lead spawner — is the big step-4 slot**: it's when the runner starts
-  spawning its main leads and the dormant pile fills; it pairs with the dashboard (firings + a surface to
-  see them) as the "runner earns its keep" moment.
+- Milestone 5 — remaining build-order steps (**SEQUENCING CORRECTED 2026-07-06, Option A**; see
+  `docs/decisions/2026-07-06-prices-ingest-and-p1.md`). Exploring the slot state inverted the original
+  "one prices foundation feeds both spawners" premise: `PriceIngest` was already built, and the two
+  spawners have OPPOSITE gaps. **xcorr (§4a)** needs only the sector-ETF panel (now wired) + a new `scan`
+  orchestrator — nothing blocks it. **dispersion (§4b)** needs a *holdings-derived* vertical (per-basket
+  `MembershipSnapshot` + a constituent price panel keyed by member CUSIPs; runner holdings wiring is a
+  SLOT, only XLK has a fixture), so it cannot spawn a real shadow lead — cannot start the §9e burn-in
+  clock — until that vertical exists, regardless of ordering. Corrected order: **§9a sector-prices panel
+  (landed, below) → xcorr-live (§4a, next — the primary paging, ceiling-counting spawner) → read-only
+  Streamlit dashboard (§11, the priority: real xcorr firings + launch corroborations + the dormant pile;
+  the dispersion shadow panel renders honestly-empty)**. Then the **dispersion + burn-in vertical** (§9e +
+  the holdings/constituent-price path — this is where **holdings-intake coverage** is confronted as its
+  own slice, when its consumer is built), and **email** (§10) last, a nice-to-have. "Runner earns its
+  keep" = xcorr-live + dashboard, together.
+- **Milestone 5 — §9a sector-prices panel ingest + P1 guard (landed 2026-07-06)** — the runner builds the
+  sector-ETF correlation grid every tick (`_build_sector_panel`): pull each `universe` ticker's adjusted
+  closes from the live primary (Yahoo → `adjclose`), freeze-before-parse via the built `PriceIngest.pull`,
+  assemble `build_panel`; a per-ticker failure / empty frame is a soft fault (§9g), the grid builds from
+  the rest. The **P1 guard** (`guard_live_source`) fails Stooq CLOSED as a live source until
+  `prices.stooq_adjusted_verified` is set — its `Close` is only *assumed* adjusted (unlike Yahoo's
+  `adjclose`), and an unadjusted close silently corrupts every return across a split (the base of the
+  sensor stack); `parse_stooq`'s docstring is corrected to say so. The panel is the shared substrate xcorr
+  consumes next; the empirical NVDA-2024-split confirmation is a flagged out-of-band step (Stooq is
+  JS-gated, so it is not a blocker). See `docs/decisions/2026-07-06-prices-ingest-and-p1.md`.
 - **Milestone 5 — §4d mandate-diff on cadence + §9c frozen-prior (landed 2026-07-06)** — the runner runs
   the mandate-diff each tick (`_run_mandate`): for each registered fund, `latest_prospectus` (current) +
   the last **frozen** prospectus as the prior (`_last_frozen_prospectus` via `prospectus_history` +
