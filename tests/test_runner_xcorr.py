@@ -75,7 +75,9 @@ def _deps(layout, registry, edgar_fetch, price_fetch, *, cfg=None, notifier=None
     return RunnerDeps(
         layout=layout, registry=registry, event_store=EventStore(layout, registry),
         edgar_client=_edgar(layout, edgar_fetch),
-        price_ingest=PriceIngest(layout, fetch=price_fetch, clock=lambda: NOW[:10]),
+        price_ingest=PriceIngest(layout, fetch=price_fetch, clock=lambda: NOW[:10],
+                                 sleep=lambda _s: None),  # no-op sleep: the panel pulls 12+ tickers
+
         notifier=notifier if notifier is not None else NullNotifier(),
         cfg=cfg if cfg is not None else base_cfg, cfg_hash=base_hash,
         now=NOW, run_id="run_test", monotonic=lambda: 0.0)

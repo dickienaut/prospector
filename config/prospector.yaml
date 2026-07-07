@@ -348,6 +348,10 @@ prices:
   # flag is set true, backed by a recorded-real split fixture (the NVDA-2024 10:1 check). Zero cost
   # today: Yahoo is primary and Stooq's endpoint is JS-gated. Flip only after the fixture proves it.
   stooq_adjusted_verified: false
+  max_requests_per_sec: 2   # polite cap; Yahoo publishes no limit and 429s aggressively from shared
+                            # egress IPs (a bare 12-ticker burst tripped it — see the decision doc).
+                            # DEFAULT (tunable) — throttle + 429/403 backoff mirror EdgarClient. Does
+                            # NOT beat a hard shared-IP block (that's a Private-Relay/deploy concern).
 
 edgar:
   user_agent: "Prospector/1.0 (lyle.e.dickie@gmail.com)"

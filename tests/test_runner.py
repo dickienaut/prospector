@@ -100,7 +100,9 @@ def _deps(layout, registry, fetch, *, now=NOW, notifier=None, event_store=None,
         event_store=event_store if event_store is not None else EventStore(layout, registry),
         edgar_client=_edgar(layout, now[:10], fetch),
         # Frozen price pulls are pinned to the tick date so they land under prices_path deterministically.
-        price_ingest=PriceIngest(layout, fetch=price_fetch or _price_fetch_ok, clock=lambda: now[:10]),
+        price_ingest=PriceIngest(layout, fetch=price_fetch or _price_fetch_ok, clock=lambda: now[:10],
+                                 sleep=lambda _s: None),  # no-op sleep: the panel pulls 12+ tickers
+
         notifier=notifier if notifier is not None else NullNotifier(),
         cfg=cfg if cfg is not None else base_cfg,
         cfg_hash=cfg_hash if cfg_hash is not None else base_hash,

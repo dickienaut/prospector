@@ -97,7 +97,8 @@ def _deps(layout, registry, event_store, fetch):
     cfg, cfg_hash = load_config(CONFIG)
     return RunnerDeps(layout=layout, registry=registry, event_store=event_store,
                       edgar_client=_edgar(layout, fetch),
-                      price_ingest=PriceIngest(layout, fetch=lambda url, headers: b""),  # inert: _run_soi_corroboration never builds the panel
+                      price_ingest=PriceIngest(layout, fetch=lambda url, headers: b"",
+                                               sleep=lambda _s: None),  # inert: _run_soi_corroboration never builds the panel
                       notifier=NullNotifier(),
                       cfg=cfg, cfg_hash=cfg_hash, now=NOW, run_id="run_test",
                       monotonic=lambda: 0.0)

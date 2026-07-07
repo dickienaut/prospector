@@ -134,7 +134,10 @@ def run(store_path):
             max_per_sec=float(edgar_cfg.get("max_requests_per_sec", 8.0)),
             persist=lambda name, body: write_atomic(layout.edgar_path(tick_date, name), body))
         # §9a prices ingest: default httpx fetch; the clock pins frozen pulls to this tick's date.
-        price_ingest = PriceIngest(layout, clock=lambda: tick_date)
+        # Rate-limited + 429/403-backoff like EDGAR (Yahoo 429s aggressively — see the decision doc).
+        price_ingest = PriceIngest(
+            layout, clock=lambda: tick_date,
+            max_per_sec=float((cfg.get("prices") or {}).get("max_requests_per_sec", 2.0)))
         deps = RunnerDeps(
             layout=layout, registry=registry, event_store=EventStore(layout, registry),
             edgar_client=edgar_client, price_ingest=price_ingest, notifier=NullNotifier(),
