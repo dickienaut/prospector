@@ -12,14 +12,13 @@ no run-now surface (cron invokes it; scheduling is M7). Statelessness (CONTRACT 
 nothing across ticks — all between-tick state is recovered from the fossil record (§9f), so two
 cold runs over the same store produce identical events.
 
-SCOPE — this is the THIN SPINE (build-order step 1). It gets the run order, the invariants, the
-run-log, the exception granularity, and the snapshot/push machinery right, proven end to end
-through ONE real vertical: launch-recording (§4c). Every other sensor and all genuinely-new logic
-are explicit, spec-cited SLOTS filled in follow-on slices:
-  §4a xcorr, §4b dispersion, §4d rebalance/mandate         — sensor SLOTS (steps 2-3)
-  §9b SOI live-fetch, §9d deferred corroboration/SOI retry  — deferred-pass SLOTS (steps 2-3)
-  §9c mandate frozen-prior, §9e shadow clock                — invariants noted at their slots
-  §10 real email sender                                     — NullNotifier here; sender is step 4
+SCOPE — grown well past the thin spine. WIRED, in CONTRACT run order: config honesty (§9-1), the
+§9a mf-tickers + sector-prices ingest, §4a xcorr (the PRIMARY live lead-spawner), §4c launch-
+recording, the §9d deferred SOI-corroboration retry, and the §4d mandate-diff (§9c frozen-prior).
+Remaining spec-cited SLOTS, each additive in its CONTRACT position:
+  §4b dispersion + §9e shadow clock  — needs the holdings/constituent-price vertical (a later slice)
+  §4d rebalance (holdings-diff)      — needs holdings ingest (same vertical)
+  §10 real email sender              — NullNotifier here; the sender is a later slice
 
 THE FOUR SUBTLE BITS (spec §9, "comment the why") — each encodes a CONTRACT that is not obvious
 from the mechanics; they are marked inline where they live:
@@ -48,6 +47,7 @@ from prospector.runner.runlog import RunLog, write_run_log
 from prospector.sensors import launch as launch_sensor
 from prospector.sensors import mandate as mandate_sensor
 from prospector.sensors import soi as soi_sensor
+from prospector.sensors import xcorr as xcorr_sensor
 from prospector.sensors.launch_corroboration import (lead_sectors, pending_soi_resolution,
                                                      series_id_sectors)
 from prospector.store.envelope import SYSTEM_LEAD, parse_ts
@@ -224,11 +224,22 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
     _panel = _build_sector_panel(deps, store, now, faults, runlog)  # consumed by _run_xcorr next slice
 
     # 3. SENSORS in CONTRACT sub-order (§4a -> §4b -> §4c -> §4d):
-    #    §4a xcorr      — SLOT (follow-on; consumes `_panel` above).
+    #    §4a xcorr — WIRED (the runner's PRIMARY live lead-spawner). Consumes the sector-ETF panel
+    #        built above + THIS tick's mf map (the authoritative ticker->series_id, since the seed
+    #        universe is never 'launched' and so is never in the fund registry). A spawn is LIVE
+    #        (shadow=false) -> it pages AND counts toward the §8a ceiling via active_nonshadow. The
+    #        stress gate freezes the trigger on a crisis day (a would-be entry -> stressed departure
+    #        on _system, never a spawn). Trigger state is reconstructed from the record (§9f).
+    try:
+        _run_xcorr(deps, store, now, faults, runlog, _panel, current_mf)
+    except Exception as e:  # a batch-level failure is a soft fault, never a run-abort (§9g)
+        runlog.sensors["xcorr"] = "fault"
+        _emit_fault(store, "sensor.xcorr", e, now, faults)
     #    §4b dispersion — SLOT (follow-on). SUBTLE BIT #4 lives here: the dispersion shadow clock
     #        (§9e) surfaces burn-in readiness in the heartbeat/dashboard, but the runner NEVER
     #        auto-promotes shadow->paging — that is a human config flip that leaves a config.changed
-    #        fossil (auto-promotion would re-trust survivor-biased calibration).
+    #        fossil (auto-promotion would re-trust survivor-biased calibration). Dispersion's inputs
+    #        (per-basket membership + constituent prices) are a holdings-derived vertical, its own slice.
     #    §4c launch     — WIRED.
     if current_mf is not None:
         try:
@@ -320,6 +331,73 @@ def _build_sector_panel(deps: RunnerDeps, store, now: str, faults: list, runlog:
     panel = build_panel(frames)
     runlog.ingests["prices"] = "ran"
     return panel
+
+
+_XCORR_TRIGGER_TYPES = ("lead.spawned", "xcorr.departure", "xcorr.tick", "xcorr.reverted")
+
+
+def _universe_series_ids(cfg: dict, current_mf: dict | None) -> dict:
+    """`{sector ticker -> SEC series id}` resolved from THIS tick's mf-tickers map — the authoritative
+    `[cik, seriesId, classId, symbol]` feed already fetched for the launch diff, NOT the fund registry.
+    Why not the registry: the seed universe is never 'launched', and `upsert` fires only on a resolved
+    launch, so the 11 SPDRs are never registered there — reading it would leave xcorr permanently inert.
+    xcorr keys its lead on series ids (§2/§5 CONTRACT), so this is the bridge that lets it spawn. SPY is
+    deliberately excluded: it is a UIT with no series id and is only the β-strip market factor, never a
+    pair member. A ticker that is absent or maps to >1 distinct series id (ambiguous) is skipped — refuse
+    to guess (bounded, honest), never a wrong key."""
+    if not current_mf:
+        return {}
+    try:
+        idx = {f: i for i, f in enumerate(current_mf["fields"])}
+        si, sy = idx["seriesId"], idx["symbol"]
+    except (KeyError, TypeError):
+        return {}
+    by_ticker: dict[str, set] = {}
+    for row in current_mf.get("data", []):
+        by_ticker.setdefault(str(row[sy]).upper(), set()).add(str(row[si]))
+    out: dict[str, str] = {}
+    for ticker in (cfg.get("universe") or {}).get("sectors", []):
+        sids = by_ticker.get(str(ticker).upper())
+        if sids and len(sids) == 1:
+            out[ticker] = next(iter(sids))
+    return out
+
+
+def _xcorr_last_event_types(deps: RunnerDeps) -> dict:
+    """§9f — reconstruct each xcorr lead's Schmitt-state SOURCE from the fossil record: `{lead_id ->
+    its last TRIGGER-relevant event type}`. Read straight from the registry (the same events the fold
+    reads, ORDER BY ts, event_id), never a side cache. Only trigger-vocabulary events count
+    (`lead.spawned`/`xcorr.*`), so a later corroboration/verdict on the lead cannot be misread as an
+    active departure (the schmitt contract). A pair that never spawned has no lead here -> `None` ->
+    quiet, so it can enter cleanly."""
+    out: dict[str, str | None] = {}
+    for lead in deps.registry.all_leads():
+        if lead == SYSTEM_LEAD or not str(lead).startswith("xcorr-"):
+            continue
+        last = None
+        for r in deps.registry.events_for_lead(lead):
+            if r["type"] in _XCORR_TRIGGER_TYPES:
+                last = r["type"]
+        out[lead] = last
+    return out
+
+
+def _run_xcorr(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog, panel,
+               current_mf: dict | None) -> None:
+    """§4a xcorr — the runner's PRIMARY live lead-spawner. Drive `xcorr_sensor.scan` over the sector-ETF
+    panel built this tick: resolve the universe tickers -> series ids from the mf map
+    (`_universe_series_ids` — the lead keys on series ids, §2/§5), reconstruct each pair's Schmitt state
+    from the record (`_xcorr_last_event_types`, §9f), and step one tick. A spawn is LIVE (shadow=false):
+    it pages and counts toward the §8a ceiling via `active_nonshadow`, no extra code. No panel (prices
+    ingest faulted / empty) -> 'skipped', honestly (xcorr cannot run without a warmed price grid). A
+    batch failure (e.g. the panel lacks the market column) escapes to the caller's soft-fault boundary."""
+    if panel is None or getattr(panel, "empty", True):
+        runlog.sensors["xcorr"] = "skipped"  # no prices this tick — honest, not a silent no-op
+        return
+    ticker_to_series_id = _universe_series_ids(deps.cfg, current_mf)
+    last_event_types = _xcorr_last_event_types(deps)
+    xcorr_sensor.scan(panel, ticker_to_series_id, deps.cfg, now, last_event_types, store.append)
+    runlog.sensors["xcorr"] = "ran"
 
 
 def _lead_context(deps: RunnerDeps, fund_registry: FundRegistry) -> tuple[dict, list]:

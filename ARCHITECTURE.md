@@ -55,7 +55,7 @@ path places, sizes, or recommends a trade.
 | `ingest/prospectus.py` | Prospectus fetch/freeze + mandate extraction (§4d) — bs4 → text, strategy section, diff | `ProspectusIngest`, `extract_mandate()`, `diff_mandate()` |
 | `ingest/soi.py` | SOI fetch-freeze (read side) + GICS-industry-grouped sector derivation (§4c resolver) — fund-block isolation → `INDUSTRY — N.N%` parse → industry→sector rollup (+ `gics_industry_alias` rendering variants) → reconcile-or-fault | `SoiIngest`, `extract_soi_sectors()`, `dominant_sectors()` |
 | `identity/resolution.py` | Retry-then-manual resolution machine; two-phase-launch intake + completion | `ResolutionMachine`, `register_launch()`, `launch_lag()` |
-| `sensors/xcorr.py` | The excess-correlation pipeline (β-strip → departure z) + the stress gate | `daily_returns`→`departure_z`, `stress_series` |
+| `sensors/xcorr.py` | The excess-correlation pipeline (β-strip → departure z) + the stress gate; **`scan()`** — the runner's LIVE per-tick driver (state from the record §9f, stress gate, spawn/tick/revert) | `daily_returns`→`departure_z`, `stress_series`, `scan()` |
 | `sensors/dispersion.py` | Intra-basket fracture (§4b) — constituent corr → spectral bipartition → Q departure z; shadow-wired, generous payload | `dispersion_q_series`, `scan()` |
 | `sensors/launch.py` | Launch sensor — new-registration detection (MF-map diff), the consensus clock | `new_registrations()`, `scan()` |
 | `sensors/rebalance.py` | Rebalance accretion (§4d) — holdings-diff → `rebalance` onto live leads; forward-hash routing | `diff_holdings()`, `watching_leads()`, `scan()` |
@@ -67,7 +67,7 @@ path places, sizes, or recommends a trade.
 | `backtest/report.py` | The acceptance-gate artifact (recall/precision/falsification/lag) | `build_report()`, `render_markdown()` |
 | `backtest/corroboration.py` | Cross-stream corroboration scoring (sector→keyword) | `score_all()` |
 | `backtest/beta_diagnostic.py` | **Read-only** crash-flags diagnostic (never wired to the sensor) | `scoped_beta_slice()`, `two_clock_read()` |
-| `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push. WIRED: §9a sector-prices panel ingest (`_build_sector_panel`, P1 guard), launch-recording (§4c), the §9d deferred SOI-corroboration retry pass, the §4d mandate-diff pass (§9c frozen-prior). SLOTS: xcorr (§4a, next) / dispersion / rebalance + §9e | `run_tick()` |
+| `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push. WIRED: §9a sector-prices panel ingest (`_build_sector_panel`, P1 guard), **§4a xcorr — the PRIMARY live spawner** (`_run_xcorr`; universe→series_id from the mf map, §9f state, LIVE/paging/ceiling-counting), launch-recording (§4c), the §9d deferred SOI-corroboration retry, the §4d mandate-diff (§9c frozen-prior). SLOTS: dispersion (§4b) / rebalance + §9e | `run_tick()` |
 | `runner/deps.py` / `runner/notify.py` / `runner/runlog.py` | Injected seam bundle; the `Notifier` transport (`NullNotifier` until the M5 email slice); per-tick run-log (§9g, its own `runs` table, telemetry — never a lead event) | `RunnerDeps`, `NullNotifier`, `RunLog`, `write_run_log()` |
 | `cli/main.py` | The `pros` CLI — read surfaces + verdict/identity/backtest + the `run` cadence entrypoint | `cli` |
 
@@ -244,7 +244,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ## 9. Status — built vs deferred
 
-**Built (committed, 423 tests green):**
+**Built (committed, 430 tests green):**
 - Milestone 1 — vendored primitives, envelope store, WAL registry, fold engine, reactive snapshots,
   S3 sync, config honesty, reindex.
 - Milestone 2 — EDGAR client, fund registry (HECO rule), failed-resolution machine.
@@ -311,12 +311,24 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   `MembershipSnapshot` + a constituent price panel keyed by member CUSIPs; runner holdings wiring is a
   SLOT, only XLK has a fixture), so it cannot spawn a real shadow lead — cannot start the §9e burn-in
   clock — until that vertical exists, regardless of ordering. Corrected order: **§9a sector-prices panel
-  (landed, below) → xcorr-live (§4a, next — the primary paging, ceiling-counting spawner) → read-only
-  Streamlit dashboard (§11, the priority: real xcorr firings + launch corroborations + the dormant pile;
-  the dispersion shadow panel renders honestly-empty)**. Then the **dispersion + burn-in vertical** (§9e +
-  the holdings/constituent-price path — this is where **holdings-intake coverage** is confronted as its
-  own slice, when its consumer is built), and **email** (§10) last, a nice-to-have. "Runner earns its
-  keep" = xcorr-live + dashboard, together.
+  (landed) → xcorr-live (§4a, landed) → read-only Streamlit dashboard (§11, NEXT — the priority: real
+  xcorr firings + launch corroborations + the dormant pile; the dispersion shadow panel renders honestly-
+  empty)**. Then the **dispersion + burn-in vertical** (§9e + the holdings/constituent-price path — this
+  is where **holdings-intake coverage** is confronted as its own slice, when its consumer is built), and
+  **email** (§10) last, a nice-to-have. "Runner earns its keep" = xcorr-live + dashboard, together.
+- **Milestone 5 — §4a xcorr wired LIVE into the runner (landed 2026-07-07)** — the runner's PRIMARY lead-
+  spawner. Built the missing `xcorr.scan` orchestrator (the pipeline was pure math + the backtest's replay;
+  there was no per-tick driver): drive returns→β-strip→residual-corr→Fisher-z→departure-z once, then per
+  pair reconstruct the Schmitt state from the record (§9f, `_xcorr_last_event_types`) and step ONE tick on
+  the latest z. `_run_xcorr` resolves the universe tickers→series ids from **this tick's mf map**
+  (`_universe_series_ids`, NOT the registry — the seed universe is never launched/registered, so reading
+  the registry would leave xcorr inert; SPY excluded, a UIT with no series id / only the β-strip factor). A
+  spawn is **LIVE** (`shadow=false`) → it pages and counts toward the §8a ceiling via `active_nonshadow`,
+  no extra code. Stress gate (§4a CONTRACT): a crisis-day would-be entry is a stressed `xcorr.departure` on
+  `_system`, never a spawn. Event vocabulary matches the backtest's exactly (one shape, two drivers). Proven
+  by the acceptance-gate discipline: fires-live end-to-end (mf resolves a pair, planted panel → a real spawn
+  that pushes), null-silent, stress-gate-freezes, §9f state reconstruction, and a soft-fault batch boundary.
+  See `docs/decisions/2026-07-07-xcorr-live.md`.
 - **Milestone 5 — §9a sector-prices panel ingest + P1 guard (landed 2026-07-06)** — the runner builds the
   sector-ETF correlation grid every tick (`_build_sector_panel`): pull each `universe` ticker's adjusted
   closes from the live primary (Yahoo → `adjclose`), freeze-before-parse via the built `PriceIngest.pull`,
