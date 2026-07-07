@@ -2,9 +2,10 @@
 
 Daily EOD adjusted closes for the correlation grid (the 11 sector ETFs + SPY) and, later,
 basket constituents. One primary + one fallback source, pinned in config (`prices.primary` /
-`prices.fallback`; DEFAULT primary yahoo — Stooq's CSV endpoint currently sits behind a
-JavaScript proof-of-work gate a polite HTTP client cannot pass, see the config note). The
-source is recorded per row AND per panel column, so a future flip back is data-honest.
+`prices.fallback`; DEFAULT primary tiingo — Yahoo's chart endpoint now sits behind a
+TLS-fingerprint bot challenge a polite HTTP client cannot pass; Stooq's CSV endpoint sits behind
+a JavaScript proof-of-work gate; see the config note + docs/decisions/2026-07-07-tiingo-price-source.md).
+The source is recorded per row AND per panel column, so a future flip back is data-honest.
 
 The §3 discipline, in order:
 - Every raw response body is FROZEN via write_atomic under ingest/prices/{source}/{date}/
@@ -15,6 +16,14 @@ The §3 discipline, in order:
   pull. Window slicing belongs to the caller.
 - Missing rows stay missing: no forward-fill anywhere, and `build_panel`'s outer join keeps a
   late-listed fund's leading NaN (XLC listed 2018-06 is the live example).
+
+Adjusted closes are RETROACTIVELY MUTABLE (CRSP methodology): each new distribution re-scales the
+WHOLE historical series, so a past date's `adjClose` shifts slightly on every re-pull. This is why
+ingest/prices/ is dated substrate, NOT the append-only record — a re-pull of the same date legitimately
+differs. The effect on returns is a tiny uniform re-scaling (consecutive-day ratios are preserved
+except at the ex-date, and by a small amount), so it is negligible for correlation/departure detection
+(xcorr re-pulls each tick and is self-consistent within a run). It bites only backtest bit-reproducibility
+(a months-later re-run uses a slightly re-adjusted history unless that run's exact panel is frozen).
 
 Fair access (mirrors EdgarClient §2/§3): a hard request-rate cap (config
 `prices.max_requests_per_sec`) spaces pulls, and 429/403 (throttle/refusal) get exponential
@@ -49,6 +58,11 @@ from prospector.store.layout import StoreLayout
 YAHOO_URL_TEMPLATE = ("https://query1.finance.yahoo.com/v8/finance/chart/"
                       "{symbol}?period1={period1}&period2={period2}&interval=1d")
 STOOQ_URL_TEMPLATE = "https://stooq.com/q/d/l/?s={symbol}&i=d"
+# Tiingo EOD daily prices (JSON). The token rides the Authorization HEADER (never the query) — a URL
+# lands in PriceIngestError messages -> the append-only fossil record, so a query token would be an
+# UNFIXABLE leak (see _tiingo_headers). The range is server-side and inclusive of BOTH ends.
+TIINGO_URL_TEMPLATE = ("https://api.tiingo.com/tiingo/daily/{symbol}/prices"
+                       "?startDate={start}&endDate={end}&format=json")
 
 # Stooq's US-listing symbol quirk (config `prices.stooq_suffix` documents it): xlu -> xlu.us.
 STOOQ_SUFFIX = ".us"
@@ -134,6 +148,41 @@ def parse_stooq(body: bytes, ticker: str) -> pd.DataFrame:
     return _tidy(dates.to_numpy(), closes.to_numpy(dtype="float64"), ticker, "stooq")
 
 
+def parse_tiingo(body: bytes, ticker: str) -> pd.DataFrame:
+    """Parse a Tiingo EOD JSON array: [{date, close, adjClose, splitFactor, ...}, ...]. Reads
+    `adjClose` as close_adj — the P1-correct split/dividend-ADJUSTED field, NOT raw `close`
+    (verified against the NVDA-2024 10:1 split; see tests/test_prices_split.py). Null-adjClose rows
+    are DROPPED, never filled (§3).
+
+    Body-shape discrimination is deliberate: a `dict` (Tiingo's error shape, e.g. {"detail": ...},
+    INCLUDING an empty {}) is NEVER rows — raise, never let it pass as a clean empty frame. A non-list
+    non-dict is unparseable. An empty list [] is valid 'no rows' -> an empty tidy frame -> the runner's
+    per-ticker SOFT fault (never a fabricated column, §9g)."""
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError) as e:
+        raise PriceIngestError(f"unparseable tiingo body for {ticker}: {e}") from e
+    if isinstance(data, dict):
+        raise PriceIngestError(f"tiingo error payload for {ticker}: {data.get('detail', data)}")
+    if not isinstance(data, list):
+        raise PriceIngestError(f"unparseable tiingo body for {ticker}: not a JSON array")
+    try:
+        kept = []
+        for row in data:                    # [] flows straight through to an empty tidy frame
+            adj = row["adjClose"]            # a missing key -> typed 'unparseable', never a bare KeyError
+            if adj is None:                  # null adjClose carries no price -> drop, never fill (§3)
+                continue
+            # .date() BEFORE _tidy so the frame carries NAIVE UTC-calendar datetime64 — byte-identical
+            # dtype to parse_yahoo. Feeding the raw ISO8601 'Z' string would yield tz-AWARE datetime64
+            # and raise "Cannot compare tz-naive and tz-aware" the moment it meets a naive column
+            # (build_panel's outer join / xcorr index math). fromisoformat needs '+00:00', not 'Z'.
+            d = datetime.fromisoformat(str(row["date"]).replace("Z", "+00:00")).date()
+            kept.append((d, float(adj)))
+    except (KeyError, TypeError, ValueError) as e:
+        raise PriceIngestError(f"unparseable tiingo body for {ticker}: {e}") from e
+    return _tidy((d for d, _ in kept), (c for _, c in kept), ticker, "tiingo")
+
+
 def _yahoo_url(ticker: str, start: str, end: str) -> str:
     # period2 is an exclusive upper bound on bar timestamps; +1 day makes `end` inclusive.
     return YAHOO_URL_TEMPLATE.format(symbol=ticker.upper(), period1=_epoch(start),
@@ -146,16 +195,59 @@ def _stooq_url(ticker: str, start: str, end: str) -> str:
     return STOOQ_URL_TEMPLATE.format(symbol=ticker.lower() + STOOQ_SUFFIX)
 
 
+def _tiingo_url(ticker: str, start: str, end: str) -> str:
+    # Server-side range, inclusive of BOTH ends — NO Yahoo-style +1-day nudge. Token-free by design.
+    return TIINGO_URL_TEMPLATE.format(symbol=ticker.upper(), start=start, end=end)
+
+
+class _Secret:
+    """Opaque token holder: its str/repr are '<redacted>' so the token can never stringify into a
+    repr(), vars() dump, traceback-locals, or the append-only fossil record. Read `.value` ONLY inside
+    _tiingo_headers. (RunnerDeps holds a PriceIngest, which holds this — never log or pickle RunnerDeps.)"""
+
+    __slots__ = ("_value",)
+
+    def __init__(self, value: str | None):
+        self._value = value
+
+    def __repr__(self) -> str:
+        return "<redacted>"
+
+    __str__ = __repr__
+
+    @property
+    def value(self) -> str | None:
+        return self._value
+
+
+def _default_headers(ingest: "PriceIngest") -> dict:
+    # Yahoo/stooq: a plain browser-ish UA, no auth. Unchanged behavior through the source-aware seam.
+    return {"User-Agent": BROWSER_UA}
+
+
+def _tiingo_headers(ingest: "PriceIngest") -> dict:
+    """Auth via the Authorization HEADER (never the URL — a URL lands in the fossil record). The token
+    is read here and ONLY here, straight into the header dict; it is never interpolated into any log,
+    URL, or exception. Missing token -> a FIXED, token-free raise (this flows to the fossil record)."""
+    tok = ingest._api_token.value
+    if not tok:
+        raise PriceIngestError("TIINGO_API_TOKEN unset — refusing tiingo fetch")
+    return {"Authorization": f"Token {tok}", "Content-Type": "application/json"}
+
+
 @dataclass(frozen=True)
 class _Source:
     ext: str
     url: Callable[[str, str, str], str]
     parse: Callable[[bytes, str], pd.DataFrame]
+    headers: Callable[["PriceIngest"], dict] | None = None  # None -> _default_headers (browser UA)
 
 
 _SOURCES = {
     "yahoo": _Source(ext="json", url=_yahoo_url, parse=parse_yahoo),
     "stooq": _Source(ext="csv", url=_stooq_url, parse=parse_stooq),
+    # The only source with custom headers: its token rides Authorization (see _tiingo_headers).
+    "tiingo": _Source(ext="json", url=_tiingo_url, parse=parse_tiingo, headers=_tiingo_headers),
 }
 
 
@@ -167,26 +259,34 @@ def _source(name: str) -> _Source:
             f"unknown price source {name!r}; known: {sorted(_SOURCES)}") from None
 
 
+# adjClose-trust table (P1): a source listed here is fail-closed as a LIVE source until its config
+# bool proves its adjusted-close field is verified against a known corporate action. A source NOT here
+# (yahoo — genuinely-adjusted `adjclose`) is always allowed. Add a source ONLY alongside a recorded-
+# real split proof (stooq: never verified; tiingo: verified 2026-07-07 by the NVDA-2024 10:1 split test).
+_ADJ_VERIFIED_FLAG = {"stooq": "stooq_adjusted_verified", "tiingo": "tiingo_adjusted_verified"}
+
+
 def guard_live_source(source: str, cfg: dict) -> None:
-    """P1 fail-closed guard (§3): refuse Stooq as a LIVE price source until its adjusted-close
-    assumption is verified. `parse_stooq` reads `Close` as the adjusted close on ASSUMPTION only
-    (unlike Yahoo's `adjclose`, which is genuinely adjusted); an unadjusted close silently corrupts
-    every return across a split/dividend — the base of the whole sensor stack. So until a recorded-
-    real split fixture proves adjustment (config `prices.stooq_adjusted_verified`), Stooq must never
-    be the live source. Yahoo (and any other source not on this list) passes. Raises loud, on purpose:
-    a silent wrong-return base is exactly what P1 guards against."""
-    if source == "stooq" and not bool((cfg.get("prices") or {}).get("stooq_adjusted_verified", False)):
+    """P1 fail-closed guard (§3): refuse a source as LIVE until its adjusted-close field is verified.
+    An unadjusted close silently corrupts every return across a split/dividend — the base of the whole
+    sensor stack — so a source whose `close` is only ASSUMED adjusted must never go live until a
+    recorded-real split fixture proves it (config `prices.{source}_adjusted_verified`). Yahoo (and any
+    source absent from `_ADJ_VERIFIED_FLAG`) passes. The message is PARAMETERIZED on source+flag: a
+    stooq-worded raise for a tiingo trip would be a permanently wrong, un-editable fossil. Raises loud,
+    on purpose: a silent wrong-return base is exactly what P1 guards against."""
+    flag = _ADJ_VERIFIED_FLAG.get(source)
+    if flag and not bool((cfg.get("prices") or {}).get(flag, False)):
         raise PriceIngestError(
-            "P1: Stooq is not a verified adjusted-close source (prices.stooq_adjusted_verified is "
-            "false) — refusing it as a live source; its `Close` may be unadjusted, which corrupts "
-            "every return across a split. Verify against a known split, then flip the flag.")
+            f"P1: {source} is not a verified adjusted-close source (prices.{flag} is false) — "
+            f"refusing it as a live source; its `close` may be unadjusted, which corrupts every "
+            f"return across a split. Verify against a known split, then flip the flag.")
 
 
 class PriceIngest:
     def __init__(self, layout: StoreLayout, fetch: Callable[[str, dict], bytes] | None = None,
                  clock: Callable[[], str] | None = None, *, max_per_sec: float = 2.0,
                  monotonic: Callable[[], float] | None = None,
-                 sleep: Callable[[float], None] | None = None):
+                 sleep: Callable[[float], None] | None = None, api_token: str | None = None):
         """`fetch` is (url, headers) -> bytes, raising PriceIngestError with `status` on non-2xx
         (tests close one over synthetic bodies); the default uses httpx with a browser-ish UA.
         `clock` returns the ISO UTC date used to partition frozen pulls under
@@ -195,7 +295,11 @@ class PriceIngest:
         `max_per_sec` caps the request rate (config `prices.max_requests_per_sec`, DEFAULT 2 —
         Yahoo publishes no limit and 429s aggressively). `monotonic`/`sleep` are the throttle's
         injectable clock/sleep (defaults time.monotonic/time.sleep) — kept DISTINCT from `clock`,
-        which is the ISO-date partitioner, not a wall clock (the two roles must not conflate)."""
+        which is the ISO-date partitioner, not a wall clock (the two roles must not conflate).
+
+        `api_token` is the Tiingo secret (env TIINGO_API_TOKEN). It is wrapped in a _Secret holder so
+        it can never stringify into a repr/vars/traceback/fossil; it is read ONLY in _tiingo_headers.
+        None is fine for yahoo/stooq (their source has no `headers` builder that reads it)."""
         if max_per_sec <= 0:
             raise ValueError(f"max_per_sec must be positive, got {max_per_sec!r}")
         self._layout = layout
@@ -206,10 +310,18 @@ class PriceIngest:
         self._monotonic = monotonic if monotonic is not None else time.monotonic
         self._sleep = sleep if sleep is not None else time.sleep
         self._last_start: float | None = None
+        self._api_token = _Secret(api_token)  # opaque: never repr/log/pickle the token (see _Secret)
 
     @staticmethod
     def _default_fetch(url: str, headers: dict) -> bytes:
-        resp = httpx.get(url, headers=headers, timeout=30.0, follow_redirects=True)
+        # follow_redirects=False on purpose: with an auth-bearing header (tiingo), a 3xx must NEVER
+        # forward Authorization to a redirect target, and no redirect-target body may become the frozen
+        # body. The EOD endpoints don't legitimately redirect, so this only removes a leak/foot-gun.
+        # NEVER put `headers` in an exception message — it carries the tiingo token (URL-only below).
+        try:
+            resp = httpx.get(url, headers=headers, timeout=30.0, follow_redirects=False)
+        except httpx.HTTPError as e:
+            raise PriceIngestError(f"GET {url} failed: {type(e).__name__}") from None  # no headers/request
         if resp.status_code != 200:
             raise PriceIngestError(f"GET {url} -> HTTP {resp.status_code}",
                                    status=resp.status_code)
@@ -232,7 +344,8 @@ class PriceIngest:
         """Rate-limited fetch with exponential backoff on throttle/refusal statuses (mirrors
         EdgarClient._get, minus the persist step — the freeze lives in `pull`, AFTER a successful
         fetch, so a fetch that never succeeds leaves nothing frozen: fetch-fail stays distinct from
-        parse-fail, §3)."""
+        parse-fail, §3). NEVER put `headers` in an exception message — it carries the tiingo token;
+        every raise here is URL-only."""
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             self._throttle()
             try:
@@ -256,9 +369,14 @@ class PriceIngest:
         raw pulls before computing anything) — a corrupt body still lands on disk. A same-day
         re-pull of the same ticker+source overwrites its frozen file (ingest/ is dated
         substrate, not the append-only events/ record). The fetch is rate-limited + 429/403-retried
-        (`_fetch_with_retry`); a fetch that never succeeds raises and freezes nothing."""
+        (`_fetch_with_retry`); a fetch that never succeeds raises and freezes nothing.
+
+        Headers are SOURCE-AWARE: yahoo/stooq get a browser UA (`_default_headers`), tiingo gets its
+        Authorization token (`_tiingo_headers`) — the token is built into the header dict here and never
+        touches the URL or the frozen path."""
         src = _source(source)
-        body = self._fetch_with_retry(src.url(ticker, start, end), {"User-Agent": BROWSER_UA})
+        build_headers = src.headers or _default_headers
+        body = self._fetch_with_retry(src.url(ticker, start, end), build_headers(self))
         write_atomic(self.frozen_path(source, self._clock(), ticker), body)
         return src.parse(body, ticker)
 

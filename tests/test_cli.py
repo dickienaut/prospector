@@ -3,12 +3,13 @@ auto supersession, and `store reindex` repair. The command tree is pinned — no
 capture trigger (CLAUDE.md CONTRACT) — and an empty or absent store never crashes a read."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
-from prospector.cli.main import cli
+from prospector.cli.main import _load_dotenv, cli
 from prospector.fold.fold import active_nonshadow, fold
 from prospector.store.event_store import EventStore
 from prospector.store.registry import Registry
@@ -206,3 +207,38 @@ def test_default_store_root_without_config_is_cwd_store(runner, tmp_path, monkey
     result = runner.invoke(cli, ["lead", "list"])
     assert result.exit_code == 0, result.output
     assert not (tmp_path / "store").exists()
+
+
+# -- `pros run` Tiingo token wiring (§9a): fail fast, and load the .env -----------------------
+
+def test_run_missing_tiingo_token_errors_before_any_fetch(runner, tmp_path, monkeypatch):
+    # primary: tiingo but no TIINGO_API_TOKEN -> a ClickException at startup, BEFORE the store is
+    # created or any fetch runs. Fail-fast because the runner treats a fetch fail as a soft fault, so a
+    # missing token would otherwise silently empty the whole panel rather than tell the operator.
+    (tmp_path / "config").mkdir(parents=True)
+    (tmp_path / "config" / "prospector.yaml").write_text(
+        'edgar:\n  user_agent: "Test/1.0 (t@e.com)"\nprices:\n  primary: tiingo\n', encoding="utf-8")
+    monkeypatch.delenv("TIINGO_API_TOKEN", raising=False)
+    monkeypatch.chdir(tmp_path)   # no .env here -> _load_dotenv is a no-op, token stays unset
+    result = runner.invoke(cli, ["run", "--store", str(tmp_path / "store")])
+    assert result.exit_code != 0
+    assert "TIINGO_API_TOKEN unset" in result.output
+    assert not (tmp_path / "store").exists()  # failed before creating the store
+
+
+def test_load_dotenv_populates_env_with_setdefault_semantics(tmp_path, monkeypatch):
+    # The piece that makes the owner's .env actually reach `pros run`: parse it into os.environ, but
+    # NEVER override an already-exported value (setdefault) — an explicit export wins over the file.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        '# comment\n\nexport TIINGO_API_TOKEN="tok_from_file"\nALREADY=from_file\n', encoding="utf-8")
+    monkeypatch.delenv("TIINGO_API_TOKEN", raising=False)
+    monkeypatch.setenv("ALREADY", "from_env")
+    _load_dotenv()
+    assert os.environ["TIINGO_API_TOKEN"] == "tok_from_file"  # `export ` + quotes stripped
+    assert os.environ["ALREADY"] == "from_env"                # setdefault: the exported value wins
+
+
+def test_load_dotenv_is_a_noop_when_absent(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # no .env
+    _load_dotenv()  # must not raise

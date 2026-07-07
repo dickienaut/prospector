@@ -80,16 +80,16 @@ def _fetch_mf_only(current_rows):
     return fetch
 
 
-def _yahoo_ok_body() -> bytes:
-    """A minimal valid Yahoo v8 body (one row). The §9a prices ingest now runs EVERY tick, so tests
-    that don't exercise prices just need a clean, parseable body per ticker — no fault, no push."""
-    return json.dumps({"chart": {"result": [{
-        "timestamp": [1704067200],
-        "indicators": {"adjclose": [{"adjclose": [100.0]}]}}], "error": None}}).encode("utf-8")
+def _tiingo_ok_body() -> bytes:
+    """A minimal valid Tiingo EOD body (one row). The §9a prices ingest now runs EVERY tick through the
+    primary source (tiingo, 2026-07-07), so tests that don't exercise prices just need a clean, parseable
+    body per ticker — no fault, no push. adjClose (100.0) is the adjusted field the parser reads."""
+    return json.dumps([{"date": "2024-01-01T00:00:00.000Z", "close": 200.0, "adjClose": 100.0,
+                        "splitFactor": 1.0}]).encode("utf-8")
 
 
 def _price_fetch_ok(url, headers):
-    return _yahoo_ok_body()
+    return _tiingo_ok_body()
 
 
 def _deps(layout, registry, fetch, *, now=NOW, notifier=None, event_store=None,
@@ -100,8 +100,10 @@ def _deps(layout, registry, fetch, *, now=NOW, notifier=None, event_store=None,
         event_store=event_store if event_store is not None else EventStore(layout, registry),
         edgar_client=_edgar(layout, now[:10], fetch),
         # Frozen price pulls are pinned to the tick date so they land under prices_path deterministically.
+        # api_token: the default source is now tiingo (config), whose header builder reads a token; a fake
+        # one keeps the offline panel building. sleep no-op: the panel pulls 12+ tickers through the throttle.
         price_ingest=PriceIngest(layout, fetch=price_fetch or _price_fetch_ok, clock=lambda: now[:10],
-                                 sleep=lambda _s: None),  # no-op sleep: the panel pulls 12+ tickers
+                                 sleep=lambda _s: None, api_token="tiingo-test-token"),
 
         notifier=notifier if notifier is not None else NullNotifier(),
         cfg=cfg if cfg is not None else base_cfg,
@@ -216,7 +218,7 @@ def test_prices_panel_is_built_and_frozen(layout, registry):
     cfg, _ = load_config(CONFIG)
     tickers = list(cfg["universe"]["sectors"]) + [cfg["universe"]["market"]]
     for t in tickers:
-        assert layout.prices_path("yahoo", NOW[:10], f"{t}.json").is_file()  # frozen substrate (§3)
+        assert layout.prices_path("tiingo", NOW[:10], f"{t}.json").is_file()  # frozen substrate (§3)
 
 
 def test_prices_per_ticker_failure_is_a_soft_fault(layout, registry):
@@ -226,13 +228,13 @@ def test_prices_per_ticker_failure_is_a_soft_fault(layout, registry):
     def price_fetch(url, headers):
         if "XLK" in url.upper():
             raise PriceIngestError("no XLK price fixture", status=404)
-        return _yahoo_ok_body()
+        return _tiingo_ok_body()
 
     runlog = run_tick(_deps(layout, registry, _fetch_mf_only([XLK_ROW]), price_fetch=price_fetch))
     assert runlog.ingests["prices"] == "ran"                       # the grid still built from the rest
     faults = registry.events_for_lead(SYSTEM_LEAD, "fault")
     assert any(json.loads(f["payload"])["subsystem"] == "ingest.prices" for f in faults)
-    assert not layout.prices_path("yahoo", NOW[:10], "XLK.json").is_file()  # failed pull froze nothing
+    assert not layout.prices_path("tiingo", NOW[:10], "XLK.json").is_file()  # failed pull froze nothing
 
 
 def test_p1_guard_fails_closed_on_unverified_stooq_live_source(layout, registry):

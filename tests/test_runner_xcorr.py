@@ -75,23 +75,27 @@ def _deps(layout, registry, edgar_fetch, price_fetch, *, cfg=None, notifier=None
     return RunnerDeps(
         layout=layout, registry=registry, event_store=EventStore(layout, registry),
         edgar_client=_edgar(layout, edgar_fetch),
+        # api_token: the primary source is now tiingo (config), whose header builder reads a token; a
+        # fake one keeps the offline panel building. sleep no-op: the panel pulls 12+ tickers.
         price_ingest=PriceIngest(layout, fetch=price_fetch, clock=lambda: NOW[:10],
-                                 sleep=lambda _s: None),  # no-op sleep: the panel pulls 12+ tickers
-
+                                 sleep=lambda _s: None, api_token="tiingo-test-token"),
         notifier=notifier if notifier is not None else NullNotifier(),
         cfg=cfg if cfg is not None else base_cfg, cfg_hash=base_hash,
         now=NOW, run_id="run_test", monotonic=lambda: 0.0)
 
 
 def _clean_body() -> bytes:
-    return json.dumps({"chart": {"result": [{"timestamp": [1704067200],
-        "indicators": {"adjclose": [{"adjclose": [100.0]}]}}], "error": None}}).encode()
+    # A minimal valid Tiingo EOD row (the primary source). close != adjClose is fine here; the sensor
+    # reads adjClose. One row -> an unwarmed panel that spawns nothing (the seed-clean test).
+    return json.dumps([{"date": "2024-01-01T00:00:00.000Z", "close": 200.0, "adjClose": 100.0,
+                        "splitFactor": 1.0}]).encode()
 
 
 def _planted_bodies(n=1030, shift_on=1000, seed=166, loading=3.5, base_sd=0.008) -> dict:
-    """{ticker -> Yahoo body} for SPY (market) + XLK/XLU sharing a residual factor from `shift_on` to
-    the end, so the pair departs and the LATEST row (~30 days in) is near the z peak. Same construction
-    as the sensor test's planted panel — reliably clears z_in at the last row."""
+    """{ticker -> Tiingo EOD body} for SPY (market) + XLK/XLU sharing a residual factor from `shift_on`
+    to the end, so the pair departs and the LATEST row (~30 days in) is near the z peak. Same construction
+    as the sensor test's planted panel — reliably clears z_in at the last row. Synthetic: close==adjClose
+    (no splits), which is all the sensor needs (it reads adjClose)."""
     rng = np.random.default_rng(seed)
     mkt = rng.normal(0, 0.01, n)
     common = rng.normal(0, base_sd, n)
@@ -100,13 +104,14 @@ def _planted_bodies(n=1030, shift_on=1000, seed=166, loading=3.5, base_sd=0.008)
     series = {"SPY": mkt}
     for k, beta in (("XLK", 1.1), ("XLU", 0.9)):
         series[k] = beta * mkt + rng.normal(0, base_sd, n) + loading * common * mask
-    epochs = [1546300800 + i * 86400 for i in range(n)]  # 2019-01-01 UTC + i days (calendar-agnostic)
+    # Consecutive calendar days as ISO8601 (the parser reads `date` -> UTC calendar date).
+    dates = [d.strftime("%Y-%m-%dT00:00:00.000Z")
+             for d in pd.date_range("2019-01-01", periods=n, freq="D")]
     out = {}
     for k, r in series.items():
         prices = (1 + pd.Series(r)).cumprod() * 100.0
-        out[k] = json.dumps({"chart": {"result": [{"timestamp": epochs,
-            "indicators": {"adjclose": [{"adjclose": [float(x) for x in prices]}]}}],
-            "error": None}}).encode()
+        out[k] = json.dumps([{"date": d, "close": float(p), "adjClose": float(p), "splitFactor": 1.0}
+                             for d, p in zip(dates, prices)]).encode()
     return out
 
 

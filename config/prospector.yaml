@@ -334,24 +334,31 @@ sector_keywords:
   XLU: [utility, utilities, power, electric, electricity, grid, nuclear, "independent power"]
 
 prices:
-  primary: yahoo
+  primary: tiingo
   fallback: stooq
-  # Yahoo made primary 2026-07-02: Stooq's CSV endpoint now sits behind a JavaScript
-  # proof-of-work gate that a polite HTTP client cannot pass. Source is recorded per row (§3),
-  # so a future flip back is data-honest. Stooq wants lowercase + ".us" for US ETFs — the
-  # symbol map lives here so a source quirk never leaks into identity.
+  # Tiingo made primary 2026-07-07: Yahoo's chart endpoint now sits behind a TLS-fingerprint bot
+  # challenge (httpx/curl get an HTML "Too Many Requests"; a browser 200s; cookie+crumb does NOT
+  # help), and Stooq's CSV endpoint sits behind a JavaScript proof-of-work gate. Tiingo EOD is a
+  # clean JSON API we're authorized to call. Source is recorded per row (§3), so a future flip back
+  # is data-honest; yahoo/stooq stay REGISTERED (no auto-fallback — the runner reads primary only).
+  # See docs/decisions/2026-07-07-tiingo-price-source.md. TOKEN: env TIINGO_API_TOKEN (a git-ignored
+  # .env), read at CLI startup, rides the Authorization HEADER — NEVER config, NEVER the URL (a URL
+  # lands in the fossil record, so a query-string token would be an unfixable secret leak).
   stooq_suffix: ".us"
-  # P1 GUARD (§3). Stooq's parser reads the CSV `Close` and only ASSUMES it is split/dividend-
-  # adjusted — never verified against a known corporate action (Yahoo's `adjclose` is genuinely
-  # adjusted). An unadjusted close silently corrupts every return across a split, the base of the
-  # whole sensor stack. So Stooq is fail-closed as a LIVE source (`guard_live_source`) until this
-  # flag is set true, backed by a recorded-real split fixture (the NVDA-2024 10:1 check). Zero cost
-  # today: Yahoo is primary and Stooq's endpoint is JS-gated. Flip only after the fixture proves it.
+  # P1 GUARD (§3). A source's `close`-as-adjusted claim is fail-closed as LIVE (`guard_live_source`)
+  # until a recorded-real split fixture proves it — an unadjusted close silently corrupts every
+  # return across a split, the base of the whole sensor stack.
+  # Stooq: `Close` only ASSUMED adjusted, never verified -> false (its endpoint is JS-gated anyway).
   stooq_adjusted_verified: false
-  max_requests_per_sec: 2   # polite cap; Yahoo publishes no limit and 429s aggressively from shared
-                            # egress IPs (a bare 12-ticker burst tripped it — see the decision doc).
-                            # DEFAULT (tunable) — throttle + 429/403 backoff mirror EdgarClient. Does
-                            # NOT beat a hard shared-IP block (that's a Private-Relay/deploy concern).
+  # Tiingo: reads `adjClose` (EOD Composite, genuinely adjusted). Verified true 2026-07-07 by
+  # test_tiingo_adjclose_continuous_across_nvda_split (across the NVDA 2024-06-10 10:1 split, raw
+  # `close` breaks ~10x, `adjClose` stays continuous, splitFactor≈10 on the ex-date). Flag moved by
+  # PROOF, not convenience (P1 discipline).
+  tiingo_adjusted_verified: true
+  max_requests_per_sec: 2   # polite cap. Tiingo's binding limit is per-HOUR (50/hr on the free tier),
+                            # not per-second — do NOT raise this: a lower per-second rate keeps
+                            # accidental bursts (re-runs, retries) from stacking inside one hour and
+                            # tripping the 50/hr cap. Throttle + 429/403 backoff mirror EdgarClient.
 
 edgar:
   user_agent: "Prospector/1.0 (lyle.e.dickie@gmail.com)"
