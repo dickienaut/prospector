@@ -14,3 +14,6 @@ uv.lock
 credentials
 .aws/
 .vscode
+# Streamlit agent skills (environment-specific symlinks)
+.agents/
+.claude/

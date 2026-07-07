@@ -1,0 +1,21 @@
+Fixture provenance — RECORDED-REAL (not synthetic). See the fixture-provenance discipline in CLAUDE.md.
+
+file:          nvda_tiingo_2024-split.json
+symbol:        NVDA (NVIDIA Corp) — display ticker for price math only; identity keys on SEC series id (HECO)
+format:        json (Tiingo EOD /tiingo/daily/{symbol}/prices array)
+source_url:    https://api.tiingo.com/tiingo/daily/NVDA/prices?startDate=2024-06-03&endDate=2024-06-14&format=json
+retrieved_at:  2026-07-07
+retrieved_by:  the build (Claude), fetched with the owner's Tiingo token from the git-ignored .env
+secret:        auth rode the "Authorization: Token <token>" HEADER (locked decision), so NO token is present
+               in this response body or in source_url (the query is token-free). Nothing was redacted — the
+               token never entered the artifact. Verified: the token substring is absent from this file
+               (asserted at capture time, and re-checked by the pre-commit secret grep).
+why frozen:    The adjClose-trust proof (P1) that lets prices.tiingo_adjusted_verified flip true. Across the
+               2024-06-10 10:1 split, raw `close` breaks ~10x ($1208.88 -> $121.79) while `adjClose` stays
+               continuous ($120.68 -> $121.58) and splitFactor=10.0 on the 2024-06-10 ex-date row — proving
+               Tiingo's adjClose is genuinely split-adjusted, unlike Stooq's merely-assumed `Close`. Consumed
+               by tests/test_prices_split.py::test_tiingo_adjclose_continuous_across_nvda_split.
+do not edit:   frozen substrate. NEVER refreshed by fetch code (drop-and-freeze for tests; fetch-on-cadence is
+               the runner's job — the two never conflate). NOTE: Tiingo's adjClose is retroactively mutable
+               (each new distribution re-scales history), so a fresh pull would differ slightly — another
+               reason this stays frozen. If Tiingo's format changes, freeze a NEW dated file; never edit this.

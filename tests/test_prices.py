@@ -12,8 +12,8 @@ import pandas as pd
 import pytest
 
 from prospector.ingest.prices import (CALENDAR_PER_TRADING_DAY, PriceIngest, PriceIngestError,
-                                      build_panel, guard_live_source, parse_stooq, parse_yahoo,
-                                      required_pull_start, warmup_days)
+                                      build_panel, guard_live_source, parse_stooq, parse_tiingo,
+                                      parse_yahoo, required_pull_start, warmup_days)
 
 WINDOWS_CFG = {"windows": {"corr_days": 63, "baseline_days": 252, "stress_days": 21}}
 
@@ -251,6 +251,165 @@ def test_nonpositive_max_per_sec_rejected_at_construction(layout):
         PriceIngest(layout, fetch=lambda url, headers: b"", max_per_sec=0)
 
 
+# -- Tiingo: adjClose parser + the Authorization-header secret seam -----------
+# Tiingo is the primary source (2026-07-07): a clean JSON API whose `adjClose` is genuinely adjusted.
+# The token is a SECRET — it rides the Authorization header (never the URL/fossil) and lives behind a
+# _Secret holder that redacts on str/repr. These tests pin the parser dtype-parity with yahoo (or the
+# panel's outer join throws) AND that the token never surfaces in the URL, frozen path, repr, or vars.
+
+def _tiingo_body(rows) -> bytes:
+    """A synthetic Tiingo EOD array. Each row: (date_iso, close, adjClose[, splitFactor]). adjClose=None
+    models a null (dropped, never filled). Declared synthetic: built in code, not a recorded fixture."""
+    out = []
+    for r in rows:
+        d, close, adj = r[0], r[1], r[2]
+        split = r[3] if len(r) > 3 else 1.0
+        out.append({"date": d, "close": close, "adjClose": adj, "splitFactor": split})
+    return json.dumps(out).encode("utf-8")
+
+
+def test_parse_tiingo_reads_adjclose_as_close_adj():
+    frame = parse_tiingo(_tiingo_body([
+        ("2024-01-01T00:00:00.000Z", 200.0, 100.0),
+        ("2024-01-02T00:00:00.000Z", 202.0, 101.5)]), "XLK")
+    assert list(frame.columns) == ["date", "ticker", "close_adj", "source"]
+    assert (frame["source"] == "tiingo").all() and (frame["ticker"] == "XLK").all()
+    # Reads adjClose (100.0/101.5), NOT raw close (200.0/202.0) — the P1-correct field.
+    assert frame["close_adj"].to_list() == [100.0, 101.5]
+    assert list(frame["date"].dt.date.astype(str)) == ["2024-01-01", "2024-01-02"]
+
+
+def test_parse_tiingo_date_dtype_matches_yahoo_tz_naive():
+    # HIGH-value regression: the tiingo date column must be tz-NAIVE (like yahoo's), or the first time a
+    # tiingo column meets a yahoo/stooq column in build_panel's outer join pandas raises
+    # "Cannot compare tz-naive and tz-aware". Feeding the raw ISO8601 'Z' string would make it tz-aware.
+    tg = parse_tiingo(_tiingo_body([("2024-01-01T00:00:00.000Z", 200.0, 100.0)]), "XLK")
+    yh = parse_yahoo(_yahoo_body([_D1], [100.0]), "XLK")
+    assert tg["date"].dtype == yh["date"].dtype
+    assert tg["date"].dt.tz is None
+    # And they actually co-build a panel without raising.
+    panel = build_panel([tg.assign(ticker="XLK"), yh.assign(ticker="SPY")])
+    assert set(panel.columns) == {"XLK", "SPY"}
+
+
+def test_parse_tiingo_null_adjclose_drops_the_row():
+    frame = parse_tiingo(_tiingo_body([
+        ("2024-01-01T00:00:00.000Z", 200.0, 100.0),
+        ("2024-01-02T00:00:00.000Z", 202.0, None),
+        ("2024-01-03T00:00:00.000Z", 204.0, 102.0)]), "XLK")
+    assert frame["close_adj"].to_list() == [100.0, 102.0]  # null row dropped, never filled (§3)
+    assert list(frame["date"].dt.date.astype(str)) == ["2024-01-01", "2024-01-03"]
+
+
+def test_parse_tiingo_empty_array_yields_empty_frame():
+    # [] is valid 'no rows' -> empty tidy frame (correct dtype) -> the runner records a SOFT fault, not a
+    # crash and never a fabricated column. Must NOT raise (contrast the dict error-shape below).
+    frame = parse_tiingo(b"[]", "XLK")
+    assert frame.empty and list(frame.columns) == ["date", "ticker", "close_adj", "source"]
+
+
+def test_parse_tiingo_error_dict_raises():
+    with pytest.raises(PriceIngestError, match="tiingo error payload"):
+        parse_tiingo(json.dumps({"detail": "Not found."}).encode(), "XLK")
+
+
+def test_parse_tiingo_bare_dict_raises_never_silent_empty():
+    # A dict with no 'detail' (incl. {}) is STILL never rows — must raise, never pass as a clean empty frame.
+    with pytest.raises(PriceIngestError, match="tiingo error payload"):
+        parse_tiingo(b"{}", "XLK")
+
+
+def test_parse_tiingo_missing_adjclose_key_raises_typed():
+    body = json.dumps([{"date": "2024-01-01T00:00:00.000Z", "close": 200.0}]).encode()  # no adjClose
+    with pytest.raises(PriceIngestError, match="unparseable tiingo"):
+        parse_tiingo(body, "XLK")
+
+
+def test_parse_tiingo_unparseable_body_raises():
+    with pytest.raises(PriceIngestError, match="unparseable tiingo"):
+        parse_tiingo(b"{not json", "XLK")
+
+
+_TIINGO_TOKEN = "sk_test_0123456789abcdef0123456789abcdef"  # a fake token, for leak assertions
+
+
+def test_pull_tiingo_sends_auth_header_and_keeps_token_out_of_url_and_path(layout):
+    captured = {}
+
+    def fetch(url, headers):
+        captured["url"] = url
+        captured["headers"] = dict(headers)
+        return _tiingo_body([("2024-01-01T00:00:00.000Z", 200.0, 100.0)])
+
+    ingest = PriceIngest(layout, fetch=fetch, clock=_fixed_clock("2026-07-07"),
+                         api_token=_TIINGO_TOKEN, sleep=lambda _s: None)
+    frame = ingest.pull("XLK", "tiingo", "2024-01-01", "2024-01-02")
+    assert frame["close_adj"].to_list() == [100.0]
+    # The token rides the Authorization header — and appears NOWHERE else.
+    assert captured["headers"]["Authorization"] == f"Token {_TIINGO_TOKEN}"
+    assert _TIINGO_TOKEN not in captured["url"]
+    frozen = ingest.frozen_path("tiingo", "2026-07-07", "XLK")
+    assert _TIINGO_TOKEN not in str(frozen)
+    assert _TIINGO_TOKEN not in frozen.read_bytes().decode()  # never echoed into the frozen body
+
+
+def test_pull_tiingo_freezes_before_parse_then_round_trips(layout):
+    body = _tiingo_body([("2024-01-01T00:00:00.000Z", 200.0, 100.0),
+                         ("2024-01-02T00:00:00.000Z", 202.0, 101.0)])
+    ingest = PriceIngest(layout, fetch=lambda url, headers: body, clock=_fixed_clock("2026-07-07"),
+                         api_token=_TIINGO_TOKEN, sleep=lambda _s: None)
+    frame = ingest.pull("XLK", "tiingo", "2024-01-01", "2024-01-02")
+    frozen = layout.prices_path("tiingo", "2026-07-07", "XLK.json")
+    assert frozen.exists() and frozen.read_bytes() == body
+    pd.testing.assert_frame_equal(frame, ingest.load_frozen("tiingo", "2026-07-07", "XLK"))
+
+
+def test_pull_tiingo_missing_token_raises_before_fetch(layout):
+    def fetch(url, headers):
+        raise AssertionError("fetch must not be called when the token is missing")
+
+    ingest = PriceIngest(layout, fetch=fetch, clock=_fixed_clock("2026-07-07"),
+                         api_token=None, sleep=lambda _s: None)
+    with pytest.raises(PriceIngestError) as exc:
+        ingest.pull("XLK", "tiingo", "2024-01-01", "2024-01-02")
+    # The message is the fixed, token-free string — and (trivially, token is None) carries no secret.
+    assert "TIINGO_API_TOKEN unset" in str(exc.value)
+    assert "Authorization" not in str(exc.value)
+
+
+def test_price_ingest_repr_and_vars_omit_the_token(layout):
+    ingest = PriceIngest(layout, fetch=lambda url, headers: b"[]", api_token=_TIINGO_TOKEN)
+    assert _TIINGO_TOKEN not in repr(ingest)
+    assert _TIINGO_TOKEN not in str(vars(ingest))
+    assert "<redacted>" in repr(vars(ingest))  # the _Secret holder redacts on str/repr
+
+
+def test_yahoo_pull_still_sends_browser_ua_not_authorization(layout):
+    # Regression: the default-headers path is unchanged through the source-aware seam.
+    captured = {}
+
+    def fetch(url, headers):
+        captured["headers"] = dict(headers)
+        return _yahoo_body([_D1], [100.0])
+
+    ingest = PriceIngest(layout, fetch=fetch, clock=_fixed_clock("2026-07-07"), sleep=lambda _s: None)
+    ingest.pull("XLK", "yahoo", "2024-01-01", "2024-01-02")
+    assert "User-Agent" in captured["headers"] and "Authorization" not in captured["headers"]
+
+
+def test_pull_tiingo_non200_freezes_nothing(layout):
+    # A 401 (bad/expired token) or 3xx is non-200 and NOT in _RETRY_STATUSES -> raises immediately,
+    # freezes nothing (fetch-fail stays distinct from parse-fail, §3).
+    def fetch(url, headers):
+        raise PriceIngestError(f"GET {url} -> HTTP 401", status=401)
+
+    ingest = PriceIngest(layout, fetch=fetch, clock=_fixed_clock("2026-07-07"),
+                         api_token=_TIINGO_TOKEN, sleep=lambda _s: None)
+    with pytest.raises(PriceIngestError):
+        ingest.pull("XLK", "tiingo", "2024-01-01", "2024-01-02")
+    assert not layout.prices_path("tiingo", "2026-07-07", "XLK.json").exists()
+
+
 # -- build_panel: outer join, no forward-fill ---------------------------------
 
 def test_build_panel_outer_join_keeps_late_starter_leading_nan():
@@ -317,6 +476,24 @@ def test_guard_live_source_refuses_stooq_when_flag_absent():
 def test_guard_live_source_allows_verified_stooq():
     # Once a recorded-real split fixture proves adjustment and the flag is flipped, Stooq is allowed.
     guard_live_source("stooq", {"prices": {"stooq_adjusted_verified": True}})  # no raise
+
+
+def test_guard_live_source_refuses_unverified_tiingo():
+    # The generalized guard gates tiingo on its OWN flag, with a tiingo-worded message (a stooq-worded
+    # raise for a tiingo trip would be a permanently wrong fossil).
+    with pytest.raises(PriceIngestError, match="P1: tiingo") as exc:
+        guard_live_source("tiingo", {"prices": {"tiingo_adjusted_verified": False}})
+    assert "prices.tiingo_adjusted_verified" in str(exc.value)
+
+
+def test_guard_live_source_refuses_tiingo_when_flag_absent():
+    with pytest.raises(PriceIngestError, match="P1: tiingo"):
+        guard_live_source("tiingo", {})  # absent flag -> fail closed
+
+
+def test_guard_live_source_allows_verified_tiingo():
+    # The in-repo config sets this true, backed by the NVDA split proof (test_prices_split.py).
+    guard_live_source("tiingo", {"prices": {"tiingo_adjusted_verified": True}})  # no raise
 
 
 # -- warmup arithmetic --------------------------------------------------------

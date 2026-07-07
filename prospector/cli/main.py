@@ -13,6 +13,7 @@ command tree itself is pinned by test.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,6 +31,28 @@ from prospector.store.registry import Registry
 from prospector.store.reindex import rebuild_registry
 
 _CONFIG_PATH = Path("config") / "prospector.yaml"
+
+
+def _load_dotenv(path: Path = Path(".env")) -> None:
+    """Populate os.environ from a repo-root .env (git-ignored) if present — a tiny zero-dependency
+    reader so a `TIINGO_API_TOKEN` set in .env reaches `pros run` without a shell export. Skips
+    blank/`#` lines, strips an optional `export ` and surrounding quotes, and uses setdefault so an
+    already-exported value wins. No-op if .env is absent. This is the ONLY place a secret enters the
+    process env; the token is never read into config (it rides the Authorization header, §prices)."""
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):]
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            os.environ.setdefault(key, value)
+
 
 _store_option = click.option(
     "--store", "store_path", type=click.Path(), default=None,
@@ -115,6 +138,7 @@ def run(store_path):
     from prospector.runner import RunnerDeps, run_tick
     from prospector.runner.notify import NullNotifier
 
+    _load_dotenv()  # pick up TIINGO_API_TOKEN from a git-ignored .env before we read the env below
     layout = _layout(store_path)  # a writer: Registry() below creates the store if absent
     cfg, cfg_hash = load_config(_CONFIG_PATH)
     edgar_cfg = cfg.get("edgar") or {}
@@ -123,6 +147,15 @@ def run(store_path):
         raise click.ClickException(
             "edgar.user_agent missing from config/prospector.yaml — SEC requires a declared "
             "User-Agent")
+    # Tiingo secret from the env (never config). Fail FAST here if the live source needs it and it's
+    # unset: the runner treats a per-ticker fetch failure as a SOFT fault, so a missing token would
+    # silently empty the whole panel (12 tickers) rather than tell the operator what's wrong.
+    source = (cfg.get("prices") or {}).get("primary", "yahoo")
+    api_token = os.environ.get("TIINGO_API_TOKEN")
+    if source == "tiingo" and not api_token:
+        raise click.ClickException(
+            "TIINGO_API_TOKEN unset but prices.primary is tiingo — set it in .env or the environment "
+            "(it rides the Authorization header; never put a token in config).")
     now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     tick_date = now[:10]
 
@@ -134,10 +167,12 @@ def run(store_path):
             max_per_sec=float(edgar_cfg.get("max_requests_per_sec", 8.0)),
             persist=lambda name, body: write_atomic(layout.edgar_path(tick_date, name), body))
         # §9a prices ingest: default httpx fetch; the clock pins frozen pulls to this tick's date.
-        # Rate-limited + 429/403-backoff like EDGAR (Yahoo 429s aggressively — see the decision doc).
+        # Rate-limited + 429/403-backoff like EDGAR. Tiingo's token rides the Authorization header
+        # (built inside PriceIngest via the _Secret holder) — never the URL, never config.
         price_ingest = PriceIngest(
             layout, clock=lambda: tick_date,
-            max_per_sec=float((cfg.get("prices") or {}).get("max_requests_per_sec", 2.0)))
+            max_per_sec=float((cfg.get("prices") or {}).get("max_requests_per_sec", 2.0)),
+            api_token=api_token)
         deps = RunnerDeps(
             layout=layout, registry=registry, event_store=EventStore(layout, registry),
             edgar_client=edgar_client, price_ingest=price_ingest, notifier=NullNotifier(),
