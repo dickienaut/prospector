@@ -130,6 +130,127 @@ def test_pull_unknown_source_raises(layout):
         ingest.pull("XLK", "bloomberg", "2024-01-01", "2024-01-02")
 
 
+# -- fair access: rate cap + 429/403 backoff (mirrors EdgarClient) ------------
+# Yahoo publishes no limit and 429s aggressively from shared egress IPs — a bare 12-ticker burst
+# tripped it live (2026-07-07), so PriceIngest now spaces pulls and backs off on 429/403, exactly as
+# EdgarClient does. Offline: a fake monotonic clock whose injected sleep advances it (no real waiting).
+
+class _FakeMonotonic:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+def _make_ingest(layout, fetch, **over):
+    """PriceIngest with a fake monotonic clock whose injected sleep advances it — no real waiting
+    (mirrors test_edgar_client.make_client). Returns (ingest, clock, sleeps)."""
+    clock = _FakeMonotonic()
+    sleeps: list = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock.now += seconds
+
+    kwargs = dict(fetch=fetch, clock=_fixed_clock("2026-07-02"), monotonic=clock, sleep=sleep)
+    kwargs.update(over)
+    return PriceIngest(layout, **kwargs), clock, sleeps
+
+
+def test_throttle_spaces_pulls_at_the_configured_rate(layout):
+    clock = _FakeMonotonic()
+    starts, sleeps = [], []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock.now += seconds
+
+    body = _yahoo_body([_D1], [100.0])
+
+    def timed(url, headers):
+        starts.append(clock())  # request start is AFTER the throttle sleep — its scheduled slot
+        return body
+
+    ingest = PriceIngest(layout, fetch=timed, clock=_fixed_clock("2026-07-02"),
+                         max_per_sec=4.0, monotonic=clock, sleep=sleep)
+    for _ in range(8):
+        ingest.pull("XLK", "yahoo", "2024-01-01", "2024-01-02")
+    # Request starts spaced >= 1/max_per_sec: never more than 4 pulls in any second.
+    gaps = [b - a for a, b in zip(starts, starts[1:])]
+    assert all(gap >= 0.25 - 1e-9 for gap in gaps)
+    # First pull goes straight through; the other 7 each waited out the interval (no 429s here).
+    assert len(sleeps) == 7
+    assert all(s == pytest.approx(0.25) for s in sleeps)
+
+
+def test_no_sleep_when_pulls_already_spaced(layout):
+    ingest, clock, sleeps = _make_ingest(layout, lambda url, headers: _yahoo_body([_D1], [100.0]),
+                                         max_per_sec=4.0)
+    ingest.pull("XLK", "yahoo", "2024-01-01", "2024-01-02")
+    clock.now += 1.0  # a slow caller outruns the limiter
+    ingest.pull("XLK", "yahoo", "2024-01-01", "2024-01-02")
+    assert sleeps == []
+
+
+def test_pull_retries_429_then_succeeds(layout):
+    body = _yahoo_body([_D1, _D2], [100.0, 101.0])
+    attempts = []
+
+    def flaky(url, headers):
+        attempts.append(url)
+        if len(attempts) <= 2:
+            raise PriceIngestError("slow down", status=429)
+        return body
+
+    ingest, _, sleeps = _make_ingest(layout, flaky)
+    frame = ingest.pull("XLK", "yahoo", "2024-01-01", "2024-01-02")
+    assert len(attempts) == 3
+    assert sleeps == [1.0, 2.0]  # exponential backoff between attempts
+    assert frame["close_adj"].to_list() == [100.0, 101.0]
+    # The freeze happened AFTER the successful fetch (§3): the frozen file holds the served body.
+    frozen = layout.prices_path("yahoo", "2026-07-02", "XLK.json")
+    assert frozen.exists() and frozen.read_bytes() == body
+
+
+def test_pull_persistent_429_raises_after_capped_retries_and_freezes_nothing(layout):
+    attempts = []
+
+    def throttled(url, headers):
+        attempts.append(url)
+        raise PriceIngestError("too many requests", status=429)
+
+    ingest, _, sleeps = _make_ingest(layout, throttled)
+    with pytest.raises(PriceIngestError) as exc:
+        ingest.pull("XLK", "yahoo", "2024-01-01", "2024-01-02")
+    assert exc.value.status == 429
+    assert len(attempts) == 3      # capped, not infinite
+    assert sleeps == [1.0, 2.0]
+    # KEY §3 property: a fetch that NEVER succeeded freezes NOTHING — fetch-fail stays distinct
+    # from parse-fail (which DOES leave a frozen body, see the corrupt-body test above).
+    assert not layout.prices_path("yahoo", "2026-07-02", "XLK.json").exists()
+
+
+def test_pull_404_raises_immediately_without_retry(layout):
+    attempts = []
+
+    def missing(url, headers):
+        attempts.append(url)
+        raise PriceIngestError("not found", status=404)
+
+    ingest, _, sleeps = _make_ingest(layout, missing)
+    with pytest.raises(PriceIngestError):
+        ingest.pull("XLK", "yahoo", "2024-01-01", "2024-01-02")
+    assert len(attempts) == 1      # 404 is a real error — not retried
+    assert sleeps == []
+    assert not layout.prices_path("yahoo", "2026-07-02", "XLK.json").exists()
+
+
+def test_nonpositive_max_per_sec_rejected_at_construction(layout):
+    with pytest.raises(ValueError, match="max_per_sec"):
+        PriceIngest(layout, fetch=lambda url, headers: b"", max_per_sec=0)
+
+
 # -- build_panel: outer join, no forward-fill ---------------------------------
 
 def test_build_panel_outer_join_keeps_late_starter_leading_nan():

@@ -33,7 +33,7 @@ path places, sizes, or recommends a trade.
 
 ## 2. Module map
 
-~5,300 lines of Python, 380 tests (offline). Packages under `prospector/`:
+~5,300 lines of Python, 449 tests (offline). Packages under `prospector/`:
 
 | Package / module | Responsibility | Key entry points |
 |---|---|---|
@@ -50,7 +50,7 @@ path places, sizes, or recommends a trade.
 | `fold/fold.py` | The pure fold: state, verdict supersession, unknown-type handling | `fold()`, `active_nonshadow()`, `VERDICT_VOCAB` |
 | `config.py` | Load YAML → (config, canonical hash); `config.changed` emission | `load_config()`, `check_config_honesty()` |
 | `ingest/edgar.py` | EDGAR client (declared UA, rate-limited, freeze-the-substrate); §2 resolution keyed on ticker OR the detected series (I1); SOI-target resolution (§9b) | `EdgarClient` (`filing_index()`), `resolve_ticker()`, `resolve_series()`, `confirm_prospectus()`, `latest_soi()`, `resolve_soi_document()`, `resolve_soi_target()` |
-| `ingest/prices.py` | Price ingest (Yahoo primary → `adjclose` / Stooq fallback), frozen pulls, panel builder; P1 fail-closed guard (Stooq's `Close` is only *assumed* adjusted — gated as a live source until verified) | `PriceIngest`, `build_panel()`, `guard_live_source()` |
+| `ingest/prices.py` | Price ingest (Yahoo primary → `adjclose` / Stooq fallback), frozen pulls, panel builder; rate-limited + 429/403 backoff like EDGAR (`prices.max_requests_per_sec`); P1 fail-closed guard (Stooq's `Close` is only *assumed* adjusted — gated as a live source until verified) | `PriceIngest`, `build_panel()`, `guard_live_source()` |
 | `ingest/holdings.py` | Holdings ingest (§4d keystone) — SPDR daily CSV → 90%-weight membership, frozen | `HoldingsIngest`, `weight_covering_members()` |
 | `ingest/prospectus.py` | Prospectus fetch/freeze + mandate extraction (§4d) — bs4 → text, strategy section, diff | `ProspectusIngest`, `extract_mandate()`, `diff_mandate()` |
 | `ingest/soi.py` | SOI fetch-freeze (read side) + GICS-industry-grouped sector derivation (§4c resolver) — fund-block isolation → `INDUSTRY — N.N%` parse → industry→sector rollup (+ `gics_industry_alias` rendering variants) → reconcile-or-fault | `SoiIngest`, `extract_soi_sectors()`, `dominant_sectors()` |

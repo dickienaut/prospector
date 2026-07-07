@@ -72,7 +72,8 @@ def _deps(layout, registry, event_store, fetch):
                         sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
                         persist=lambda name, body: write_atomic(layout.edgar_path(NOW[:10], name), body))
     return RunnerDeps(layout=layout, registry=registry, event_store=event_store, edgar_client=edgar,
-                      price_ingest=PriceIngest(layout, fetch=lambda url, headers: b""),  # inert: _run_mandate never builds the panel
+                      price_ingest=PriceIngest(layout, fetch=lambda url, headers: b"",
+                                               sleep=lambda _s: None),  # inert: _run_mandate never builds the panel
                       notifier=NullNotifier(), cfg=cfg, cfg_hash=cfg_hash, now=NOW, run_id="r",
                       monotonic=lambda: 0.0)
 

@@ -16,6 +16,13 @@ The §3 discipline, in order:
 - Missing rows stay missing: no forward-fill anywhere, and `build_panel`'s outer join keeps a
   late-listed fund's leading NaN (XLC listed 2018-06 is the live example).
 
+Fair access (mirrors EdgarClient §2/§3): a hard request-rate cap (config
+`prices.max_requests_per_sec`) spaces pulls, and 429/403 (throttle/refusal) get exponential
+backoff before a fault. Yahoo publishes no limit and 429s aggressively — a bare 12-ticker burst
+trips it, and without backoff a transient 429 faults the whole panel. The backoff wraps only the
+fetch; the freeze still happens in `pull` AFTER a successful fetch, so a fetch that never succeeds
+leaves nothing frozen (fetch-fail stays distinct from parse-fail — §3).
+
 Tickers here are display/column attributes for price math only — identity keys on SEC series
 IDs (§2, the HECO rule), and a source quirk (Stooq wants lowercase + ".us") never leaks past
 the URL builder.
@@ -26,6 +33,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -55,6 +63,12 @@ BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.3
 CALENDAR_PER_TRADING_DAY = 1.5
 
 TIDY_COLUMNS = ("date", "ticker", "close_adj", "source")
+
+# Fair-access retry policy — mirrors EdgarClient verbatim (ingest/edgar.py): 3 attempts, exponential
+# backoff (1s, 2s), retry only throttle/refusal statuses. Anything else is a real error, raised at once.
+_MAX_ATTEMPTS = 3
+_BACKOFF_BASE_SECONDS = 1.0
+_RETRY_STATUSES = (429, 403)  # throttle/refusal — back off and retry; anything else is real
 
 
 class PriceIngestError(Exception):
@@ -170,15 +184,28 @@ def guard_live_source(source: str, cfg: dict) -> None:
 
 class PriceIngest:
     def __init__(self, layout: StoreLayout, fetch: Callable[[str, dict], bytes] | None = None,
-                 clock: Callable[[], str] | None = None):
-        """`fetch` is (url, headers) -> bytes, raising PriceIngestError on non-2xx (tests
-        close one over synthetic bodies); the default uses httpx with a browser-ish UA.
+                 clock: Callable[[], str] | None = None, *, max_per_sec: float = 2.0,
+                 monotonic: Callable[[], float] | None = None,
+                 sleep: Callable[[float], None] | None = None):
+        """`fetch` is (url, headers) -> bytes, raising PriceIngestError with `status` on non-2xx
+        (tests close one over synthetic bodies); the default uses httpx with a browser-ish UA.
         `clock` returns the ISO UTC date used to partition frozen pulls under
-        ingest/prices/{source}/{date}/ (default: today, UTC)."""
+        ingest/prices/{source}/{date}/ (default: today, UTC).
+
+        `max_per_sec` caps the request rate (config `prices.max_requests_per_sec`, DEFAULT 2 —
+        Yahoo publishes no limit and 429s aggressively). `monotonic`/`sleep` are the throttle's
+        injectable clock/sleep (defaults time.monotonic/time.sleep) — kept DISTINCT from `clock`,
+        which is the ISO-date partitioner, not a wall clock (the two roles must not conflate)."""
+        if max_per_sec <= 0:
+            raise ValueError(f"max_per_sec must be positive, got {max_per_sec!r}")
         self._layout = layout
         self._fetch = fetch if fetch is not None else self._default_fetch
         self._clock = clock if clock is not None else (
             lambda: datetime.now(timezone.utc).date().isoformat())
+        self._min_interval = 1.0 / max_per_sec
+        self._monotonic = monotonic if monotonic is not None else time.monotonic
+        self._sleep = sleep if sleep is not None else time.sleep
+        self._last_start: float | None = None
 
     @staticmethod
     def _default_fetch(url: str, headers: dict) -> bytes:
@@ -188,6 +215,38 @@ class PriceIngest:
                                    status=resp.status_code)
         return resp.content
 
+    def _throttle(self) -> None:
+        """Min-interval limiter: request starts are spaced >= 1/max_per_sec apart (verbatim from
+        EdgarClient._throttle)."""
+        now = self._monotonic()
+        if self._last_start is not None:
+            due = self._last_start + self._min_interval
+            if now < due:
+                self._sleep(due - now)
+                # Injected sleeps need not advance the injected clock; either way the request
+                # occupies its scheduled slot, so spacing never compresses below the interval.
+                now = max(self._monotonic(), due)
+        self._last_start = now
+
+    def _fetch_with_retry(self, url: str, headers: dict) -> bytes:
+        """Rate-limited fetch with exponential backoff on throttle/refusal statuses (mirrors
+        EdgarClient._get, minus the persist step — the freeze lives in `pull`, AFTER a successful
+        fetch, so a fetch that never succeeds leaves nothing frozen: fetch-fail stays distinct from
+        parse-fail, §3)."""
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            self._throttle()
+            try:
+                return self._fetch(url, headers)
+            except PriceIngestError as e:
+                if e.status in _RETRY_STATUSES and attempt < _MAX_ATTEMPTS:
+                    self._sleep(_BACKOFF_BASE_SECONDS * 2 ** (attempt - 1))
+                    continue
+                if e.status in _RETRY_STATUSES:
+                    raise PriceIngestError(f"GET {url} failed after {_MAX_ATTEMPTS} attempts "
+                                           f"(HTTP {e.status})", status=e.status) from e
+                raise
+        raise AssertionError("unreachable: the retry loop returns or raises")
+
     def frozen_path(self, source: str, date_: str, ticker: str) -> Path:
         return self._layout.prices_path(source, date_, f"{ticker}.{_source(source).ext}")
 
@@ -196,9 +255,10 @@ class PriceIngest:
         FREEZE the raw body, then parse to the tidy frame. Freeze precedes parse (§3: persist
         raw pulls before computing anything) — a corrupt body still lands on disk. A same-day
         re-pull of the same ticker+source overwrites its frozen file (ingest/ is dated
-        substrate, not the append-only events/ record)."""
+        substrate, not the append-only events/ record). The fetch is rate-limited + 429/403-retried
+        (`_fetch_with_retry`); a fetch that never succeeds raises and freezes nothing."""
         src = _source(source)
-        body = self._fetch(src.url(ticker, start, end), {"User-Agent": BROWSER_UA})
+        body = self._fetch_with_retry(src.url(ticker, start, end), {"User-Agent": BROWSER_UA})
         write_atomic(self.frozen_path(source, self._clock(), ticker), body)
         return src.parse(body, ticker)
 
