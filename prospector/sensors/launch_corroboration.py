@@ -186,6 +186,42 @@ def route_corroboration(base: Mapping, sectors: frozenset[str],
     return {"action": "corroborated", "sectors": sorted(sectors), "matched": matched}
 
 
+def pending_soi_resolution(launch_events: Iterable[Mapping], now: str,
+                           retry_horizon_days: float) -> list[dict]:
+    """The §9d work-list: the launches still awaiting SOI sector resolution, FOLDED from the launch
+    events — never a side 'pending' table (§9f: between-tick state is the fossil record, the same
+    single-source enumeration as active leads). Each element is a `launch` event as a Mapping with
+    `ts`, `event_id`, and `payload`.
+
+    A launch's disposition is `payload['corroboration']`, and the append-only record supersedes: group
+    every `launch` event by `series_id`, keep the LATEST by `(ts, event_id)`, and a launch is still
+    pending iff that latest disposition is `sectors_unresolved`. So once §9d resolves one — a `match`
+    on a lead, or a `dormant_no_match` / `no_dominant_sector` on `_system` (all later `ts`) — it drops
+    off the work-list and is never re-fetched. A launch whose detection has aged past
+    `retry_horizon_days` also drops off (dormant-terminal, surfaced by the coverage report, not
+    re-fetched forever). Returns the pending launch payloads (the record `sensors/soi.scan` consumes)."""
+    latest: dict[str, tuple[tuple, dict]] = {}
+    for e in launch_events:
+        payload = e["payload"]
+        sid = payload.get("series_id")
+        if sid is None:
+            continue
+        key = (e["ts"], e.get("event_id", ""))
+        if sid not in latest or key > latest[sid][0]:
+            latest[sid] = (key, payload)
+    horizon = timedelta(days=retry_horizon_days)
+    now_dt = parse_ts(now)
+    pending: list[dict] = []
+    for _key, payload in latest.values():
+        if payload.get("corroboration") != "sectors_unresolved":
+            continue
+        detected_at = payload.get("detected_at")
+        if detected_at and now_dt - parse_ts(detected_at) > horizon:
+            continue  # aged past the horizon -> dormant-terminal (surfaced, never re-fetched)
+        pending.append(dict(payload))
+    return pending
+
+
 def cross_stream_lag(lead_events: Iterable[Mapping]) -> timedelta | None:
     """The SIGNED cross-stream lag on a lead: T2 − T1, where T1 is the lead's earliest structural
     spawn (`lead.spawned` — the xcorr/dispersion birth) and T2 is the earliest corroborating launch's

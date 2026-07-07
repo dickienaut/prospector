@@ -35,12 +35,17 @@ import json
 from collections import Counter
 
 from prospector.config import check_config_honesty
-from prospector.fold.fold import fold, state_changed
+from prospector.fold.fold import active_nonshadow, fold, state_changed
 from prospector.fold.snapshots import SnapshotConfig, should_snapshot, write_snapshot
 from prospector.identity.resolution import ResolutionMachine
+from prospector.ingest.edgar import resolve_soi_target
+from prospector.ingest.soi import SoiIngest
 from prospector.runner.deps import RunnerDeps
 from prospector.runner.runlog import RunLog, write_run_log
 from prospector.sensors import launch as launch_sensor
+from prospector.sensors import soi as soi_sensor
+from prospector.sensors.launch_corroboration import (lead_sectors, pending_soi_resolution,
+                                                     series_id_sectors)
 from prospector.store.envelope import SYSTEM_LEAD, parse_ts
 from prospector.store.fund_registry import FundRegistry
 
@@ -228,10 +233,15 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
         except Exception as e:  # one sensor's failure is a soft fault, never a run-abort (§9g)
             runlog.sensors["launch"] = "fault"
             _emit_fault(store, "sensor.launch", e, now, faults)
-    #    SLOT: launch corroboration + SOI deferred passes (§9d). SUBTLE BIT #3: a deferred pass is
-    #        CALLED WITH its sectors (holdings, or the SOI-derived set), never assumes they exist —
-    #        wiring it at launch resolution would find the empty set (holdings post days later) and
-    #        silently never fire. It reaches back, preserving the original detected_at as T2.
+    # §9d: the deferred SOI-corroboration retry pass — WIRED (SUBTLE BIT #3: a deferred pass is CALLED
+    #      WITH its sectors, never assumes them; a not-yet (resolve_soi_target None) leaves the launch
+    #      sectors_unresolved to re-attempt; it reaches back, preserving the original detected_at as T2).
+    #      The holdings corroboration that first records `sectors_unresolved` is a separate §9a/§4c SLOT.
+    try:
+        _run_soi_corroboration(deps, store, now, faults, runlog, machine.fund_registry)
+    except Exception as e:  # a batch-level failure is a soft fault, never a run-abort (§9g)
+        runlog.sensors["soi_corroboration"] = "fault"
+        _emit_fault(store, "soi.corroboration", e, now, faults)
     #    §4d rebalance / mandate — SLOT. SUBTLE BIT #2 (mandate, §9c): the diff's prior is the last
     #        FROZEN prospectus blob, never the registry `prospectus_accession` field — an identity
     #        pass earlier in THIS run may advance that field, so reading the prior from it would
@@ -248,6 +258,79 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
     # 5. CAPTURE — no-op until M6 (§9-run-order-5). The slot exists now so M6 plugs in without
     #    reshaping the run order.
     runlog.sensors["capture"] = "slot"
+
+
+def _active_lead_sectors(deps: RunnerDeps, fund_registry: FundRegistry) -> dict:
+    """`{active lead_id -> its sector set}` for the corroboration overlap (§4d forward-hash), assembled
+    live: resolve the sector-ETF universe tickers to series_ids via the registry, bridge to GICS
+    sectors (config `sector_map`), and `lead_sectors()` over the ACTIVE (non-shadow) leads. Returns {}
+    when the universe isn't resolved yet or no leads are active — `soi.scan` then records
+    `dormant_no_match` honestly (there is simply no live lead to overlap; the overlap coverage is
+    bounded by the xcorr/dispersion sensors, which are their own SLOTs)."""
+    universe = deps.cfg.get("universe") or {}
+    sector_map = deps.cfg.get("sector_map") or {}
+    ticker_to_series_id: dict[str, str] = {}
+    for ticker in universe.get("sectors", []):
+        entry = fund_registry.by_ticker(ticker)
+        if entry is not None:
+            ticker_to_series_id[ticker] = entry.series_id
+    s2sec = series_id_sectors(sector_map, ticker_to_series_id)
+    active_ids = [s["lead"] for s in active_nonshadow(
+        fold(deps.registry.events_for_lead(lead))
+        for lead in deps.registry.all_leads() if lead != SYSTEM_LEAD)]
+    return lead_sectors(list(ticker_to_series_id.values()), s2sec, active_ids)
+
+
+def _run_soi_corroboration(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog,
+                           fund_registry: FundRegistry) -> None:
+    """§9d — the deferred SOI-corroboration retry pass (spec §9b/§9d; SUBTLE BIT #3). Enumerate the
+    `sectors_unresolved` launches from the FOLD (§9f — the same single-source enumeration as active
+    leads, never a side 'pending' table), and for each within the retry horizon: look up its registry
+    entry (cik + fund-name anchor), resolve its latest SOI coordinates (`resolve_soi_target`, the
+    step-2 machinery), and drive `sensors/soi.scan` — which reaches back preserving the original
+    `detected_at` as T2, so the lag measures to detection, not to when the SOI arrived. Discipline:
+      - CALLED WITH the SOI-derived sectors, never assuming they exist: `resolve_soi_target` returns
+        None when the SOI isn't indexed yet or its exhibit is ambiguous (fault) — a NOT-YET, so the
+        launch stays `sectors_unresolved` and is re-attempted next cycle; the run continues.
+      - a per-launch failure is a SOFT fault (§9g): recorded, skipped, the pass goes on.
+      - SILENT (§10): the emitted `launch`/`match` accretions never push; if an accretion changes a
+        real lead's {status,shadow,verdict}, the step-6 snapshot re-fold catches it in this same tick.
+    Coverage is bounded, honestly (the mechanism is what lands here): the `sectors_unresolved` input is
+    produced by the holdings corroboration pass (a separate §9a/§4c SLOT), the overlap needs live
+    xcorr/dispersion leads (their own SLOTs), and the fund-block anchor is the registry entry's name —
+    live yield is gated on those, exactly like SPDR-only holdings coverage.
+
+    No weekly cadence gate yet (the runner is cadence-agnostic; `schedule.weekly_day` is M7): §9d
+    attempts each pending launch every tick, bounded by the retry horizon. Throttling the SOI-heavy
+    fetch to weekly is an M7 scheduling concern, not a correctness one."""
+    horizon = float((deps.cfg.get("corroboration") or {}).get("retry_horizon_days", 180))
+    # Work-list from the fold (§9f): every `launch` event across all leads, with event_id for the
+    # (ts, event_id) total order (read_lead's Envelope drops event_id, so read the rows directly).
+    launch_events = [
+        {"ts": r["ts"], "event_id": r["event_id"], "payload": json.loads(r["payload"])}
+        for lead in deps.registry.all_leads()
+        for r in deps.registry.events_for_lead(lead, "launch")]
+    pending = pending_soi_resolution(launch_events, now, horizon)
+    if not pending:
+        runlog.sensors["soi_corroboration"] = "ran"  # ran, nothing pending (honest: not a 'slot')
+        return
+    soi = SoiIngest(deps.layout)
+    active = _active_lead_sectors(deps, fund_registry)
+    for launch in pending:
+        try:
+            entry = fund_registry.get(launch["series_id"])
+            if entry is None:
+                continue  # no registry entry (cik/anchor) yet -> stays pending, re-attempted
+            target = resolve_soi_target(int(entry.cik), deps.edgar_client)
+            if target is None:
+                continue  # NOT-YET: SOI unindexed / ambiguous exhibit -> stays sectors_unresolved
+            soi_sensor.scan(
+                launch, target.accession, entry.name, active, soi, deps.cfg, now, store.append,
+                fetch_body=lambda t=target: deps.edgar_client.filing_text(
+                    t.cik, t.accession, t.primary_doc))
+        except Exception as e:  # one launch's failure never blinds the others (§9g)
+            _emit_fault(store, "soi.corroboration", e, now, faults)
+    runlog.sensors["soi_corroboration"] = "ran"
 
 
 def _materialize_snapshots(deps: RunnerDeps, store, now: str, faults: list) -> dict:
