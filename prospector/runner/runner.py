@@ -12,14 +12,13 @@ no run-now surface (cron invokes it; scheduling is M7). Statelessness (CONTRACT 
 nothing across ticks — all between-tick state is recovered from the fossil record (§9f), so two
 cold runs over the same store produce identical events.
 
-SCOPE — this is the THIN SPINE (build-order step 1). It gets the run order, the invariants, the
-run-log, the exception granularity, and the snapshot/push machinery right, proven end to end
-through ONE real vertical: launch-recording (§4c). Every other sensor and all genuinely-new logic
-are explicit, spec-cited SLOTS filled in follow-on slices:
-  §4a xcorr, §4b dispersion, §4d rebalance/mandate         — sensor SLOTS (steps 2-3)
-  §9b SOI live-fetch, §9d deferred corroboration/SOI retry  — deferred-pass SLOTS (steps 2-3)
-  §9c mandate frozen-prior, §9e shadow clock                — invariants noted at their slots
-  §10 real email sender                                     — NullNotifier here; sender is step 4
+SCOPE — grown well past the thin spine. WIRED, in CONTRACT run order: config honesty (§9-1), the
+§9a mf-tickers + sector-prices ingest, §4a xcorr (the PRIMARY live lead-spawner), §4c launch-
+recording, the §9d deferred SOI-corroboration retry, and the §4d mandate-diff (§9c frozen-prior).
+Remaining spec-cited SLOTS, each additive in its CONTRACT position:
+  §4b dispersion + §9e shadow clock  — needs the holdings/constituent-price vertical (a later slice)
+  §4d rebalance (holdings-diff)      — needs holdings ingest (same vertical)
+  §10 real email sender              — NullNotifier here; the sender is a later slice
 
 THE FOUR SUBTLE BITS (spec §9, "comment the why") — each encodes a CONTRACT that is not obvious
 from the mechanics; they are marked inline where they live:
@@ -38,12 +37,17 @@ from prospector.config import check_config_honesty
 from prospector.fold.fold import active_nonshadow, fold, state_changed
 from prospector.fold.snapshots import SnapshotConfig, should_snapshot, write_snapshot
 from prospector.identity.resolution import ResolutionMachine
-from prospector.ingest.edgar import resolve_soi_target
+from prospector.ingest.edgar import latest_prospectus, prospectus_history, resolve_soi_target
+from prospector.ingest.prices import (PriceIngestError, build_panel, guard_live_source,
+                                       required_pull_start)
+from prospector.ingest.prospectus import ProspectusIngest
 from prospector.ingest.soi import SoiIngest
 from prospector.runner.deps import RunnerDeps
 from prospector.runner.runlog import RunLog, write_run_log
 from prospector.sensors import launch as launch_sensor
+from prospector.sensors import mandate as mandate_sensor
 from prospector.sensors import soi as soi_sensor
+from prospector.sensors import xcorr as xcorr_sensor
 from prospector.sensors.launch_corroboration import (lead_sectors, pending_soi_resolution,
                                                      series_id_sectors)
 from prospector.store.envelope import SYSTEM_LEAD, parse_ts
@@ -199,11 +203,11 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
         deps.registry, store, FundRegistry(deps.layout, deps.registry, store),
         deps.edgar_client, retry_days=retry_days, clock=lambda: now)
 
-    # 2. INGEST (§9a). Thin spine drives only mf-tickers (the launch input). Freeze-before-parse:
-    #    the EdgarClient's `persist` seam (wired in deps to layout.edgar_path) writes the raw body
-    #    BEFORE mf_tickers() returns the parsed dict, so a corrupt body is still a postmortem
-    #    artifact. A fetch failure is a SOFT fault (§9a), never a run-abort.
-    #    SLOT: prices / holdings / submissions ingest — follow-on verticals.
+    # 2. INGEST (§9a). Freeze-before-parse throughout: the EdgarClient's `persist` seam (wired in
+    #    deps to layout.edgar_path) writes the raw body BEFORE mf_tickers() returns the parsed dict,
+    #    and PriceIngest.pull freezes each price body before parse — so a corrupt body is still a
+    #    postmortem artifact. A fetch failure is a SOFT fault (§9a), never a run-abort.
+    #    SLOT: holdings / submissions ingest — follow-on verticals (prices now wired below).
     current_mf = None
     try:
         current_mf = deps.edgar_client.mf_tickers()
@@ -212,12 +216,30 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
         runlog.ingests["mf_tickers"] = "fault"
         _emit_fault(store, "ingest.mf_tickers", e, now, faults)
 
+    # §9a PRICES ingest — WIRED. Build the sector-ETF correlation grid (config `universe`: the 11
+    #    SPDRs + SPY) ONCE per tick — the shared price substrate the §4a xcorr spawner consumes (next
+    #    slice) and, later, §4b dispersion, so both read one frozen grid. P1 GUARD: `guard_live_source`
+    #    fails closed on an unverified Stooq (its `Close` is only ASSUMED adjusted; a wrong-return base
+    #    is exactly P1's hazard). The panel is a built-and-frozen artifact with no consumer THIS slice.
+    _panel = _build_sector_panel(deps, store, now, faults, runlog)  # consumed by _run_xcorr next slice
+
     # 3. SENSORS in CONTRACT sub-order (§4a -> §4b -> §4c -> §4d):
-    #    §4a xcorr      — SLOT (follow-on).
+    #    §4a xcorr — WIRED (the runner's PRIMARY live lead-spawner). Consumes the sector-ETF panel
+    #        built above + THIS tick's mf map (the authoritative ticker->series_id, since the seed
+    #        universe is never 'launched' and so is never in the fund registry). A spawn is LIVE
+    #        (shadow=false) -> it pages AND counts toward the §8a ceiling via active_nonshadow. The
+    #        stress gate freezes the trigger on a crisis day (a would-be entry -> stressed departure
+    #        on _system, never a spawn). Trigger state is reconstructed from the record (§9f).
+    try:
+        _run_xcorr(deps, store, now, faults, runlog, _panel, current_mf)
+    except Exception as e:  # a batch-level failure is a soft fault, never a run-abort (§9g)
+        runlog.sensors["xcorr"] = "fault"
+        _emit_fault(store, "sensor.xcorr", e, now, faults)
     #    §4b dispersion — SLOT (follow-on). SUBTLE BIT #4 lives here: the dispersion shadow clock
     #        (§9e) surfaces burn-in readiness in the heartbeat/dashboard, but the runner NEVER
     #        auto-promotes shadow->paging — that is a human config flip that leaves a config.changed
-    #        fossil (auto-promotion would re-trust survivor-biased calibration).
+    #        fossil (auto-promotion would re-trust survivor-biased calibration). Dispersion's inputs
+    #        (per-basket membership + constituent prices) are a holdings-derived vertical, its own slice.
     #    §4c launch     — WIRED.
     if current_mf is not None:
         try:
@@ -242,10 +264,16 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
     except Exception as e:  # a batch-level failure is a soft fault, never a run-abort (§9g)
         runlog.sensors["soi_corroboration"] = "fault"
         _emit_fault(store, "soi.corroboration", e, now, faults)
-    #    §4d rebalance / mandate — SLOT. SUBTLE BIT #2 (mandate, §9c): the diff's prior is the last
-    #        FROZEN prospectus blob, never the registry `prospectus_accession` field — an identity
-    #        pass earlier in THIS run may advance that field, so reading the prior from it would
-    #        diff against a "prior" that was never actually frozen. Source from the blob store.
+    # §4d mandate-diff — WIRED (SUBTLE BIT #2 / §9c): the diff's prior is the last FROZEN prospectus
+    #      blob (`has_frozen`), never the registry `prospectus_accession` field — an identity pass earlier
+    #      in THIS run may advance that field, so reading the prior from it would diff the new filing
+    #      against itself and miss a real change. (Rebalance, the holdings-diff sibling, stays a SLOT — it
+    #      needs holdings ingest, a separate vertical.)
+    try:
+        _run_mandate(deps, store, now, faults, runlog, machine.fund_registry)
+    except Exception as e:  # a batch-level failure is a soft fault, never a run-abort (§9g)
+        runlog.sensors["mandate"] = "fault"
+        _emit_fault(store, "mandate", e, now, faults)
 
     # 4. IDENTITY RETRIES (§9-run-order-4). Drain the retry-then-manual queue; nothing evaporates.
     try:
@@ -260,25 +288,191 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
     runlog.sensors["capture"] = "slot"
 
 
-def _active_lead_sectors(deps: RunnerDeps, fund_registry: FundRegistry) -> dict:
-    """`{active lead_id -> its sector set}` for the corroboration overlap (§4d forward-hash), assembled
-    live: resolve the sector-ETF universe tickers to series_ids via the registry, bridge to GICS
-    sectors (config `sector_map`), and `lead_sectors()` over the ACTIVE (non-shadow) leads. Returns {}
-    when the universe isn't resolved yet or no leads are active — `soi.scan` then records
-    `dormant_no_match` honestly (there is simply no live lead to overlap; the overlap coverage is
-    bounded by the xcorr/dispersion sensors, which are their own SLOTs)."""
-    universe = deps.cfg.get("universe") or {}
-    sector_map = deps.cfg.get("sector_map") or {}
+def _build_sector_panel(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog):
+    """§9a prices ingest — the sector-ETF correlation grid (config `universe`: the 11 SPDRs + SPY),
+    the shared price substrate the §4a xcorr and (later) §4b dispersion spawner passes consume. Pull
+    each ticker's adjusted closes from the LIVE primary source (config `prices.primary`), FREEZE
+    before parse (§3, via the built `PriceIngest.pull`), and assemble the wide panel with `build_panel`.
+
+    P1 GUARD (§3): `guard_live_source` fails closed when the live source is an unverified Stooq —
+    `parse_stooq` only ASSUMES `Close` is adjusted, and an unadjusted close silently corrupts every
+    return across a split/dividend (the base of the sensor stack). Yahoo (primary) reads `adjclose`.
+
+    Granularity (§9g): the guard trip and each per-ticker fetch/parse failure (and an empty frame) are
+    SOFT faults — recorded on `_system`, the column skipped, the pass continues; never a run-abort.
+    Returns the panel, or None if the guard tripped or no ticker landed (the xcorr pass then records
+    'skipped')."""
+    uni = deps.cfg.get("universe") or {}
+    tickers = list(uni.get("sectors") or [])
+    if uni.get("market"):
+        tickers.append(uni["market"])
+    source = (deps.cfg.get("prices") or {}).get("primary", "yahoo")
+    try:
+        guard_live_source(source, deps.cfg)  # P1: refuse an unverified adjusted-close source, loud
+    except PriceIngestError as e:
+        runlog.ingests["prices"] = "fault"
+        _emit_fault(store, "ingest.prices", e, now, faults)
+        return None
+    start = required_pull_start(now[:10], deps.cfg)
+    end = now[:10]
+    frames = []
+    for t in tickers:
+        try:
+            frame = deps.price_ingest.pull(t, source, start, end)  # freeze-before-parse (§3)
+            if frame.empty:  # a valid body with no rows contributes no column (never a fabricated one)
+                _emit_fault(store, "ingest.prices", f"{t}: empty price frame (no rows)", now, faults)
+                continue
+            frames.append(frame)
+        except Exception as e:  # one ticker's failure never blinds the grid (§9g)
+            _emit_fault(store, "ingest.prices", f"{t}: {e}", now, faults)
+    if not frames:
+        runlog.ingests["prices"] = "skipped" if not tickers else "fault"
+        return None
+    panel = build_panel(frames)
+    runlog.ingests["prices"] = "ran"
+    return panel
+
+
+_XCORR_TRIGGER_TYPES = ("lead.spawned", "xcorr.departure", "xcorr.tick", "xcorr.reverted")
+
+
+def _universe_series_ids(cfg: dict, current_mf: dict | None) -> dict:
+    """`{sector ticker -> SEC series id}` resolved from THIS tick's mf-tickers map — the authoritative
+    `[cik, seriesId, classId, symbol]` feed already fetched for the launch diff, NOT the fund registry.
+    Why not the registry: the seed universe is never 'launched', and `upsert` fires only on a resolved
+    launch, so the 11 SPDRs are never registered there — reading it would leave xcorr permanently inert.
+    xcorr keys its lead on series ids (§2/§5 CONTRACT), so this is the bridge that lets it spawn. SPY is
+    deliberately excluded: it is a UIT with no series id and is only the β-strip market factor, never a
+    pair member. A ticker that is absent or maps to >1 distinct series id (ambiguous) is skipped — refuse
+    to guess (bounded, honest), never a wrong key."""
+    if not current_mf:
+        return {}
+    try:
+        idx = {f: i for i, f in enumerate(current_mf["fields"])}
+        si, sy = idx["seriesId"], idx["symbol"]
+    except (KeyError, TypeError):
+        return {}
+    by_ticker: dict[str, set] = {}
+    for row in current_mf.get("data", []):
+        by_ticker.setdefault(str(row[sy]).upper(), set()).add(str(row[si]))
+    out: dict[str, str] = {}
+    for ticker in (cfg.get("universe") or {}).get("sectors", []):
+        sids = by_ticker.get(str(ticker).upper())
+        if sids and len(sids) == 1:
+            out[ticker] = next(iter(sids))
+    return out
+
+
+def _xcorr_last_event_types(deps: RunnerDeps) -> dict:
+    """§9f — reconstruct each xcorr lead's Schmitt-state SOURCE from the fossil record: `{lead_id ->
+    its last TRIGGER-relevant event type}`. Read straight from the registry (the same events the fold
+    reads, ORDER BY ts, event_id), never a side cache. Only trigger-vocabulary events count
+    (`lead.spawned`/`xcorr.*`), so a later corroboration/verdict on the lead cannot be misread as an
+    active departure (the schmitt contract). A pair that never spawned has no lead here -> `None` ->
+    quiet, so it can enter cleanly."""
+    out: dict[str, str | None] = {}
+    for lead in deps.registry.all_leads():
+        if lead == SYSTEM_LEAD or not str(lead).startswith("xcorr-"):
+            continue
+        last = None
+        for r in deps.registry.events_for_lead(lead):
+            if r["type"] in _XCORR_TRIGGER_TYPES:
+                last = r["type"]
+        out[lead] = last
+    return out
+
+
+def _run_xcorr(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog, panel,
+               current_mf: dict | None) -> None:
+    """§4a xcorr — the runner's PRIMARY live lead-spawner. Drive `xcorr_sensor.scan` over the sector-ETF
+    panel built this tick: resolve the universe tickers -> series ids from the mf map
+    (`_universe_series_ids` — the lead keys on series ids, §2/§5), reconstruct each pair's Schmitt state
+    from the record (`_xcorr_last_event_types`, §9f), and step one tick. A spawn is LIVE (shadow=false):
+    it pages and counts toward the §8a ceiling via `active_nonshadow`, no extra code. No panel (prices
+    ingest faulted / empty) -> 'skipped', honestly (xcorr cannot run without a warmed price grid). A
+    batch failure (e.g. the panel lacks the market column) escapes to the caller's soft-fault boundary."""
+    if panel is None or getattr(panel, "empty", True):
+        runlog.sensors["xcorr"] = "skipped"  # no prices this tick — honest, not a silent no-op
+        return
+    ticker_to_series_id = _universe_series_ids(deps.cfg, current_mf)
+    last_event_types = _xcorr_last_event_types(deps)
+    xcorr_sensor.scan(panel, ticker_to_series_id, deps.cfg, now, last_event_types, store.append)
+    runlog.sensors["xcorr"] = "ran"
+
+
+def _lead_context(deps: RunnerDeps, fund_registry: FundRegistry) -> tuple[dict, list]:
+    """The shared corroboration/audit context: the sector-ETF universe tickers resolved to series_ids
+    (via the registry), and the currently ACTIVE (non-shadow) lead ids (folded from the record — §9f).
+    Used by the §9d SOI overlap and the §4d mandate routing (both forward-hash the universe against the
+    active leads). Returns `(ticker_to_series_id, active_lead_ids)`; either may be empty (nothing
+    registered / no live lead), which the callers handle honestly."""
     ticker_to_series_id: dict[str, str] = {}
-    for ticker in universe.get("sectors", []):
+    for ticker in (deps.cfg.get("universe") or {}).get("sectors", []):
         entry = fund_registry.by_ticker(ticker)
         if entry is not None:
             ticker_to_series_id[ticker] = entry.series_id
-    s2sec = series_id_sectors(sector_map, ticker_to_series_id)
     active_ids = [s["lead"] for s in active_nonshadow(
         fold(deps.registry.events_for_lead(lead))
         for lead in deps.registry.all_leads() if lead != SYSTEM_LEAD)]
+    return ticker_to_series_id, active_ids
+
+
+def _active_lead_sectors(deps: RunnerDeps, fund_registry: FundRegistry) -> dict:
+    """`{active lead_id -> its sector set}` for the corroboration overlap (§4d forward-hash): the
+    `_lead_context` universe bridged to GICS sectors (config `sector_map`), `lead_sectors()` over the
+    active leads. Returns {} when the universe isn't resolved yet or no leads are active — `soi.scan`
+    then records `dormant_no_match` honestly (the overlap coverage is bounded by the xcorr/dispersion
+    sensors, their own SLOTs)."""
+    ticker_to_series_id, active_ids = _lead_context(deps, fund_registry)
+    s2sec = series_id_sectors(deps.cfg.get("sector_map") or {}, ticker_to_series_id)
     return lead_sectors(list(ticker_to_series_id.values()), s2sec, active_ids)
+
+
+def _last_frozen_prospectus(prospectus: ProspectusIngest, series_id: str, subs: dict,
+                            current_accession: str) -> str | None:
+    """The §9c mandate prior: the most-recent prospectus filing we hold FROZEN that isn't the current
+    one — sourced from the blob store (`has_frozen`), NEVER the registry `prospectus_accession` field
+    (an identity pass earlier in THIS run may have advanced that field to the new filing, so reading the
+    prior from it would diff the new filing against itself and miss a real change). None if we hold no
+    prior frozen (mandate.scan then baselines the current)."""
+    for f in prospectus_history(subs):  # newest-first
+        if f["accession"] != current_accession and prospectus.has_frozen(series_id, f["accession"]):
+            return f["accession"]
+    return None
+
+
+def _run_mandate(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog,
+                 fund_registry: FundRegistry) -> None:
+    """§4d mandate-diff on cadence + the §9c frozen-prior invariant (SUBTLE BIT #2). For each registered
+    (watched) fund: fetch submissions, take the latest prospectus (current) and — as the prior — the
+    last FROZEN prospectus from the blob store (`_last_frozen_prospectus`, NEVER the registry field,
+    §9c). `mandate.scan` freezes the current (freeze-before-diff), diffs the principal-investment-
+    strategy section against the frozen prior, and routes `mandate.changed` (a SILENT corroboration onto
+    the live leads it touches, else `_system`) or a `fault` on unreliable extraction — never a wrong
+    change (a false `mandate.changed` is worse than a missed one). Per-fund failure is a soft fault
+    (§9g); the pass goes on. SILENT (§10): `mandate.changed` never pushes; the human adjudicates
+    cosmetic-vs-substantive.
+
+    This runs REAL execution from day one — a baseline on first sight, a diff once a fund files a new
+    prospectus across cadences — self-sufficient (records on `_system` even with no live lead). The
+    holdings-diff sibling (rebalance) stays a SLOT: it needs holdings ingest, a separate vertical."""
+    prospectus = ProspectusIngest(deps.layout, deps.edgar_client)
+    ticker_to_series_id, active_ids = _lead_context(deps, fund_registry)
+    universe_ids = list(ticker_to_series_id.values())
+    mandate_cfg = deps.cfg.get("mandate") or {}
+    for entry in fund_registry.all_funds():
+        try:
+            subs = deps.edgar_client.submissions(int(entry.cik))
+            cur = latest_prospectus(subs)
+            if cur is None:
+                continue  # no prospectus-family filing on record for this fund
+            prior = _last_frozen_prospectus(prospectus, entry.series_id, subs, cur["accession"])
+            mandate_sensor.scan(entry.series_id, entry.ticker_current, int(entry.cik),
+                                cur["accession"], cur["primary_doc"], prior,
+                                universe_ids, active_ids, prospectus, mandate_cfg, now, store.append)
+        except Exception as e:  # one fund's failure never blinds the others (§9g)
+            _emit_fault(store, "mandate", e, now, faults)
+    runlog.sensors["mandate"] = "ran"
 
 
 def _run_soi_corroboration(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog,

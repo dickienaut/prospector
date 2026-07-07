@@ -106,8 +106,11 @@ def parse_yahoo(body: bytes, ticker: str) -> pd.DataFrame:
 
 
 def parse_stooq(body: bytes, ticker: str) -> pd.DataFrame:
-    """Parse a Stooq daily CSV body (Date,Open,High,Low,Close,Volume; Close is adjusted).
-    Kept working for the fallback flip even while the endpoint is gated (config note)."""
+    """Parse a Stooq daily CSV body (Date,Open,High,Low,Close,Volume). Reads `Close` as close_adj —
+    but whether Stooq's `Close` is split/dividend-ADJUSTED is UNVERIFIED (P1): it is assumed, never
+    proven against a known corporate action, unlike Yahoo's `adjclose`. `guard_live_source` fails
+    Stooq closed as a LIVE source until a recorded-real split fixture proves adjustment (config
+    `prices.stooq_adjusted_verified`). Kept working for the fallback flip even while gated (config)."""
     try:
         table = pd.read_csv(io.BytesIO(body))
         dates = pd.to_datetime(table["Date"], errors="coerce")
@@ -148,6 +151,21 @@ def _source(name: str) -> _Source:
     except KeyError:
         raise PriceIngestError(
             f"unknown price source {name!r}; known: {sorted(_SOURCES)}") from None
+
+
+def guard_live_source(source: str, cfg: dict) -> None:
+    """P1 fail-closed guard (§3): refuse Stooq as a LIVE price source until its adjusted-close
+    assumption is verified. `parse_stooq` reads `Close` as the adjusted close on ASSUMPTION only
+    (unlike Yahoo's `adjclose`, which is genuinely adjusted); an unadjusted close silently corrupts
+    every return across a split/dividend — the base of the whole sensor stack. So until a recorded-
+    real split fixture proves adjustment (config `prices.stooq_adjusted_verified`), Stooq must never
+    be the live source. Yahoo (and any other source not on this list) passes. Raises loud, on purpose:
+    a silent wrong-return base is exactly what P1 guards against."""
+    if source == "stooq" and not bool((cfg.get("prices") or {}).get("stooq_adjusted_verified", False)):
+        raise PriceIngestError(
+            "P1: Stooq is not a verified adjusted-close source (prices.stooq_adjusted_verified is "
+            "false) — refusing it as a live source; its `Close` may be unadjusted, which corrupts "
+            "every return across a split. Verify against a known split, then flip the flag.")
 
 
 class PriceIngest:

@@ -30,6 +30,9 @@ from itertools import combinations
 import numpy as np
 import pandas as pd
 
+from prospector.sensors import schmitt
+from prospector.store.envelope import SYSTEM_LEAD
+
 # --- Failure-diagnosis note (spec §4a, for the milestone-3 backtest) ---------------------------
 # If March-2020 fires broadly despite the market strip, two DISTINCT mechanisms are candidates;
 # know which one you are fixing before touching thresholds:
@@ -167,3 +170,96 @@ def pair_display(pair: tuple[str, str]) -> str:
     """Human display for a pair, sorted for stability: ('XLU','XLK') -> 'XLK×XLU'."""
     a, b = sorted(pair)
     return f"{a}×{b}"
+
+
+# --- driver (§9: stateless per run, reconstruct trigger state from the record) -----------------
+
+
+def scan(panel: pd.DataFrame, ticker_to_series_id: dict, cfg: dict, now: str,
+         last_event_types: dict, emit, tick_due: bool = True) -> dict:
+    """One xcorr pass over the sector-ETF panel — the runner's primary LIVE lead-spawner (§4a, §9).
+
+    Drives the pure pipeline ONCE (returns -> β-strip -> residual corr -> Fisher z -> departure z)
+    plus the stress series, then per pair reconstructs the Schmitt state from the record (§9f,
+    `last_event_types[lead_id]`, never a side cache) and steps ONE tick on the pair's latest z. This
+    is the live analog of the backtest's per-day replay: the backtest walks history, the runner
+    evaluates the newest fully-warmed row on cadence.
+
+    `panel` columns are display tickers (incl. the market column for the β-strip). `ticker_to_series_id`
+    maps each SECTOR ticker to its SEC series id — the lead id keys on series ids (§2/§5 CONTRACT), never
+    tickers; a pair with either ticker unresolved is skipped (can't key the lead — bounded, honest). The
+    market (SPY) carries no series id and is never a pair member (it drops out in `residuals`).
+
+    LIVE, never shadow: a spawn is `shadow=false`, so it pages and counts toward the §8a ceiling via
+    `active_nonshadow` (no extra code here — the fold + that filter do it).
+
+    Stress gate (§4a CONTRACT): on a day where the market-wide correlation LEVEL >= crisis_level the
+    trigger is FROZEN — a would-be entry (quiet + z>=z_in) is recorded as an `xcorr.departure`
+    market_stress=true on `_system` (in the record + counts, never a spawn, never a phantom lead); an
+    already-active pair emits nothing (frozen, no exit). Unstressed edges: on entry `lead.spawned`
+    (shadow=false) + `xcorr.departure`; while active and `tick_due` an `xcorr.tick`; on exit
+    `xcorr.reverted`. The event vocabulary matches the backtest's exactly — one shape, two drivers.
+    `emit` is EventStore.append-shaped. Returns a small summary (per-edge display lists + as_of)."""
+    market = (cfg.get("universe") or {}).get("market")
+    if market not in panel.columns:
+        raise ValueError(f"xcorr needs the market column {market!r} in the price panel")
+    xc = cfg["xcorr"]
+    w = cfg["windows"]
+    z_in, z_out = float(xc["z_in"]), float(xc["z_out"])
+    crisis_level = float(xc["stress"]["crisis_level"])
+    stress_window = int(xc["stress"]["level_window"])
+
+    rets = daily_returns(panel)
+    betas = rolling_beta(rets, market, int(w["baseline_days"]))
+    resid = residuals(rets, betas, market)
+    zpanel = departure_z(fisher_z(pairwise_rolling_corr(resid, int(w["corr_days"]))),
+                         int(w["baseline_days"]))
+    stress = stress_series(rets, stress_window)
+
+    summary = {"as_of": None, "spawned": [], "reverted": [], "ticked": [], "stressed": []}
+    if len(zpanel.index) == 0 or len(zpanel.columns) == 0:
+        return summary
+    as_of_ts = zpanel.index[-1]
+    as_of = as_of_ts.date().isoformat() if hasattr(as_of_ts, "date") else str(as_of_ts)
+    summary["as_of"] = as_of
+    last_row = zpanel.iloc[-1]  # a Series indexed by the pair tuples
+    stress_at = stress.get(as_of_ts, float("nan"))
+    stressed = bool(pd.notna(stress_at) and float(stress_at) >= crisis_level)
+
+    for pair in zpanel.columns:
+        a, b = pair
+        sid_a = ticker_to_series_id.get(a)
+        sid_b = ticker_to_series_id.get(b)
+        if sid_a is None or sid_b is None:
+            continue  # unresolved ticker -> cannot key the lead on series ids (§2/§5); bounded, honest
+        lead_id = xcorr_lead_id([sid_a, sid_b])
+        disp = pair_display(pair)
+        zv = last_row[pair]
+        z = None if pd.isna(zv) else float(zv)
+        state = schmitt.state_from_last_event_type(last_event_types.get(lead_id))
+
+        if stressed:
+            # trigger frozen (§4a): a would-be ENTRY is a stressed departure on _system, never a spawn.
+            if state == schmitt.QUIET and z is not None and z >= z_in:
+                emit({"ts": now, "lead": SYSTEM_LEAD, "type": "xcorr.departure",
+                      "payload": {"display": disp, "z": z, "market_stress": True}, "schema": 1})
+                summary["stressed"].append(disp)
+            continue
+
+        new_state, edge = schmitt.step(state, z, z_in, z_out)
+        if edge == "entered":
+            emit({"ts": now, "lead": lead_id, "type": "lead.spawned",
+                  "payload": {"spawner": "xcorr", "display": disp, "display_pair": [a, b],
+                              "shadow": False}, "schema": 1})
+            emit({"ts": now, "lead": lead_id, "type": "xcorr.departure",
+                  "payload": {"display": disp, "z": z, "market_stress": False}, "schema": 1})
+            summary["spawned"].append(disp)
+        elif edge == "exited":
+            emit({"ts": now, "lead": lead_id, "type": "xcorr.reverted",
+                  "payload": {"display": disp, "z": z}, "schema": 1})
+            summary["reverted"].append(disp)
+        elif new_state == schmitt.ACTIVE and tick_due and z is not None:
+            emit({"ts": now, "lead": lead_id, "type": "xcorr.tick",
+                  "payload": {"display": disp, "z": z, "market_stress": False}, "schema": 1})
+            summary["ticked"].append(disp)
+    return summary

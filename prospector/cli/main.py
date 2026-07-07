@@ -110,6 +110,7 @@ def run(store_path):
     import time
     from uuid import uuid4
 
+    from prospector.ingest.prices import PriceIngest
     from prospector.primitives.atomic import write_atomic
     from prospector.runner import RunnerDeps, run_tick
     from prospector.runner.notify import NullNotifier
@@ -132,10 +133,12 @@ def run(store_path):
             str(user_agent),
             max_per_sec=float(edgar_cfg.get("max_requests_per_sec", 8.0)),
             persist=lambda name, body: write_atomic(layout.edgar_path(tick_date, name), body))
+        # §9a prices ingest: default httpx fetch; the clock pins frozen pulls to this tick's date.
+        price_ingest = PriceIngest(layout, clock=lambda: tick_date)
         deps = RunnerDeps(
             layout=layout, registry=registry, event_store=EventStore(layout, registry),
-            edgar_client=edgar_client, notifier=NullNotifier(), cfg=cfg, cfg_hash=cfg_hash,
-            now=now, run_id=uuid4().hex, monotonic=time.monotonic)
+            edgar_client=edgar_client, price_ingest=price_ingest, notifier=NullNotifier(),
+            cfg=cfg, cfg_hash=cfg_hash, now=now, run_id=uuid4().hex, monotonic=time.monotonic)
         runlog = run_tick(deps)
     finally:
         registry.close()
