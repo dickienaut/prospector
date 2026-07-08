@@ -1,0 +1,335 @@
+--- a/prospector/dashboard/app.py
++++ b/prospector/dashboard/app.py
+@@ -27,7 +27,10 @@
+ from prospector.store.layout import StoreLayout
+ from prospector.store.registry import Registry
+ 
+-_CONFIG_PATH = Path("config") / "prospector.yaml"
++# N5: env-overridable + existence-guarded, mirroring _STORE_PATH — a scheduled/container launch
++# from any CWD must get the config via PROSPECTOR_CONFIG or a legible message, never a raw
++# FileNotFoundError from a bare relative path (the store path already degrades gracefully).
++_CONFIG_PATH = os.environ.get("PROSPECTOR_CONFIG", str(Path("config") / "prospector.yaml"))
+ _STORE_PATH = os.environ.get("PROSPECTOR_STORE", "./store")
+ 
+ 
+@@ -53,12 +56,16 @@
+                    "`PROSPECTOR_STORE`.")
+         return
+ 
++    if not Path(_CONFIG_PATH).is_file():
++        st.warning(f"No config at `{_CONFIG_PATH}` — set `PROSPECTOR_CONFIG` to the config file, or "
++                   "launch from the repo root (`config/prospector.yaml`).")
++        return
+     cfg, _ = load_config(_CONFIG_PATH)
+     ceiling = int((cfg.get("oracle") or {}).get("active_lead_ceiling", 8))
+     shadow_days = int((cfg.get("dispersion") or {}).get("shadow_days", 90))
+     now = _now()
+ 
+-    registry = Registry(layout.registry_path())
++    registry = Registry(layout.registry_path(), readonly=True)  # N1: §11 read-only firewall, enforced
+     try:
+         states = views.fold_all_leads(registry)
+         runs = recent_runs(registry)
+--- a/prospector/dashboard/views.py
++++ b/prospector/dashboard/views.py
+@@ -66,7 +66,11 @@
+     """The ranked active-leads panel: the LIVE leads (active, non-shadow — `active_nonshadow`, the same
+     §8a/paging/digest filter), ranked recency × magnitude (newest spawn first, then larger |z|). This is
+     where the wired xcorr (§4a) firings surface."""
+-    live = active_nonshadow(list(states))
++    # N10: off-thesis-real is INERT (real but permanently set aside — its home is macro_catalog, a
++    # read-only context panel). It must never surface in the actionable "real evidence" list, or a
++    # viewer reads a macro lead as a live signal. active_nonshadow keys on status+shadow only (verdict
++    # is display-only in the fold), so filter the verdict here at the panel boundary.
++    live = [s for s in active_nonshadow(list(states)) if s.get("verdict") != "off-thesis-real"]
+     return sorted(live, key=lambda s: ((s.get("spawned_at") or ""), abs(s.get("latest_z") or 0.0)),
+                   reverse=True)
+ 
+--- a/prospector/identity/resolution.py
++++ b/prospector/identity/resolution.py
+@@ -26,6 +26,7 @@
+ 
+ from __future__ import annotations
+ 
++import json
+ import sqlite3
+ from datetime import datetime, timedelta, timezone
+ from typing import Callable, Mapping
+@@ -94,8 +95,10 @@
+         self.retry_days = retry_days
+         self._clock = clock if clock is not None else _utc_now
+         # Owns its table on the shared connection; registry.py's DDL stays frozen.
+-        registry.conn.executescript(_DDL)
+-        registry.conn.commit()
++        # N1: a read-only surface (manual_queue on the dashboard) must not issue DDL/commit.
++        if not getattr(registry, "readonly", False):
++            registry.conn.executescript(_DDL)
++            registry.conn.commit()
+ 
+     # -- failure intake -----------------------------------------------------
+ 
+@@ -159,6 +162,16 @@
+         Returns 'resolved' (completed this pass) or 'queued' (parked for retry-then-manual).
+         """
+         ticker = ticker.upper()
++        # N2: idempotent on a same-day re-tick. `_load_prior_mf_snapshot` diffs against dates strictly
++        # < today, so a second run of the same UTC day re-detects the identical (ticker, detected_at)
++        # launch. Recording it again would double-write the append-only fossil (launch.unverified) AND
++        # re-enqueue the retry (resolution.failed). If this exact launch is already in the record, the
++        # capture is done — return a no-op. (detected_at is the launch's identity: nailed once, never
++        # backfilled, so (ticker, detected_at) uniquely names the launch.)
++        for row in self.registry.events_for_lead(SYSTEM_LEAD, "launch.unverified"):
++            payload = json.loads(row["payload"])
++            if payload.get("ticker") == ticker and payload.get("detected_at") == detected_at:
++                return "recorded"  # already captured; a re-tick must not double-write
+         unverified = self.event_store.append({
+             "ts": detected_at, "lead": SYSTEM_LEAD, "type": "launch.unverified",
+             "payload": {"ticker": ticker, "name_raw": name_raw,
+--- a/prospector/ingest/edgar.py
++++ b/prospector/ingest/edgar.py
+@@ -278,28 +278,44 @@
+     return candidates[0] if len(candidates) == 1 else None
+ 
+ 
+-def resolve_soi_target(cik: int, client: EdgarClient) -> SoiTarget | None:
+-    """Resolve a fund's current SOI document coordinates: `submissions` -> `latest_soi` -> `filing_index`
+-    -> `resolve_soi_document`. Returns a `SoiTarget`, or None when there is no SOI filing yet (a NOT-YET,
+-    re-attempted next run — §9d) or the exhibit can't be uniquely resolved (the caller faults). Any
+-    network/parse error becomes None, mirroring `resolve_ticker`'s countable-failure discipline: a
+-    failure here must never raise up the deferred-pass pipeline. (Distinguishing not-yet from fault, and
+-    the retry schedule, are the runner's job in step 3 / §9d — this only resolves coordinates.)"""
++# N8: the four distinct outcomes the deferred pass must be able to TELL APART (the docstring says
++# "distinguishing not-yet from fault ... are the runner's job" — but a bare None gave the runner nothing
++# to distinguish ON). classify_soi_target returns the reason; resolve_soi_target stays a thin
++# target-only wrapper so its existing callers/tests are unchanged.
++SOI_RESOLVED = "resolved"      # coordinates found
++SOI_NOT_YET = "not_yet"        # no SOI filing indexed yet — silent, re-attempt next cycle
++SOI_AMBIGUOUS = "ambiguous"    # SOI filing EXISTS but its exhibit is not uniquely resolvable — FAULT
++SOI_ERROR = "error"            # a network/parse error — FAULT (never swallowed as a not-yet)
++
++
++def classify_soi_target(cik: int, client: EdgarClient) -> "tuple[SoiTarget | None, str]":
++    """Resolve a fund's SOI coordinates AND say WHICH outcome it is (N8): (target, reason) where reason
++    is one of SOI_RESOLVED / SOI_NOT_YET / SOI_AMBIGUOUS / SOI_ERROR. Ambiguous (the filing is there but
++    the exhibit can't be uniquely resolved) and error are FAULTS the runner must surface — never silent
++    not-yets that re-fetch forever. Still never raises up the deferred-pass pipeline (countable-failure
++    discipline); the failure is reported via the reason, not an exception."""
+     try:
+         subs = client.submissions(int(cik))
+         soi = latest_soi(subs)
+         if soi is None:
+-            return None
++            return None, SOI_NOT_YET
+         index = client.filing_index(int(cik), soi["accession"])
+         doc = resolve_soi_document(index)
+         if doc is None:
+-            return None
++            return None, SOI_AMBIGUOUS  # the filing exists; the exhibit is ambiguous -> surface it
+         return SoiTarget(cik=int(cik), accession=soi["accession"], primary_doc=doc,
+-                         form=soi["form"], filing_date=soi["filing_date"])
++                         form=soi["form"], filing_date=soi["filing_date"]), SOI_RESOLVED
+     except Exception:
+-        return None
++        return None, SOI_ERROR
+ 
+ 
++def resolve_soi_target(cik: int, client: EdgarClient) -> SoiTarget | None:
++    """Resolve a fund's current SOI document coordinates (target only; see classify_soi_target for the
++    reason). Returns a `SoiTarget`, or None for any non-resolved outcome. Unchanged contract."""
++    target, _reason = classify_soi_target(cik, client)
++    return target
++
++
+ def _aggregate_class_ids(mf_data: list, idx: dict, cik: int, series_id: str) -> list[str]:
+     """All class ids for a (cik, series) in the MF map — multi-class funds aggregate, including
+     sibling classes listed under other symbols (§2). Order-preserving, de-duplicated."""
+--- a/prospector/ingest/prices.py
++++ b/prospector/ingest/prices.py
+@@ -82,7 +82,13 @@
+ # backoff (1s, 2s), retry only throttle/refusal statuses. Anything else is a real error, raised at once.
+ _MAX_ATTEMPTS = 3
+ _BACKOFF_BASE_SECONDS = 1.0
+-_RETRY_STATUSES = (429, 403)  # throttle/refusal — back off and retry; anything else is real
++_RETRY_STATUSES = (429, 500, 502, 503, 504)  # back off and retry; anything else is a real error.
++# N7: transient 5xx (502/503/504 behind a load balancer, plus 500) ARE retried — previously they
++#     raised on attempt 1 and silently dropped the ticker for the whole tick.
++# N4b: 403 is an auth/entitlement refusal (expired/invalid token) that never clears on retry, so it
++#     is NOT in this set — it raises at once.
++# N4a: 429 is retried for per-SECOND-capped sources (yahoo/stooq), but a per-HOUR-capped source
++#     (tiingo, 50/hr; _Source.hourly_cap) fails fast on 429 in _fetch_with_retry.
+ 
+ 
+ class PriceIngestError(Exception):
+@@ -110,6 +116,9 @@
+         "source": source,
+     })
+     frame = frame.dropna(subset=["date", "close_adj"])
++    # N3: a duplicate calendar date would give build_panel a non-unique index and let the outer
++    # join fabricate a cross-observation (§3). Latest row supersedes (append-only re-pull semantics).
++    frame = frame.drop_duplicates(subset=["date"], keep="last")
+     return frame.sort_values("date").reset_index(drop=True)
+ 
+ 
+@@ -241,13 +250,17 @@
+     url: Callable[[str, str, str], str]
+     parse: Callable[[bytes, str], pd.DataFrame]
+     headers: Callable[["PriceIngest"], dict] | None = None  # None -> _default_headers (browser UA)
++    hourly_cap: bool = False  # N4a: True when the source's binding rate cap is per-HOUR (tiingo,
++    # 50/hr) — a sub-second backoff cannot reopen the window, so a 429 fails fast (soft-fault to the
++    # next tick) instead of burning more of the budget. False (yahoo/stooq/SEC) keeps 429-retry.
+ 
+ 
+ _SOURCES = {
+     "yahoo": _Source(ext="json", url=_yahoo_url, parse=parse_yahoo),
+     "stooq": _Source(ext="csv", url=_stooq_url, parse=parse_stooq),
+     # The only source with custom headers: its token rides Authorization (see _tiingo_headers).
+-    "tiingo": _Source(ext="json", url=_tiingo_url, parse=parse_tiingo, headers=_tiingo_headers),
++    "tiingo": _Source(ext="json", url=_tiingo_url, parse=parse_tiingo, headers=_tiingo_headers,
++                      hourly_cap=True),
+ }
+ 
+ 
+@@ -340,7 +353,7 @@
+                 now = max(self._monotonic(), due)
+         self._last_start = now
+ 
+-    def _fetch_with_retry(self, url: str, headers: dict) -> bytes:
++    def _fetch_with_retry(self, url: str, headers: dict, *, hourly_cap: bool = False) -> bytes:
+         """Rate-limited fetch with exponential backoff on throttle/refusal statuses (mirrors
+         EdgarClient._get, minus the persist step — the freeze lives in `pull`, AFTER a successful
+         fetch, so a fetch that never succeeds leaves nothing frozen: fetch-fail stays distinct from
+@@ -351,6 +364,12 @@
+             try:
+                 return self._fetch(url, headers)
+             except PriceIngestError as e:
++                # N4a: a 429 on a per-HOUR-capped source (hourly_cap) cannot be cleared by a 1-2s
++                # backoff — each retry just spends another of the hourly budget. Fail fast so the ticker
++                # soft-faults to the next tick rather than hammering the window. A per-SECOND-capped
++                # source (yahoo/stooq) keeps the short-backoff 429 retry (429 is in _RETRY_STATUSES).
++                if e.status == 429 and hourly_cap:
++                    raise
+                 if e.status in _RETRY_STATUSES and attempt < _MAX_ATTEMPTS:
+                     self._sleep(_BACKOFF_BASE_SECONDS * 2 ** (attempt - 1))
+                     continue
+@@ -376,7 +395,8 @@
+         touches the URL or the frozen path."""
+         src = _source(source)
+         build_headers = src.headers or _default_headers
+-        body = self._fetch_with_retry(src.url(ticker, start, end), build_headers(self))
++        body = self._fetch_with_retry(src.url(ticker, start, end), build_headers(self),
++                                       hourly_cap=src.hourly_cap)
+         write_atomic(self.frozen_path(source, self._clock(), ticker), body)
+         return src.parse(body, ticker)
+ 
+--- a/prospector/runner/runlog.py
++++ b/prospector/runner/runlog.py
+@@ -41,6 +41,8 @@
+ def _ensure_table(registry: Registry) -> None:
+     """Create the runs table on the shared connection (idempotent). Kept out of registry.py so its
+     vendored DDL stays frozen — the resolution_queue / funds precedent."""
++    if getattr(registry, "readonly", False):
++        return  # N1: a read-only viewer never issues DDL/commit
+     registry.conn.executescript(_DDL)
+     registry.conn.commit()
+ 
+--- a/prospector/runner/runner.py
++++ b/prospector/runner/runner.py
+@@ -37,7 +37,8 @@
+ from prospector.fold.fold import active_nonshadow, fold, state_changed
+ from prospector.fold.snapshots import SnapshotConfig, should_snapshot, write_snapshot
+ from prospector.identity.resolution import ResolutionMachine
+-from prospector.ingest.edgar import latest_prospectus, prospectus_history, resolve_soi_target
++from prospector.ingest.edgar import (SOI_AMBIGUOUS, SOI_ERROR, SOI_NOT_YET, classify_soi_target,
++                                     latest_prospectus, prospectus_history, resolve_soi_target)
+ from prospector.ingest.prices import (PriceIngestError, build_panel, guard_live_source,
+                                        required_pull_start)
+ from prospector.ingest.prospectus import ProspectusIngest
+@@ -198,7 +199,16 @@
+     their CONTRACT positions, so follow-on wiring is additive and the order stays visible in code
+     (a test pins it). One ResolutionMachine (with a real FundRegistry) serves both launch and the
+     retries, so a retry that resolves can complete its registry entry."""
+-    retry_days = int((deps.cfg.get("identity") or {}).get("retry_days", 10))
++    # N6: the prologue must not run outside a fault boundary — a bad value here (e.g. a non-integer
++    # identity.retry_days typo) otherwise escapes to run_tick's backstop as ONE fatal `runner` fault
++    # and blinds the ENTIRE sensor phase (no ingest, no launch), the inverse of the per-unit
++    # granularity §9g promises. retry_days affects only the RETRY queue, never capture-first launch
++    # recording, so a bad value is a SCOPED `config` fault + fall back to the default — the phase runs.
++    try:
++        retry_days = int((deps.cfg.get("identity") or {}).get("retry_days", 10))
++    except (TypeError, ValueError) as e:
++        _emit_fault(store, "config.identity.retry_days", e, now, faults)
++        retry_days = 10  # default; the retry pass degrades, launch recording is unaffected
+     machine = ResolutionMachine(
+         deps.registry, store, FundRegistry(deps.layout, deps.registry, store),
+         deps.edgar_client, retry_days=retry_days, clock=lambda: now)
+@@ -515,9 +525,16 @@
+             entry = fund_registry.get(launch["series_id"])
+             if entry is None:
+                 continue  # no registry entry (cik/anchor) yet -> stays pending, re-attempted
+-            target = resolve_soi_target(int(entry.cik), deps.edgar_client)
++            target, reason = classify_soi_target(int(entry.cik), deps.edgar_client)
+             if target is None:
+-                continue  # NOT-YET: SOI unindexed / ambiguous exhibit -> stays sectors_unresolved
++                # N8: a genuine NOT-YET stays silent (re-attempt next cycle); an AMBIGUOUS exhibit or an
++                # ERROR is a FAULT — the filing IS there but unresolvable, so it must surface once for
++                # manual review, not silently re-fetch every tick for 180 days.
++                if reason in (SOI_AMBIGUOUS, SOI_ERROR):
++                    _emit_fault(store, f"soi.corroboration.{reason}",
++                                f"SOI target unresolvable for {launch['series_id']} (cik {entry.cik})",
++                                now, faults, lead=launch.get("lead"))
++                continue  # not-yet OR surfaced-fault: the launch stays sectors_unresolved
+             soi_sensor.scan(
+                 launch, target.accession, entry.name, active, soi, deps.cfg, now, store.append,
+                 fetch_body=lambda t=target: deps.edgar_client.filing_text(
+--- a/prospector/sensors/launch.py
++++ b/prospector/sensors/launch.py
+@@ -75,5 +75,8 @@
+         # Thread the DETECTED series id (I1): resolution keys on it, never re-derives which series the
+         # ticker means (matches[0] can pick wrong on a reused ticker — the HECO guarantee).
+         status = machine.register_launch(symbol, name_raw=None, detected_at=now, series_id=series_id)
+-        out[status].append(symbol)
++        # N2: 'recorded' is the idempotent no-op (this exact launch already in the fossil — a
++        # same-UTC-day re-tick); it neither resolved nor queued this pass, so it joins no bucket.
++        if status in out:
++            out[status].append(symbol)
+     return out
+--- a/prospector/store/registry.py
++++ b/prospector/store/registry.py
+@@ -57,8 +57,18 @@
+ 
+ 
+ class Registry:
+-    def __init__(self, db_path: Path):
++    def __init__(self, db_path: Path, readonly: bool = False):
++        # N1: a read-only surface (the §11 dashboard) must NEVER mutate the store. readonly=True opens
++        # the db immutably (mode=ro) and skips the WAL PRAGMA, the DDL executescript, and
++        # every commit — so merely viewing cannot flip journal_mode, create -wal/-shm sidecars, take a
++        # write lock that contends with the live runner, or crash on a genuinely read-only mount.
+         self.db_path = Path(db_path)
++        self.readonly = readonly
++        if readonly:
++            self.conn = sqlite3.connect(f"file:{self.db_path}?mode=ro",
++                                        uri=True, check_same_thread=False)
++            self.conn.row_factory = sqlite3.Row
++            return
+         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+         self.conn.row_factory = sqlite3.Row
+--- a/tests/test_dashboard_app.py
++++ b/tests/test_dashboard_app.py
+@@ -9,11 +9,15 @@
+ st_testing = pytest.importorskip("streamlit.testing.v1")
+ 
+ from prospector.runner.runlog import RunLog, write_run_log
++from prospector.identity.resolution import ResolutionMachine
+ from prospector.store.event_store import EventStore
+ 
+ 
+ def test_app_renders_all_panels_against_a_store(layout, registry, monkeypatch):
+     monkeypatch.setenv("STREAMLIT_BROWSER_GATHER_USAGE_STATS", "false")
++    # N1 fix precondition: a read-only viewer cannot create working tables, so seed them the
++    # way a runner tick does (resolution_queue via ResolutionMachine; runs via write_run_log).
++    ResolutionMachine(registry, EventStore(layout, registry), None, None)
+     store = EventStore(layout, registry)
+     # A live xcorr lead + a dormant launch + a fault + a run-log: something in every panel.
+     store.append({"ts": "2026-07-06T00:00:00Z", "lead": "xcorr-abc1234567", "type": "lead.spawned",
