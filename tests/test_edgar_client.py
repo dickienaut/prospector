@@ -143,6 +143,39 @@ def test_backoff_permanent_403_raises_typed_error_after_capped_retries():
     assert sleeps == [1.0, 2.0]
 
 
+def test_backoff_retries_transient_5xx_then_succeeds():
+    # N7 mirror: submissions/SOI are fetched every tick and had the identical gap — a transient 5xx must
+    # be retried, not dropped on attempt 1. RED before the edgar mirror (503 not in the retry set).
+    attempts = []
+
+    def flaky(url, headers):
+        attempts.append(url)
+        if len(attempts) == 1:
+            raise EdgarError("service unavailable", status=503)
+        return fixture_fetch(url, headers)
+
+    client, _, sleeps = make_client(flaky)
+    parsed = client.mf_tickers()
+    assert parsed["fields"] == ["cik", "seriesId", "classId", "symbol"]
+    assert len(attempts) == 2 and sleeps == [1.0]
+
+
+def test_backoff_retries_transport_error_status_none():
+    # A transport/timeout error becomes an EdgarError with status None (the httpx.HTTPError catch) — the
+    # retry loop must treat it as transient rather than let it escape mid-tick (N7 mirror).
+    attempts = []
+
+    def flaky(url, headers):
+        attempts.append(url)
+        if len(attempts) == 1:
+            raise EdgarError(f"GET {url} failed: ReadTimeout")  # status defaults to None
+        return fixture_fetch(url, headers)
+
+    client, _, sleeps = make_client(flaky)
+    client.mf_tickers()
+    assert len(attempts) == 2 and sleeps == [1.0]
+
+
 def test_non_retryable_status_raises_immediately():
     attempts = []
 

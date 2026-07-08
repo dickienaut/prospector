@@ -78,11 +78,20 @@ CALENDAR_PER_TRADING_DAY = 1.5
 
 TIDY_COLUMNS = ("date", "ticker", "close_adj", "source")
 
-# Fair-access retry policy — mirrors EdgarClient verbatim (ingest/edgar.py): 3 attempts, exponential
-# backoff (1s, 2s), retry only throttle/refusal statuses. Anything else is a real error, raised at once.
+# Fair-access retry policy: 3 attempts, exponential backoff (1s, 2s). The set below is corrected for a
+# real fetch, NOT copied verbatim from EdgarClient (whose SEC assumptions differ — see N4/N7):
+#  - N7: transient 5xx (500/502/503/504 — routine behind a load balancer) ARE retried; previously they
+#    raised on attempt 1 and silently dropped a ticker's column for the whole tick (a NaN §3 can't fill).
+#    Transport/timeout errors (a PriceIngestError with status None — the httpx.HTTPError catch) are also
+#    retried, same reason.
+#  - N4b: 403 is an auth/entitlement refusal (expired/invalid token) that never clears on retry — it is
+#    NOT in this set, so it raises at once.
+#  - N4a: 429 is retried for per-SECOND-capped sources (yahoo/stooq), but a per-HOUR-capped source
+#    (tiingo, 50/hr — `_Source.hourly_cap`) FAILS FAST on 429: a 1-2s backoff cannot reopen an hourly
+#    window and each retry just spends another of the budget (see _fetch_with_retry).
 _MAX_ATTEMPTS = 3
 _BACKOFF_BASE_SECONDS = 1.0
-_RETRY_STATUSES = (429, 403)  # throttle/refusal — back off and retry; anything else is real
+_RETRY_STATUSES = (429, 500, 502, 503, 504)  # back off and retry; anything else is a real error
 
 
 class PriceIngestError(Exception):
@@ -110,6 +119,11 @@ def _tidy(dates, closes, ticker: str, source: str) -> pd.DataFrame:
         "source": source,
     })
     frame = frame.dropna(subset=["date", "close_adj"])
+    # N3: a duplicate calendar date would give build_panel a non-unique DatetimeIndex, and the outer
+    # join would then BROADCAST a co-listed ticker's value onto both rows — a fabricated cross-observation
+    # (§3, no-fabrication). Latest row supersedes (append-only re-pull semantics: a same-day re-pull's
+    # newer print wins). build_panel keeps a loud is_unique backstop for any frame not built through here.
+    frame = frame.drop_duplicates(subset=["date"], keep="last")
     return frame.sort_values("date").reset_index(drop=True)
 
 
@@ -241,13 +255,17 @@ class _Source:
     url: Callable[[str, str, str], str]
     parse: Callable[[bytes, str], pd.DataFrame]
     headers: Callable[["PriceIngest"], dict] | None = None  # None -> _default_headers (browser UA)
+    hourly_cap: bool = False  # N4a: True when the binding rate cap is per-HOUR (tiingo, 50/hr) — a
+    # sub-second backoff cannot reopen the window, so a 429 fails fast (soft-fault to the next tick)
+    # rather than spending more of the budget. False (yahoo/stooq) keeps the per-second 429 retry.
 
 
 _SOURCES = {
     "yahoo": _Source(ext="json", url=_yahoo_url, parse=parse_yahoo),
     "stooq": _Source(ext="csv", url=_stooq_url, parse=parse_stooq),
     # The only source with custom headers: its token rides Authorization (see _tiingo_headers).
-    "tiingo": _Source(ext="json", url=_tiingo_url, parse=parse_tiingo, headers=_tiingo_headers),
+    "tiingo": _Source(ext="json", url=_tiingo_url, parse=parse_tiingo, headers=_tiingo_headers,
+                      hourly_cap=True),
 }
 
 
@@ -340,21 +358,28 @@ class PriceIngest:
                 now = max(self._monotonic(), due)
         self._last_start = now
 
-    def _fetch_with_retry(self, url: str, headers: dict) -> bytes:
-        """Rate-limited fetch with exponential backoff on throttle/refusal statuses (mirrors
-        EdgarClient._get, minus the persist step — the freeze lives in `pull`, AFTER a successful
-        fetch, so a fetch that never succeeds leaves nothing frozen: fetch-fail stays distinct from
-        parse-fail, §3). NEVER put `headers` in an exception message — it carries the tiingo token;
-        every raise here is URL-only."""
+    def _fetch_with_retry(self, url: str, headers: dict, *, hourly_cap: bool = False) -> bytes:
+        """Rate-limited fetch with exponential backoff on transient statuses (the freeze lives in
+        `pull`, AFTER a successful fetch, so a fetch that never succeeds leaves nothing frozen:
+        fetch-fail stays distinct from parse-fail, §3). NEVER put `headers` in an exception message —
+        it carries the tiingo token; every raise here is URL-only.
+
+        `hourly_cap` (N4a): on a per-HOUR-capped source a 429 fails fast (no retry) — a 1-2s backoff
+        can't reopen the window and each retry burns another of the budget; the ticker soft-faults to
+        the next tick instead. Retryable = the 5xx set OR a transport/timeout error (status None, N7)."""
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             self._throttle()
             try:
                 return self._fetch(url, headers)
             except PriceIngestError as e:
-                if e.status in _RETRY_STATUSES and attempt < _MAX_ATTEMPTS:
+                if e.status == 429 and hourly_cap:
+                    raise  # per-hour cap: don't spend more of the budget on a window a backoff can't reopen
+                # None = a transport/timeout error (the httpx.HTTPError catch) — transient, retry it (N7).
+                retryable = e.status in _RETRY_STATUSES or e.status is None
+                if retryable and attempt < _MAX_ATTEMPTS:
                     self._sleep(_BACKOFF_BASE_SECONDS * 2 ** (attempt - 1))
                     continue
-                if e.status in _RETRY_STATUSES:
+                if retryable:
                     raise PriceIngestError(f"GET {url} failed after {_MAX_ATTEMPTS} attempts "
                                            f"(HTTP {e.status})", status=e.status) from e
                 raise
@@ -376,7 +401,8 @@ class PriceIngest:
         touches the URL or the frozen path."""
         src = _source(source)
         build_headers = src.headers or _default_headers
-        body = self._fetch_with_retry(src.url(ticker, start, end), build_headers(self))
+        body = self._fetch_with_retry(src.url(ticker, start, end), build_headers(self),
+                                      hourly_cap=src.hourly_cap)
         write_atomic(self.frozen_path(source, self._clock(), ticker), body)
         return src.parse(body, ticker)
 
@@ -406,6 +432,12 @@ def build_panel(frames: list[pd.DataFrame]) -> pd.DataFrame:
         sources[ticker] = str(frame["source"].iloc[0])
         columns.append(frame.set_index("date")["close_adj"].rename(ticker))
     panel = pd.concat(columns, axis=1, join="outer").sort_index()
+    # N3 backstop: a non-unique date index makes the outer join broadcast values across the dup rows —
+    # a fabricated cross-observation (§3). `_tidy` already dedupes per source, so this fires only for a
+    # frame built some other way; fault as loudly as the duplicate-ticker guard rather than fabricate.
+    if not panel.index.is_unique:
+        dups = panel.index[panel.index.duplicated()].unique().tolist()
+        raise ValueError(f"duplicate dates in panel index (would fabricate a cross-observation): {dups}")
     panel.attrs["sources"] = sources
     return panel
 

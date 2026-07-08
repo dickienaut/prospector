@@ -96,7 +96,9 @@ def build_report(result: BacktestResult, sweep_results: list[BacktestResult],
 
     # Amended falsification (spec rev5 §10.5c): three criteria, replacing the retired "zero spawns".
     clean = crash_resid is not None and abs(crash_resid) < 0.2   # (i) β-strip clean in-crash
-    ac = (stress_validation or {}).get("acute_crises", [{}])[0]
+    # `or [{}]` (not a get-default): an acute_crises key that is present-but-EMPTY ([]) would make the
+    # get-default [{}] not apply, and [0] would IndexError. `or` catches both absent and empty.
+    ac = ((stress_validation or {}).get("acute_crises") or [{}])[0]
     ii_fires = bool(ac.get("fires"))                              # (ii) gate fires on the acute crisis
     ii_not_whole = bool(stress_validation and stress_validation.get("gate_not_whole_window"))
     cf = crash_falsification or {}

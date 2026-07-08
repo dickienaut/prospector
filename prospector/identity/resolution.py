@@ -26,6 +26,7 @@ concentration industries, which the live pipeline does not yet populate.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Mapping
@@ -94,8 +95,10 @@ class ResolutionMachine:
         self.retry_days = retry_days
         self._clock = clock if clock is not None else _utc_now
         # Owns its table on the shared connection; registry.py's DDL stays frozen.
-        registry.conn.executescript(_DDL)
-        registry.conn.commit()
+        # N1: a read-only surface (the dashboard's manual_queue view) must not issue DDL/commit.
+        if not getattr(registry, "readonly", False):
+            registry.conn.executescript(_DDL)
+            registry.conn.commit()
 
     # -- failure intake -----------------------------------------------------
 
@@ -156,13 +159,28 @@ class ResolutionMachine:
         day-one launch timestamp (lag integrity §4c). `detected_at` is carried verbatim through
         resolution and never replaced by resolution time.
 
-        Returns 'resolved' (completed this pass) or 'queued' (parked for retry-then-manual).
+        Returns 'resolved' (completed this pass), 'queued' (parked for retry-then-manual), or
+        'recorded' (N2: this exact launch is already in the fossil — a same-day re-tick no-op that
+        neither resolves nor queues, so the caller adds it to no bucket).
         """
         ticker = ticker.upper()
+        # N2: idempotent per FUND identity on a same-day re-tick. `_load_prior_mf_snapshot` diffs against
+        # dates strictly < today, so a second run of the same UTC day re-detects the identical launch —
+        # and `detected_at` is `now`, which MOVES run-to-run, so a (ticker, detected_at) key would NOT
+        # dedupe a real cron catch-up / operator re-run hours later. Key on series_id (the stable HECO
+        # identity): a launch already in the fossil is a no-op — no double-written launch.unverified, no
+        # re-enqueued resolution.failed. Fall back to ticker only for a ticker-only caller (series_id
+        # None). (O(n) in launch history per candidate — fine at cadence; bound the lookback if it grows.)
+        for row in self.registry.events_for_lead(SYSTEM_LEAD, "launch.unverified"):
+            prior = json.loads(row["payload"])
+            if series_id and prior.get("series_id") == series_id:
+                return "recorded"
+            if not series_id and prior.get("series_id") is None and prior.get("ticker") == ticker:
+                return "recorded"
         unverified = self.event_store.append({
             "ts": detected_at, "lead": SYSTEM_LEAD, "type": "launch.unverified",
             "payload": {"ticker": ticker, "name_raw": name_raw,
-                        "detected_at": detected_at},
+                        "detected_at": detected_at, "series_id": series_id},
             "schema": 1})
         result = (resolve_series(series_id, ticker, self.edgar_client) if series_id
                   else resolve_ticker(ticker, self.edgar_client))

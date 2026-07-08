@@ -75,5 +75,8 @@ def scan(current: dict, prior: dict, machine: ResolutionMachine,
         # Thread the DETECTED series id (I1): resolution keys on it, never re-derives which series the
         # ticker means (matches[0] can pick wrong on a reused ticker — the HECO guarantee).
         status = machine.register_launch(symbol, name_raw=None, detected_at=now, series_id=series_id)
-        out[status].append(symbol)
+        # N2: 'recorded' is the idempotent no-op (this exact launch already in the fossil — a same-UTC-day
+        # re-tick); it neither resolved nor queued this pass, so it joins no bucket.
+        if status in out:
+            out[status].append(symbol)
     return out

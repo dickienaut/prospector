@@ -232,7 +232,9 @@ def _spdr_url(ticker: str) -> str:
 
 
 _SOURCES = {
-    "spdr": _Source(ext="csv", url=_spdr_url, parse=parse_spdr_holdings),
+    # H2: the real SSGA daily file is xlsx (parse_spdr_holdings reads it as such), so ext must label the
+    # FROZEN fossil path correctly (.xlsx, not .csv) — a fossil-honesty fix, harmless to parsing.
+    "spdr": _Source(ext="xlsx", url=_spdr_url, parse=parse_spdr_holdings),
 }
 
 

@@ -152,3 +152,13 @@ def test_system_lead_accepted():
 def test_bad_schema_rejected(schema):
     with pytest.raises(EnvelopeError):
         validate(make_event(schema=schema))
+
+
+# -- S3: the lead regex rejects a trailing newline (\Z, not $) --------------------------------
+
+def test_lead_with_a_trailing_newline_rejected():
+    # `$` would admit "lead_abc\n" as a valid lead, letting a newline into a path component under
+    # events/ ; `\Z` anchors the true end of the string. The valid form still passes.
+    validate(make_event(lead="lead_abc"))  # no raise
+    with pytest.raises(EnvelopeError):
+        validate(make_event(lead="lead_abc\n"))

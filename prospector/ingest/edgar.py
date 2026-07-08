@@ -51,7 +51,11 @@ SOI_FORMS = ("NPORT-EX", "N-CSR", "N-CSRS")
 
 _MAX_ATTEMPTS = 3
 _BACKOFF_BASE_SECONDS = 1.0
-_RETRY_STATUSES = (429, 403)  # throttle/refusal — back off and retry; anything else is real
+# throttle/refusal (429/403 — SEC's cap is per-second, so a short backoff can clear them) PLUS transient
+# 5xx (N7 mirror: submissions/SOI are fetched every tick and had the identical gap — a routine 502/503/504
+# behind SEC's edge raised on attempt 1 and silently dropped the fetch). A transport/timeout error
+# (EdgarError status None — the httpx.HTTPError catch) is retried too. Anything else is a real error.
+_RETRY_STATUSES = (429, 403, 500, 502, 503, 504)
 
 
 class EdgarError(Exception):
@@ -120,7 +124,12 @@ class EdgarClient:
         self._last_start: float | None = None
 
     def _default_fetch(self, url: str, headers: dict) -> bytes:
-        resp = httpx.get(url, headers=headers, timeout=30.0, follow_redirects=True)
+        # N7 mirror: a transport/timeout error becomes an EdgarError with status None (URL-only), so the
+        # retry loop can treat it as transient rather than letting it escape uncaught mid-tick.
+        try:
+            resp = httpx.get(url, headers=headers, timeout=30.0, follow_redirects=True)
+        except httpx.HTTPError as e:
+            raise EdgarError(f"GET {url} failed: {type(e).__name__}") from None
         if resp.status_code != 200:
             raise EdgarError(f"GET {url} -> HTTP {resp.status_code}", status=resp.status_code)
         return resp.content
@@ -144,10 +153,12 @@ class EdgarClient:
             try:
                 body = self._fetch(url, headers)
             except EdgarError as e:
-                if e.status in _RETRY_STATUSES and attempt < _MAX_ATTEMPTS:
+                # None = a transport/timeout error (the httpx.HTTPError catch) — transient, retry it (N7).
+                retryable = e.status in _RETRY_STATUSES or e.status is None
+                if retryable and attempt < _MAX_ATTEMPTS:
                     self._sleep(_BACKOFF_BASE_SECONDS * 2 ** (attempt - 1))
                     continue
-                if e.status in _RETRY_STATUSES:
+                if retryable:
                     raise EdgarError(f"GET {url} failed after {_MAX_ATTEMPTS} attempts "
                                      f"(HTTP {e.status})", status=e.status) from e
                 raise
@@ -278,26 +289,46 @@ def resolve_soi_document(index: dict) -> str | None:
     return candidates[0] if len(candidates) == 1 else None
 
 
-def resolve_soi_target(cik: int, client: EdgarClient) -> SoiTarget | None:
-    """Resolve a fund's current SOI document coordinates: `submissions` -> `latest_soi` -> `filing_index`
-    -> `resolve_soi_document`. Returns a `SoiTarget`, or None when there is no SOI filing yet (a NOT-YET,
-    re-attempted next run — §9d) or the exhibit can't be uniquely resolved (the caller faults). Any
-    network/parse error becomes None, mirroring `resolve_ticker`'s countable-failure discipline: a
-    failure here must never raise up the deferred-pass pipeline. (Distinguishing not-yet from fault, and
-    the retry schedule, are the runner's job in step 3 / §9d — this only resolves coordinates.)"""
+# N8: the four outcomes the deferred SOI pass must be able to TELL APART. The old bare `None` collapsed
+# three of them — a genuine not-yet, an ambiguous exhibit (which the design says surface for manual
+# review), and a swallowed exception — into one indistinguishable value, so an ambiguous filing was
+# silently re-fetched every tick until the 180-day horizon and never surfaced. `classify_soi_target`
+# returns the reason; `resolve_soi_target` stays a thin target-only wrapper so its callers/tests are
+# unchanged. AMBIGUOUS and ERROR are FAULTS the runner surfaces; NOT_YET stays silent.
+SOI_RESOLVED = "resolved"      # coordinates found
+SOI_NOT_YET = "not_yet"        # no SOI filing indexed yet — silent, re-attempt next cycle
+SOI_AMBIGUOUS = "ambiguous"    # SOI filing EXISTS but its exhibit is not uniquely resolvable — FAULT
+SOI_ERROR = "error"            # a network/parse error — FAULT (never swallowed as a not-yet)
+
+
+def classify_soi_target(cik: int, client: EdgarClient) -> "tuple[SoiTarget | None, str]":
+    """Resolve a fund's SOI coordinates AND say WHICH outcome it is (N8): `(target, reason)` where
+    `reason` ∈ {SOI_RESOLVED, SOI_NOT_YET, SOI_AMBIGUOUS, SOI_ERROR}. Ambiguous (the filing is there but
+    the exhibit can't be uniquely resolved) and error are FAULTS the runner must surface — never silent
+    not-yets that re-fetch forever. Still never raises up the deferred-pass pipeline (countable-failure
+    discipline): a failure is reported via the reason, not an exception (a swallowed exception — e.g. a
+    submissions-shape change — becomes SOI_ERROR and surfaces, instead of masquerading as a not-yet)."""
     try:
         subs = client.submissions(int(cik))
         soi = latest_soi(subs)
         if soi is None:
-            return None
+            return None, SOI_NOT_YET
         index = client.filing_index(int(cik), soi["accession"])
         doc = resolve_soi_document(index)
         if doc is None:
-            return None
+            return None, SOI_AMBIGUOUS  # the filing exists; the exhibit is ambiguous -> surface it
         return SoiTarget(cik=int(cik), accession=soi["accession"], primary_doc=doc,
-                         form=soi["form"], filing_date=soi["filing_date"])
+                         form=soi["form"], filing_date=soi["filing_date"]), SOI_RESOLVED
     except Exception:
-        return None
+        return None, SOI_ERROR
+
+
+def resolve_soi_target(cik: int, client: EdgarClient) -> SoiTarget | None:
+    """Resolve a fund's current SOI document coordinates (target only; see `classify_soi_target` for the
+    reason a None carries). Returns a `SoiTarget`, or None for any non-resolved outcome. Unchanged
+    contract — kept for the ticker-only / test callers that don't need the reason."""
+    target, _reason = classify_soi_target(cik, client)
+    return target
 
 
 def _aggregate_class_ids(mf_data: list, idx: dict, cik: int, series_id: str) -> list[str]:

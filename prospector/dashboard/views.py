@@ -66,7 +66,12 @@ def rank_active_leads(states: Iterable[dict]) -> list[dict]:
     """The ranked active-leads panel: the LIVE leads (active, non-shadow — `active_nonshadow`, the same
     §8a/paging/digest filter), ranked recency × magnitude (newest spawn first, then larger |z|). This is
     where the wired xcorr (§4a) firings surface."""
-    live = active_nonshadow(list(states))
+    # N10: `off-thesis-real` is INERT — a real-but-macro/sector regime, deliberately set aside, whose home
+    # is the read-only `macro_catalog` context panel (CLAUDE.md: never a trade/tilt trigger). It must NEVER
+    # surface in the actionable "real evidence" list, or a viewer reads a macro lead as a live signal.
+    # `active_nonshadow` keys on status+shadow only (verdict is display-only in the fold), so the verdict
+    # is filtered here at the panel boundary — the lead stays visible in `macro_catalog`, just not here.
+    live = [s for s in active_nonshadow(list(states)) if s.get("verdict") != "off-thesis-real"]
     return sorted(live, key=lambda s: ((s.get("spawned_at") or ""), abs(s.get("latest_z") or 0.0)),
                   reverse=True)
 
