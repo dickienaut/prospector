@@ -32,12 +32,14 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from datetime import date
 
 from prospector.config import check_config_honesty
 from prospector.fold.fold import active_nonshadow, fold, state_changed
 from prospector.fold.snapshots import SnapshotConfig, should_snapshot, write_snapshot
 from prospector.identity.resolution import ResolutionMachine
-from prospector.ingest.edgar import latest_prospectus, prospectus_history, resolve_soi_target
+from prospector.ingest.edgar import (SOI_AMBIGUOUS, SOI_ERROR, classify_soi_target,
+                                     latest_prospectus, prospectus_history)
 from prospector.ingest.prices import (PriceIngestError, build_panel, guard_live_source,
                                        required_pull_start)
 from prospector.ingest.prospectus import ProspectusIngest
@@ -100,8 +102,18 @@ def _load_prior_mf_snapshot(layout, current_date: str):
     edgar_root = layout.root / "ingest" / "edgar"
     if not edgar_root.is_dir():
         return None
+
+    def _prior(name: str) -> bool:
+        # Parse the date rather than lexical-compare `name < current_date`: the ordering intent is
+        # explicit and safe against any non-YYYY-MM-DD dir (which is simply not a prior snapshot, never
+        # a crash). Lexical compare is correct only while every dir is ISO-dated — this makes it robust.
+        try:
+            return date.fromisoformat(name) < date.fromisoformat(current_date)
+        except ValueError:
+            return False
+
     dates = sorted(d.name for d in edgar_root.iterdir()
-                   if d.is_dir() and d.name < current_date
+                   if d.is_dir() and _prior(d.name)
                    and (d / "company_tickers_mf.json").is_file())
     if not dates:
         return None
@@ -121,8 +133,8 @@ def run_tick(deps: RunnerDeps) -> RunLog:
     """Execute ONE cadence tick in the CONTRACT run order (§9):
 
         1. config honesty (fossilize a config change BEFORE any sensor)   [subtle bit #1]
-        2. ingest            (§9a — thin spine: mf-tickers only)
-        3. sensors §4a-§4d   (thin spine: launch-recording WIRED; the rest are SLOTS)
+        2. ingest            (§9a — mf-tickers + the sector-price panel)
+        3. sensors §4a-§4d   (WIRED: launch §4c, xcorr §4a, mandate §4d, SOI corrob §9d; §4b dispersion SLOT)
         4. identity retries  (drain the retry-then-manual queue)
         5. capture           (no-op until M6)
         6. snapshots         (reactive materialization)
@@ -193,12 +205,22 @@ def run_tick(deps: RunnerDeps) -> RunLog:
 
 
 def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, runlog: RunLog) -> None:
-    """Run-order steps 2-5 (§9). Thin spine: mf-tickers ingest + launch-recording (§4c) are WIRED;
-    the structural (§4a/§4b) and accretion (§4d) sensors and the deferred passes (§9d) are SLOTS in
-    their CONTRACT positions, so follow-on wiring is additive and the order stays visible in code
-    (a test pins it). One ResolutionMachine (with a real FundRegistry) serves both launch and the
-    retries, so a retry that resolves can complete its registry entry."""
-    retry_days = int((deps.cfg.get("identity") or {}).get("retry_days", 10))
+    """Run-order steps 2-5 (§9). WIRED: mf-tickers + §9a prices ingest, launch recording (§4c), the §4a
+    xcorr spawner, the §4d mandate-diff accretion, and the §9d SOI-corroboration deferred pass. Still a
+    SLOT: the §4b dispersion spawner (needs the holdings/constituent-price vertical). The CONTRACT run
+    order stays visible in code (a test pins it). One ResolutionMachine (with a real FundRegistry) serves
+    both launch and the retries, so a retry that resolves can complete its registry entry.
+
+    N6: the prologue must not run outside a fault boundary — a bad value here (e.g. a non-integer
+    `identity.retry_days` typo) would otherwise escape to run_tick's single backstop as ONE fatal `runner`
+    fault and blind the ENTIRE sensor+ingest phase, the inverse of the per-unit granularity §9g promises.
+    `retry_days` affects only the RETRY queue, never capture-first launch recording, so a bad value is a
+    SCOPED `config` fault + fall back to the default — the phase still runs."""
+    try:
+        retry_days = int((deps.cfg.get("identity") or {}).get("retry_days", 10))
+    except (TypeError, ValueError) as e:
+        _emit_fault(store, "config.identity.retry_days", e, now, faults)
+        retry_days = 10  # the retry pass degrades to the default; launch recording is unaffected
     machine = ResolutionMachine(
         deps.registry, store, FundRegistry(deps.layout, deps.registry, store),
         deps.edgar_client, retry_days=retry_days, clock=lambda: now)
@@ -515,9 +537,17 @@ def _run_soi_corroboration(deps: RunnerDeps, store, now: str, faults: list, runl
             entry = fund_registry.get(launch["series_id"])
             if entry is None:
                 continue  # no registry entry (cik/anchor) yet -> stays pending, re-attempted
-            target = resolve_soi_target(int(entry.cik), deps.edgar_client)
+            target, reason = classify_soi_target(int(entry.cik), deps.edgar_client)
             if target is None:
-                continue  # NOT-YET: SOI unindexed / ambiguous exhibit -> stays sectors_unresolved
+                # N8: a genuine NOT-YET stays silent (re-attempt next cycle); an AMBIGUOUS exhibit or an
+                # ERROR is a FAULT — the filing IS there but unresolvable, so it must surface ONCE for
+                # manual review, not silently re-fetch every tick for 180 days (nor mask a real bug).
+                if reason in (SOI_AMBIGUOUS, SOI_ERROR):
+                    _emit_fault(store, f"soi.corroboration.{reason}",
+                                f"SOI target unresolvable ({reason}) for {launch['series_id']} "
+                                f"(cik {entry.cik}) — surface for manual review",
+                                now, faults, lead=launch.get("lead"))
+                continue  # not-yet OR surfaced-fault: the launch stays sectors_unresolved this tick
             soi_sensor.scan(
                 launch, target.accession, entry.name, active, soi, deps.cfg, now, store.append,
                 fetch_body=lambda t=target: deps.edgar_client.filing_text(

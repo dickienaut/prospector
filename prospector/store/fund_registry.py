@@ -28,8 +28,10 @@ from prospector.store.registry import Registry
 
 __all__ = ["SERIES_ID_RE", "CLASS_ID_RE", "IdentityError", "FundEntry", "FundRegistry"]
 
-SERIES_ID_RE = re.compile(r"^S\d{6,10}$")
-CLASS_ID_RE = re.compile(r"^C\d{6,10}$")
+# S3: `\Z` (end of string), NOT `$` — `$` also matches just before a trailing "\n", so "S000006415\n"
+# would slip through the HECO identity gate. `\Z` rejects the trailing newline.
+SERIES_ID_RE = re.compile(r"^S\d{6,10}\Z")
+CLASS_ID_RE = re.compile(r"^C\d{6,10}\Z")
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS funds (

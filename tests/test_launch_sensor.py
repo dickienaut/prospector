@@ -95,9 +95,11 @@ def test_scan_records_then_immediately_resolves_a_known_fund(machine, event_stor
     out = scan(MF, _without(MF, "HECO"), machine, NOW)
     assert out == {"resolved": ["HECO"], "queued": []}
 
-    # Phase one: the detection timestamp is in the record on _system, keying no lead.
+    # Phase one: the detection timestamp is in the record on _system, keying no lead. The payload now
+    # carries series_id (N2: the stable HECO key the same-day-re-tick idempotency dedups on).
     (unv,) = event_store.read_system(type="launch.unverified")
-    assert unv.payload == {"ticker": "HECO", "name_raw": None, "detected_at": NOW}
+    assert unv.payload == {"ticker": "HECO", "name_raw": None, "detected_at": NOW,
+                           "series_id": "S000087750"}
     assert unv.ts == NOW
     (unv_row,) = registry.events_for_lead(SYSTEM_LEAD, "launch.unverified")
 

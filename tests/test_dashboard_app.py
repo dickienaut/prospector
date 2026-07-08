@@ -8,12 +8,19 @@ import pytest
 
 st_testing = pytest.importorskip("streamlit.testing.v1")
 
+from prospector.identity.resolution import ResolutionMachine
 from prospector.runner.runlog import RunLog, write_run_log
 from prospector.store.event_store import EventStore
 
 
 def test_app_renders_all_panels_against_a_store(layout, registry, monkeypatch):
     monkeypatch.setenv("STREAMLIT_BROWSER_GATHER_USAGE_STATS", "false")
+    # N1 fix precondition: a read-only viewer cannot create working tables, so seed them the way a
+    # runner tick does (resolution_queue via the ResolutionMachine _run_sensors constructs; runs via
+    # write_run_log) while the fixture store is still writable — else the read-only dashboard would hit
+    # `no such table: resolution_queue`. (The old smoke passed only because the buggy read-write viewer
+    # created the table on the fly — a test that passed for the wrong reason.)
+    ResolutionMachine(registry, EventStore(layout, registry), None, None)
     store = EventStore(layout, registry)
     # A live xcorr lead + a dormant launch + a fault + a run-log: something in every panel.
     store.append({"ts": "2026-07-06T00:00:00Z", "lead": "xcorr-abc1234567", "type": "lead.spawned",

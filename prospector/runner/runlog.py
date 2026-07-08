@@ -41,6 +41,8 @@ CREATE INDEX IF NOT EXISTS idx_runs_date ON runs(date, run_id);
 def _ensure_table(registry: Registry) -> None:
     """Create the runs table on the shared connection (idempotent). Kept out of registry.py so its
     vendored DDL stays frozen — the resolution_queue / funds precedent."""
+    if getattr(registry, "readonly", False):
+        return  # N1: a read-only viewer (recent_runs on the dashboard) never issues DDL/commit
     registry.conn.executescript(_DDL)
     registry.conn.commit()
 

@@ -454,6 +454,16 @@ def test_build_panel_duplicate_ticker_raises():
         build_panel([a, b])
 
 
+def test_build_panel_faults_on_duplicate_dates():
+    # N3 backstop: a frame NOT built through _tidy (so undeduped) with a duplicate date must fault
+    # LOUDLY — the outer join would otherwise broadcast a co-listed value onto both rows, fabricating a
+    # cross-observation (§3). As hard as the duplicate-ticker guard.
+    dup = pd.DataFrame({"date": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+                        "ticker": "XLK", "close_adj": [100.0, 101.0], "source": "tiingo"})
+    with pytest.raises(ValueError, match="duplicate dates"):
+        build_panel([dup])
+
+
 # -- P1 guard: Stooq fails closed as a live source until verified --------------
 
 def test_guard_live_source_allows_yahoo():

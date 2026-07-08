@@ -1,6 +1,12 @@
 """Registry: WAL-mode index over the envelope, (lead, ts, type) indexed, fold order stable,
 upload bookkeeping and meta round-trip (spec §5/§7, CONTRACT)."""
 
+import sqlite3
+
+import pytest
+
+from prospector.store.registry import Registry
+
 
 def _insert(registry, event_id, ts, *, lead="lead_a", type="xcorr.tick"):
     return registry.insert_event(
@@ -61,3 +67,37 @@ def test_meta_get_set_round_trip(registry):
     assert registry.get_meta("config_hash") == "def456"
     # __init__ stamped the schema version
     assert registry.get_meta("schema_version") == "1"
+
+
+# -- N1: the read-only firewall at the substrate ---------------------------------------------
+
+def test_readonly_registry_refuses_writes(registry, layout):
+    # A read-only Registry (the §11 dashboard's connection) must not be able to mutate the store —
+    # the firewall enforced by the substrate, not a comment.
+    ro = Registry(layout.registry_path(), readonly=True)
+    try:
+        assert ro.readonly is True
+        with pytest.raises(sqlite3.OperationalError):
+            ro.conn.execute("CREATE TABLE _x (a)")
+            ro.conn.commit()
+    finally:
+        ro.close()
+
+
+def test_readonly_registry_sees_fresh_wal_writes(registry, layout):
+    # The design-thread freshness catch: the live viewer opens mode=ro (WAL-readable), NOT immutable=1,
+    # so it must see the runner's LATEST committed writes — or it silently renders stale state, its own
+    # quiet dishonesty. Prove it end-to-end: a mode=ro Registry, re-queried after the writable
+    # connection commits a NEW event to the WAL store, sees it. (immutable=1 would fail this — it tells
+    # SQLite the file never changes and would miss the un-checkpointed WAL write.)
+    _insert(registry, "aa", "2026-07-14T13:00:00Z")  # committed to the WAL
+    ro = Registry(layout.registry_path(), readonly=True)
+    try:
+        assert [r["event_id"] for r in ro.events_for_lead("lead_a")] == ["aa"]
+        _insert(registry, "bb", "2026-07-14T13:00:01Z")  # a fresh tick's write, committed
+        ids = [r["event_id"] for r in ro.events_for_lead("lead_a")]
+        assert ids == ["aa", "bb"], (
+            f"the mode=ro viewer did not see a freshly-committed WAL write ({ids}) — it is showing "
+            "stale state. mode=ro must be WAL-readable; immutable=1 would cause exactly this (N1)")
+    finally:
+        ro.close()

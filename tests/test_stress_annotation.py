@@ -208,3 +208,21 @@ def test_aging_monitor_uses_calm_regime_p95_excluding_crisis_days():
     # A naive all-days p95 over the same recent window WOULD be inflated by the 0.95 days.
     naive_p95 = float(level.iloc[-504:].quantile(0.95))
     assert naive_p95 > ag["calm_p95"]
+
+
+# -- report.py: an empty acute_crises list must not IndexError -------------------------------
+
+def test_build_report_tolerates_empty_acute_crises():
+    # report.py:99 read `.get("acute_crises", [{}])[0]` — a get-DEFAULT that does NOT apply when the key
+    # is present-but-EMPTY ([]), so [0] IndexError'd. The `or [{}]` guard covers both absent and empty.
+    from pathlib import Path
+
+    from prospector.backtest.report import build_report
+    from prospector.backtest.runner import BacktestResult
+    from prospector.config import load_config
+
+    cfg, _ = load_config(str(Path(__file__).parent.parent / "config" / "prospector.yaml"))
+    result = BacktestResult(from_date="2020-01-01", to_date="2020-12-31", z_in=2.5, z_out=1.0,
+                            firings=[], stressed_departures=[], stress_days=[])
+    report = build_report(result, [], [], {}, cfg, stress_validation={"acute_crises": []})
+    assert isinstance(report, dict)  # built without an IndexError on the empty acute_crises list

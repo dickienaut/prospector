@@ -27,7 +27,10 @@ from prospector.store.event_store import EventStore
 from prospector.store.layout import StoreLayout
 from prospector.store.registry import Registry
 
-_CONFIG_PATH = Path("config") / "prospector.yaml"
+# N5: env-overridable + existence-guarded, mirroring _STORE_PATH — a scheduled/container launch from any
+# CWD must get the config via PROSPECTOR_CONFIG or a legible message, never a raw FileNotFoundError from a
+# bare relative path (the store path already degrades gracefully; the config path lacked the symmetry).
+_CONFIG_PATH = os.environ.get("PROSPECTOR_CONFIG", str(Path("config") / "prospector.yaml"))
 _STORE_PATH = os.environ.get("PROSPECTOR_STORE", "./store")
 
 
@@ -53,12 +56,18 @@ def main() -> None:
                    "`PROSPECTOR_STORE`.")
         return
 
+    if not Path(_CONFIG_PATH).is_file():
+        st.warning(f"No config at `{_CONFIG_PATH}` — set `PROSPECTOR_CONFIG` to the config file, or "
+                   "launch from the repo root (`config/prospector.yaml`).")
+        return
     cfg, _ = load_config(_CONFIG_PATH)
     ceiling = int((cfg.get("oracle") or {}).get("active_lead_ceiling", 8))
     shadow_days = int((cfg.get("dispersion") or {}).get("shadow_days", 90))
     now = _now()
 
-    registry = Registry(layout.registry_path())
+    # N1: the §11 read-only firewall, enforced at the substrate — a mode=ro connection that issues no
+    # WAL PRAGMA / DDL / commit, so merely viewing cannot mutate the store the runner owns.
+    registry = Registry(layout.registry_path(), readonly=True)
     try:
         states = views.fold_all_leads(registry)
         runs = recent_runs(registry)

@@ -135,3 +135,13 @@ def test_category_draft_confined_to_the_entry_container():
     # ...and NOTHING else does: no lookup, validation, diff, or DDL logic reads it.
     assert "category_draft" not in module_src.replace(entry_src, "")
     assert "category_draft" not in inspect.getsource(FundRegistry)
+
+
+# -- S3: the id regexes reject a trailing newline (\Z, not $) ---------------------------------
+
+def test_series_and_class_id_regexes_reject_a_trailing_newline():
+    from prospector.store.fund_registry import CLASS_ID_RE, SERIES_ID_RE
+    # `$` would admit "S000006415\n"; `\Z` anchors the true end, so a newline-bearing id never passes the
+    # HECO identity gate (nor lands as a path component).
+    assert SERIES_ID_RE.match("S000006415") and not SERIES_ID_RE.match("S000006415\n")
+    assert CLASS_ID_RE.match("C000019213") and not CLASS_ID_RE.match("C000019213\n")

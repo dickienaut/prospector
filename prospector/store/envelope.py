@@ -21,7 +21,9 @@ FIELDS = ("ts", "lead", "type", "payload", "schema")
 SYSTEM_LEAD = "_system"
 
 # Leads become directory components under events/ and snapshots/ — keep them path-safe.
-_LEAD_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]*$")
+# S3: `\Z`, not `$` — `$` also matches before a trailing "\n", which would admit a lead id with an
+# embedded newline into a path component; `\Z` anchors the true end of string.
+_LEAD_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]*\Z")
 
 
 class EnvelopeError(ValueError):

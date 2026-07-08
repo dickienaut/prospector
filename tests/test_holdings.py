@@ -131,7 +131,7 @@ def test_pull_freezes_before_parse_then_round_trips(layout):
     frame = ingest.pull(XLK_SERIES, "XLK")
 
     # Frozen under ingest/holdings/{series_id}/{date}/ — keyed on the SERIES ID, not the ticker.
-    frozen = layout.holdings_path(XLK_SERIES, "2026-07-02", "XLK.csv")
+    frozen = layout.holdings_path(XLK_SERIES, "2026-07-02", "XLK.xlsx")  # H2: ext labels the fossil xlsx
     assert frozen.exists()
     assert frozen.read_bytes() == body  # byte-exact freeze (§3)
     # Fetched by ticker (the SPDR URL is a display attribute); freeze/key by series id.
@@ -148,7 +148,7 @@ def test_pull_freezes_even_when_body_is_corrupt(layout):
                             clock=_fixed_clock("2026-07-02"))
     with pytest.raises(HoldingsIngestError):
         ingest.pull(XLK_SERIES, "XLK")
-    frozen = layout.holdings_path(XLK_SERIES, "2026-07-02", "XLK.csv")
+    frozen = layout.holdings_path(XLK_SERIES, "2026-07-02", "XLK.xlsx")  # H2: ext labels the fossil xlsx
     assert frozen.exists()
     assert frozen.read_bytes() == corrupt  # the postmortem substrate survives the parse failure
 

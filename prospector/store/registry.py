@@ -57,8 +57,26 @@ CREATE TABLE IF NOT EXISTS meta (
 
 
 class Registry:
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, readonly: bool = False):
+        """`readonly=True` opens the store for a READ-ONLY surface (the §11 dashboard, N1). It must
+        NEVER mutate the store, so it opens the db `mode=ro` and skips the WAL PRAGMA, the DDL
+        `executescript`, and every commit — merely viewing then cannot flip `journal_mode`, create
+        -wal/-shm sidecars, take a write lock that contends with the live runner, or crash on a
+        genuinely read-only mount. The read-write path (the runner) is unchanged.
+
+        `mode=ro` — deliberately NOT `mode=ro&immutable=1`. `mode=ro` is WAL-READABLE: on the live
+        (writable-dir) store it sees the runner's latest un-checkpointed writes, so the viewer never
+        shows stale state. `immutable=1` tells SQLite the file never changes — it would miss those WAL
+        writes (a quietly-dishonest stale viewer) and is unsafe against the live runner; it belongs only
+        to a checkpointed read-only-MEDIA deploy, which is a documented, deferred precondition (M7)."""
         self.db_path = Path(db_path)
+        self.readonly = readonly
+        if readonly:
+            # No mkdir, no PRAGMA, no DDL, no commit — a pure reader over the fossil record.
+            self.conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True,
+                                        check_same_thread=False)
+            self.conn.row_factory = sqlite3.Row
+            return
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
