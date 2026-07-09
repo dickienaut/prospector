@@ -1,8 +1,9 @@
 """Holdings ingest — freeze the constituent substrate (spec §3, §4d). The keystone: it unblocks
 dispersion (§4b), rebalance (§4d), and the launch corroboration slice (§4c).
 
-The live feed is the issuer daily holdings file (SPDR publishes a per-ticker CSV of a Select Sector
-fund's constituents + weights); the quarterly EDGAR NPORT-P is the authoritative cross-check and the
+The live feed is the issuer daily holdings file (SPDR publishes a per-ticker xlsx of a Select Sector
+fund's constituents + weights — the real SSGA format; see below); the quarterly EDGAR NPORT-P is the
+authoritative cross-check and the
 point-in-time historical record (that parser is a deferred thin signature here — see
 parse_nport_holdings and docs/decisions/2026-07-03-dispersion-shadow-first.md).
 

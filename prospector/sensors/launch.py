@@ -31,14 +31,14 @@ deferred enrichment, not a correctness gap.
 The two-phase RECORDING lives in `ResolutionMachine.register_launch` (`resolution.py`), which owns
 the event emission, the resolve, and the retry queue. This module is the detector + per-day driver.
 
-DEFERRED — the DEFINED next slice, not an open-ended "v-later" (see
-`docs/decisions/2026-07-03-launch-sensor-capture-first.md`): the corroboration hook, and a launch's
-concentration derived FROM ITS FIRST HOLDINGS (not prospectus prose) — built and jointly tested so
-the hook is never shipped without the live input it consumes. Its named unblock is holdings ingest
-(§4d, this milestone): holdings give the fund's actual sectors (ground truth — look-through is
-truth, and HECO is the standing proof a *stated* identity can be categorically wrong), so
-corroboration becomes a direct sector-set overlap with a live lead's baskets. Until that lands, the
-live launch carries no concentration industries and the hook cannot honestly fire.
+BUILT (this was the DEFINED next slice; see
+`docs/decisions/2026-07-03-launch-sensor-capture-first.md`): the corroboration hook
+(`sensors/launch_corroboration.py`) derives a launch's concentration FROM ITS FIRST HOLDINGS (not
+prospectus prose) — look-through is truth, and HECO is the standing proof a *stated* identity can be
+categorically wrong — and does a direct sector-set overlap with a live lead's baskets. Its input is
+wired live via the §4c SOI resolver (`sensors/soi.py`), which resolves the `sectors_unresolved`
+launches this detector records; the holdings-source overlap awaits the holdings/constituent vertical.
+The lag it yields is bounded by that coverage — an existence proof, not yet a rate.
 """
 
 from __future__ import annotations
