@@ -119,7 +119,8 @@ soi:
   # against real TEKX NPORT-EX (2025-07-31 + 2026-01-31); the reconcile check already earned its keep by
   # catching a mixed-case "Specialized REITs" the first regex dropped.
   #
-  # LIVE FETCH IS DEFERRED (M5, tied to EdgarClient) — see the decision doc. These are the READER knobs.
+  # LIVE FETCH is WIRED in the M5 runner (`_run_soi_corroboration` resolves the accession/doc via
+  # EdgarClient) — see the decision doc. These are the READER knobs.
   forms: [NPORT-EX, N-CSR, N-CSRS]      # forms that render the grouped SOI (the real TEKX docs are NPORT-EX)
   section_header: schedule of investments   # per-fund SOI title line (matches "CONSOLIDATED SCHEDULE ..." too)
   common_stocks_header: common stocks       # the equity-block start header ("COMMON STOCKS — N%")
