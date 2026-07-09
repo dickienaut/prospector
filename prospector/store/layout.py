@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from prospector.store.envelope import parse_ts
@@ -33,13 +34,34 @@ def ts_compact(ts: str) -> str:
     wall-clock second produce DISTINCT compact forms. Without this the runner's reactive policy could
     snapshot one lead twice in the same second (a state change), both would map to
     `snapshots/{lead}/{ts}.json`, and the second write would hit write_snapshot's divergence check ->
-    SnapshotDivergenceError aborts the run. The form stays filename-safe (digits + `T`/`_`/`Z`, no colon)
-    and one-way (never parsed back), so appending is lossless without changing the whole-second form."""
+    SnapshotDivergenceError aborts the run. The form stays filename-safe (digits + `T`/`_`/`Z`, no
+    colon) and losslessly REVERSIBLE — `ts_from_compact` (below) is its inverse. Appending microseconds
+    never changes the whole-second form, so old whole-second filenames still round-trip."""
     dt = parse_ts(ts)
     base = dt.strftime("%Y%m%dT%H%M%S")
     if dt.microsecond:
         base += f"_{dt.microsecond:06d}"
     return base + "Z"
+
+
+def ts_from_compact(stem: str) -> str:
+    """Inverse of `ts_compact`: a compact snapshot-filename stem -> its ISO-8601 UTC `ts`.
+    `20260714T130000Z` -> `2026-07-14T13:00:00Z`; the sub-second form `20260714T130000_123456Z`
+    -> `2026-07-14T13:00:00.123456Z`. Raises ValueError on a stem that is not a compact ts, so
+    `pros store reindex` counts a foreign/garbage file as skipped (never a crash).
+
+    ts_compact and ts_from_compact MUST stay inverses: a reactive snapshot's filename is the ONLY
+    carrier of its ts — write_snapshot stores the fold state in the file, never the ts — so reindex
+    reconstructs it here. Keeping the two together is deliberate: the inverse was once missing while
+    ts_compact grew the sub-second form, and reindex silently skipped every sub-second snapshot."""
+    if not stem.endswith("Z"):
+        raise ValueError(f"not a compact ts (no trailing Z): {stem!r}")
+    whole, sep, micro = stem[:-1].partition("_")
+    dt = datetime.strptime(whole, "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+    if sep:  # sub-second form: 6-digit microseconds after the underscore (int() range-checks 0..999999)
+        dt = dt.replace(microsecond=int(micro))
+        return dt.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    return dt.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 class StoreLayout:

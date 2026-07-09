@@ -24,10 +24,8 @@ from typing import Iterator
 
 from prospector.primitives.atomic import sha256_file
 from prospector.store.envelope import canonical_json, validate
-from prospector.store.layout import StoreLayout
+from prospector.store.layout import StoreLayout, ts_from_compact
 from prospector.store.registry import Registry
-
-_COMPACT_TS = "%Y%m%dT%H%M%SZ"  # layout.ts_compact's filename form
 
 
 def rebuild_registry(layout: StoreLayout, registry: Registry) -> dict:
@@ -91,14 +89,17 @@ def _index_snapshot(layout: StoreLayout, registry: Registry, path: Path) -> bool
     if path.suffix != ".json" or path.parent == layout.snapshots_root():
         return False  # a snapshot lives one level down: its parent directory is the lead
     try:
-        ts = datetime.strptime(path.stem, _COMPACT_TS).replace(tzinfo=timezone.utc)
+        # The stem is the ONLY carrier of a snapshot's ts (the file holds the fold state, no ts) —
+        # recover it via layout.ts_from_compact, which parses BOTH the whole-second and sub-second
+        # forms (a garbage/foreign stem raises ValueError -> skipped, never a crash).
+        ts = ts_from_compact(path.stem)
         content = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     reason = content.get("reason") if isinstance(content, dict) else None
     lead = path.parent.name
     registry.insert_snapshot(
-        snapshot_id=f"{lead}:{path.stem}", lead=lead, ts=_iso_utc(ts),
+        snapshot_id=f"{lead}:{path.stem}", lead=lead, ts=ts,
         reason=reason if isinstance(reason, str) else "reindexed",
         file_path=path.relative_to(layout.root).as_posix(), sha256=sha256_file(path))
     return True

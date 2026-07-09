@@ -103,6 +103,28 @@ def test_reindex_falls_back_to_reindexed_without_embedded_reason(layout, registr
     assert registry.latest_snapshot("ld_legacy")["reason"] == "reindexed"
 
 
+def test_reindex_indexes_subsecond_snapshot_stems(layout, registry):
+    """ts_compact emits a sub-second filename (`…_ffffffZ`) when two snapshots land in the same
+    wall-clock second; reindex must round-trip it via `ts_from_compact`, not skip it. Regression:
+    the inverse was missing, so parsing the stem as whole-second-only (`%Y%m%dT%H%M%SZ`) threw on the
+    sub-second form and the `except` silently counted it `skipped` — the stem is the ONLY carrier of a
+    snapshot's ts, so a skipped sub-second snapshot is lost from a rebuilt index."""
+    ts = "2026-07-02T00:00:00.123456Z"
+    write_snapshot(layout, registry, "ld_sub", {"status": "active", "event_count": 1},
+                   "state_change", ts)
+    original = _record_rows(registry, "snapshots", SNAPSHOT_RECORD_COLUMNS)
+
+    fresh = _fresh_registry(layout, registry)
+    try:
+        counts = rebuild_registry(layout, fresh)
+        assert counts == {"events_indexed": 0, "snapshots_indexed": 1, "skipped": 0}
+        assert _record_rows(fresh, "snapshots", SNAPSHOT_RECORD_COLUMNS) == original
+        # microseconds survive the filename round-trip (ts_compact -> stem -> ts_from_compact)
+        assert fresh.latest_snapshot("ld_sub")["ts"] == ts
+    finally:
+        fresh.close()
+
+
 # -- INSERT OR IGNORE: reindex never clobbers a live registry ----------------------
 
 def test_reindex_into_live_registry_preserves_original_bookkeeping(populated, layout,
