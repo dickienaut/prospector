@@ -13,8 +13,9 @@ through real code — T1 a real structural spawn, T2 a real launch whose concent
 not supplied.
 
 WHAT THE CAPSTONE TELLS US — the binding constraint is HOLDINGS COVERAGE, not the hook. `ingest/
-holdings.py` parses SPDR CSVs only, so for a launch outside the SPDR family the lag is *structurally
-unmeasurable*, not merely absent — `holdings_unavailable → dormant`, the honest MAJORITY case today
+holdings.py` parses the SPDR family only (the SSGA daily xlsx), so for a launch outside that family the
+lag is *structurally unmeasurable*, not merely absent — `holdings_unavailable → dormant`, the honest
+MAJORITY case today
 (the launch-side twin of `fault`-on-unreliable-extraction; the dormant pile is the map of what the
 tool can't yet see). The measured lag is therefore an EXISTENCE PROOF, not yet a rate. Widening
 intake (per-issuer parsers / NPORT-P) is the named next slice — not here.
@@ -24,7 +25,9 @@ TIMING (deferred, not fired at launch time). A fund's first holdings post DAYS a
 empty sector set and silently never fire. So `corroborate` is a DEFERRED, re-attempted pass: the
 launch is recorded dormant at detection (built), and when its first holdings land this runs and
 reaches back, preserving the original `detected_at` as T2. It is *called with* holdings; it never
-assumes they exist. The runner (M5+) owns the retry-until-holdings-land scheduling.
+assumes they exist. The M5 runner owns the retry scheduling (built): its §9d pass re-attempts each
+`sectors_unresolved` launch within the retry horizon — wired live for the SOI-source resolver
+(`sensors/soi.py`); the holdings-source `corroborate` retry awaits the holdings/constituent vertical.
 
 A corroborating launch ACCRETES onto the existing lead — it NEVER spawns one (rev7: launches aren't
 lead-spawners; no ceiling slot). The lag is SIGNED: negative (packaging beat structure) is honest

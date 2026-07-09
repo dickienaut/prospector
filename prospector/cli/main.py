@@ -1,13 +1,15 @@
-"""Verdict CLI + identity queue + store repair (spec §8c).
+"""Verdict CLI + identity queue + store repair + the cadence runner (spec §8c/§9).
 
-Every surface here is a read of the store except three writers: `pros verdict` (a new verdict
+Every surface here is a read of the store except four writers: `pros verdict` (a new verdict
 event — a changed mind supersedes via `superseded_by`, never an edit), `pros identity resolve`
 (the §2 manual-resolution queue's human path — an EDGAR-verified registry entry plus its
 `identity.resolved` and completing `launch` events; it records a human judgment, it computes
-nothing) and `pros store reindex` (rebuilds the index from the fossil record; it computes
-nothing new, so it is repair, not run-now). Deliberately absent (CLAUDE.md, no-run-now
-CONTRACT): no run-now command, no capture trigger, no recompute-on-demand of any kind — the
-command tree itself is pinned by test.
+nothing), `pros store reindex` (rebuilds the index from the fossil record; it computes nothing
+new, so it is repair, not run-now), and `pros run` (one §9 cadence tick — the heaviest writer,
+but cron invokes it; it is NOT an on-demand recompute). (`pros backtest` also writes, but only
+to its own separate `backtest/` store, never the live record.) Deliberately absent (CLAUDE.md,
+no-run-now CONTRACT): no run-now command, no capture trigger, no recompute-on-demand of any
+kind — the command tree itself is pinned by test.
 """
 
 from __future__ import annotations

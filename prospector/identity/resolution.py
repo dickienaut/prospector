@@ -17,11 +17,11 @@ resolution time — a fund that takes nine days to resolve must not get a launch
 days late. `launch_lag` reads ONLY that field and raises KeyError rather than fall back.
 
 Two-phase intake lives in `register_launch` (the launch sensor's per-candidate entry point,
-`sensors/launch.py`); the completing `launch` lands on `_system`. Routing it onto overlapping
-live leads — the corroboration hook, and with it the live cross-stream lag — is the DEFINED next
-slice (holdings-derived concentration + hook, built and tested together; see
-`docs/decisions/2026-07-03-launch-sensor-capture-first.md`), because that hook keys on a launch's
-concentration industries, which the live pipeline does not yet populate.
+`sensors/launch.py`); the completing `launch` lands on `_system`. Routing it onto overlapping live
+leads — the corroboration hook, and with it the live cross-stream lag — is BUILT elsewhere
+(`sensors/launch_corroboration.py` + the §9d SOI-corroboration retry the runner drives; see
+`docs/decisions/2026-07-03-launch-sensor-capture-first.md`), reaching back over the launches this
+machine records. This module owns only the identity lifecycle; it does not route.
 """
 
 from __future__ import annotations
