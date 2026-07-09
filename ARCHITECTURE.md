@@ -1,8 +1,11 @@
 # Prospector — Architecture
 
-*A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev12-2026-07-03.md`
-for the canonical "what to build," and `docs/decisions/` for the "why we changed our minds." Last
-updated after the launch sensor's detection + two-phase recording slice (milestone 4).*
+*A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev14-2026-07-08.md`
+for the canonical "what to build," `docs/project-prospector-state-of-project-rev5-2026-07-08.md` for
+the status/roadmap source of truth, and `docs/decisions/` for the "why we changed our minds." Last
+updated after the **M5 runner arc + going-live (N1–N10) hardening**: the runner is built and the
+system is **live and firing** — a real `pros run` fired 5 xcorr leads on the SPDR grid — but it is
+still **n=1 and unfalsified** (falsifiability is demonstrated; a rate and profitability are not).*
 
 ---
 
@@ -33,7 +36,7 @@ path places, sizes, or recommends a trade.
 
 ## 2. Module map
 
-~5,300 lines of Python, 470 tests (offline). Packages under `prospector/`:
+~7,400 lines of Python, 499 tests (offline). Packages under `prospector/`:
 
 | Package / module | Responsibility | Key entry points |
 |---|---|---|
@@ -49,9 +52,9 @@ path places, sizes, or recommends a trade.
 | `primitives/sqlite_backup.py` | Consistent WAL-safe SQLite snapshot (native `.backup`) | `backup_sqlite()` |
 | `fold/fold.py` | The pure fold: state, verdict supersession, unknown-type handling | `fold()`, `active_nonshadow()`, `VERDICT_VOCAB` |
 | `config.py` | Load YAML → (config, canonical hash); `config.changed` emission | `load_config()`, `check_config_honesty()` |
-| `ingest/edgar.py` | EDGAR client (declared UA, rate-limited, freeze-the-substrate); §2 resolution keyed on ticker OR the detected series (I1); SOI-target resolution (§9b) | `EdgarClient` (`filing_index()`), `resolve_ticker()`, `resolve_series()`, `confirm_prospectus()`, `latest_soi()`, `resolve_soi_document()`, `resolve_soi_target()` |
+| `ingest/edgar.py` | EDGAR client (declared UA, rate-limited, freeze-the-substrate); §2 resolution keyed on ticker OR the detected series (I1); SOI-target resolution (§9b) | `EdgarClient` (`filing_index()`), `resolve_ticker()`, `resolve_series()`, `confirm_prospectus()`, `latest_soi()`, `resolve_soi_document()`, `resolve_soi_target()`, `latest_prospectus()`, `prospectus_history()` |
 | `ingest/prices.py` | Price ingest (**Tiingo primary** → `adjClose`, since Yahoo's endpoint is bot-blocked by TLS fingerprint; yahoo/stooq registered for a data-honest flip-back), frozen pulls, panel builder; rate-limited + 429/403 backoff (`prices.max_requests_per_sec`); token via `Authorization` header behind a `_Secret` redaction holder (never the URL/fossil); P1 fail-closed guard verified against the NVDA 10:1 split | `PriceIngest`, `parse_tiingo()`, `build_panel()`, `guard_live_source()` |
-| `ingest/holdings.py` | Holdings ingest (§4d keystone) — SPDR daily CSV → 90%-weight membership, frozen | `HoldingsIngest`, `weight_covering_members()` |
+| `ingest/holdings.py` | Holdings ingest (§4d keystone) — SPDR daily file (**xlsx**, real SSGA format) → 90%-weight membership, frozen | `HoldingsIngest`, `weight_covering_members()`, `parse_spdr_holdings()`, `parse_nport_holdings()` (labeled §3b stub), `MembershipSnapshot` |
 | `ingest/prospectus.py` | Prospectus fetch/freeze + mandate extraction (§4d) — bs4 → text, strategy section, diff | `ProspectusIngest`, `extract_mandate()`, `diff_mandate()` |
 | `ingest/soi.py` | SOI fetch-freeze (read side) + GICS-industry-grouped sector derivation (§4c resolver) — fund-block isolation → `INDUSTRY — N.N%` parse → industry→sector rollup (+ `gics_industry_alias` rendering variants) → reconcile-or-fault | `SoiIngest`, `extract_soi_sectors()`, `dominant_sectors()` |
 | `identity/resolution.py` | Retry-then-manual resolution machine; two-phase-launch intake + completion | `ResolutionMachine`, `register_launch()`, `launch_lag()` |
@@ -191,11 +194,20 @@ US-listed ETFs by diffing two frozen `company_tickers_mf.json` snapshots (a new 
 pair is a new registration), then records each two-phase via `ResolutionMachine.register_launch` —
 `launch.unverified` (timestamp nailed *before* resolution, because a launch datum can't be
 backfilled) → resolve → immediate `launch` on `_system`, or the retry queue if EDGAR hasn't indexed
-it yet. This is the **capture** half; the **corroboration hook** that routes a launch onto
-overlapping live leads (yielding the live cross-stream lag) is the *defined next slice* — it needs a
-launch's concentration industries, which will be derived from its first holdings once §4d's holdings
-ingest lands (ground truth over prose — the same look-through-is-truth logic as the HECO rule). See
-`docs/decisions/2026-07-03-launch-sensor-capture-first.md`.
+it yet. **I1**: the *detected* series id is threaded through `register_launch` → `resolve_series`, so
+identity keys on the detected series, never a ticker re-derive (the HECO rule, at the launch path).
+
+The **corroboration hook is built** (it was the M4 capstone, not a future slice):
+`sensors/launch_corroboration.py` derives a launch's concentration sectors from its **first
+holdings**, not from prospectus prose (ground truth over prose — the same look-through-is-truth logic
+as the HECO rule), then a **both-sides sector-set overlap** with a live lead's baskets **accretes**
+the launch onto that lead (never spawns one — no ceiling slot), making the **signed** cross-stream lag
+measurable. Because the real SSGA daily file carries no `Sector` column for an active fund, the blank
+case is resolved by the **SOI resolver** (`ingest/soi.py` + `sensors/soi.py`), which parses the fund's
+GICS-industry-grouped Schedule of Investments and rolls industry→sector through a frozen table, then
+routes through the same shared `route_corroboration` tail; extraction-unreliable → `fault`, never a
+wrong sector set. See `docs/decisions/2026-07-03-launch-corroboration-existence-proof.md`,
+`2026-07-04-soi-derived-sector-concentration.md`, and `2026-07-06-identity-integrity.md`.
 
 ---
 
@@ -245,7 +257,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ## 9. Status — built vs deferred
 
-**Built (committed, 430 tests green):**
+**Built (committed, 499 tests green, all offline) — milestones 1–4 + the SOI resolver + the M5 runner (live):**
 - Milestone 1 — vendored primitives, envelope store, WAL registry, fold engine, reactive snapshots,
   S3 sync, config honesty, reindex.
 - Milestone 2 — EDGAR client, fund registry (HECO rule), failed-resolution machine.
@@ -253,7 +265,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - Post-M3 design-thread work — the stress-gate recalibration (0.85 crisis-only), spec rev5's amended
   falsification (reversion criterion), the read-only crash-flags diagnostic (box B), and the
   verdict-disposition vocabulary lock-in.
-- Milestone 4 (**sensors complete**) — spec **rev12** canonical; the **launch sensor** (recording,
+- Milestone 4 (**sensors complete**) — spec **rev14** canonical; the **launch sensor** (recording,
   the consensus clock, `detected_at` preserved); **holdings ingest** (§4d keystone; now reads real
   SSGA **xlsx** — pinned `openpyxl`); the **dispersion sensor** (§4b, shadow-wired, generous payload);
   the **rebalance sensor** (§4d accretion, forward-hash routing); the **mandate-diff sensor** (§4d,
@@ -275,114 +287,81 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   a wrong sector set. **On real TEKX NPORT-EX the +593 now attaches on primary-source data** (Jul-2025
   clears {Financials, Industrials, IT, Utilities}); Jan-2026 stays dormant (Utilities 6.4% < floor,
   threshold frozen — anti-fitting). See `docs/decisions/2026-07-04-soi-derived-sector-concentration.md`.
-- **Milestone 5 — the runner skeleton (the thin spine, build-order step 1)** — `prospector/runner/` +
-  `pros run`: the §9 cadence driver. It sequences the deterministic sensors in the CONTRACT run order
-  (config-honesty-first → ingest → sensors → identity retries → capture no-op → reactive snapshots →
-  push), adds **no intelligence**, and is stateless between ticks (between-tick state recovered from the
-  fossil record, §9f — no side cache). Proven end to end through **one** vertical, launch-recording
-  (§4c: mf-tickers diff → `launch.scan` → identity retries), with the run-log (§9g), soft-fault-vs-fatal
-  exception granularity, and the `fold.state_changed`-pinned push (§10) all landed and offline-tested
-  (fixture clock, two-cold-runs determinism). The two Claude-Science runner-blockers are in: **H1**
-  (holdings weight-units sanity) and **S2** (sub-second-lossless `ts_compact`). Spec:
-  `docs/prospector-m5-runner-spec-2026-07-05.md`; build record + follow-on sequencing:
-  `docs/decisions/2026-07-06-m5-runner-skeleton.md`.
-- **Milestone 5 — SOI-fetch (build-order step 2)** — the fetch-on-cadence half of the SOI resolver, in
-  the ingest layer: `SOI_FORMS` + `latest_soi(submissions)` (form-priority: NPORT-EX over N-CSR/N-CSRS,
-  the reader's verified artifact) + `EdgarClient.filing_index()` + `resolve_soi_document()` (the
-  non-primary exhibit, refuse-to-guess on ambiguity) composed into `resolve_soi_target()` — the
-  coordinates the step-3 retry loop hands to `sensors/soi.scan`'s `fetch_body` seam. **H4** folded in: a
-  `gics_industry_alias` config map registers the plain `REAL ESTATE INVESTMENT TRUSTS` header (DFIN's
-  collapsed equity-REIT rendering → Real Estate), keeping the 74-row canonical table pure; the
-  `_build_table` docstring's inaccurate aliasing claim is corrected. All offline (synthetic
-  submissions/index fixtures; **drop-and-freeze for tests, fetch-on-cadence for the runner — never
-  conflated**). See `docs/decisions/2026-07-06-soi-fetch.md`.
+- **The M5 runner — built and live** (`prospector/runner/`, `pros run`) — the §9 cadence driver in the
+  CONTRACT run order (config-honesty-first → ingest → sensors → identity retries → capture no-op →
+  reactive snapshots → `state_changed`-pinned push), **no intelligence**, stateless between ticks (§9f
+  state recovered from the fossil record — no side cache), soft-fault-vs-fatal exception granularity, and
+  a dead-man that still pushes on a fatal (snapshots + push run in `finally`). Wired onto it, in order:
+  - **§9a sector-prices panel** (`_build_sector_panel`) + the **P1 guard** (`guard_live_source` fails a
+    source *closed* unless its adjusted-close is verified — an unadjusted close silently corrupts every
+    return across a split, the base of the sensor stack).
+  - The **prices vertical — Tiingo is now primary** (CRSP split+dividend-adjusted `adjClose`, verified
+    against the NVDA-2024 10:1 split; token via `TIINGO_API_TOKEN` env behind a `_Secret` redaction holder
+    on the Authorization header — never the URL/fossil; source-specific throttle/backoff). **Yahoo was
+    demoted** after it turned out to **bot-challenge non-browser clients on a TLS fingerprint** (not a
+    rate-limit — Chrome 200s where httpx/curl 429); **Stooq is P1-guarded-closed**. See
+    `2026-07-07-tiingo-price-source.md`, `-prices-throttle-backoff.md`, `2026-07-06-prices-ingest-and-p1.md`.
+  - **§4a xcorr wired LIVE — the primary spawner** (`xcorr.scan`, `_run_xcorr`): a spawn is LIVE
+    (`shadow=false`) → it **pages and counts toward the §8a ceiling** via `active_nonshadow`; the universe
+    tickers→series-ids resolve from *this tick's mf map* (`_universe_series_ids`, NOT the registry — the
+    seed universe is never registered, so reading the registry would leave xcorr inert); the stress gate
+    freezes a crisis-day entry to a `_system` `xcorr.departure`, never a spawn. See `2026-07-07-xcorr-live.md`.
+  - **launch-recording** (§4c, §9f frozen mf prior); the **§9d deferred SOI-corroboration retry**
+    (`_run_soi_corroboration` — folds `sectors_unresolved` launches, `resolve_soi_target` fetches, and
+    `soi.scan` reaches back preserving `detected_at`=T2, bounded by `retry_horizon_days`); the **§4d
+    mandate-diff** on cadence (`_run_mandate`, **§9c frozen-prior invariant** — diffs the last *frozen*
+    prospectus blob, never the registry accession field an intra-run identity pass may advance); the
+    **identity-integrity fixes** (I1 series-threading, B1/B2, `ambiguous_symbol` fault); **SOI-fetch**
+    (§9b — `resolve_soi_target`, form-priority NPORT-EX, refuse-to-guess on ambiguity; a `gics_industry_alias`
+    map keeps the 74-row canonical GICS table pure). See `2026-07-06-{m5-runner-skeleton,soi-fetch,mandate-9c,soi-corroboration-retry-9d,identity-integrity}.md`.
+  - The **read-only Streamlit dashboard** (§11) — pure, tested view-models (`dashboard/views.py`,
+    streamlit-free, no writes/recompute) + a thin `st.*` shell (`app.py`, an OPTIONAL extra
+    `uv sync --extra dashboard`); read-only **enforced at the substrate** (`mode=ro`), no
+    recompute/autorefresh/run-now; the firewall grep guards it. See `2026-07-07-dashboard-11.md`.
+- **Live + hardened.** A real `pros run` fired **5 live xcorr leads** on the SPDR grid (XLU×XLV, XLRE×XLY,
+  XLC×XLF, XLC×XLV, XLRE×XLV — the correlated structure collapses these into ~2–3 independent events, XLV
+  recurring). The **N1–N10** going-live QA fix batch then closed the first wave of bugs — the read-only
+  firewall (now `mode=ro` mechanism, not prose), tick idempotency (stable series-id dedup, moving-clock-
+  proof), a duplicate-date correlation-fabrication guard, source-specific retry sets, the ambiguous-exhibit
+  fault surfacing, dashboard honesty — **each landing with the violation-test that would have caught it.**
+  See `docs/decisions/2026-07-08-live-cadence-qa-fixes.md`.
 
-**Deferred:**
-- Milestone 3b — dispersion **PIT backtest** + NPORT-P parser + delisted-price coverage measurement
-  (waits on delisted-constituent price data; ships live burn-in only for now — see
-  `docs/decisions/2026-07-03-dispersion-shadow-first.md`).
-- **Holdings-intake coverage** (secondary) — per-issuer holdings parsers / NPORT-P look-through, which
-  turns the live cross-stream lag from an *existence proof* into a *representative rate*. Intake was
-  deliberately not widened inside the corroboration slice.
-- Milestone 5 — remaining build-order steps (**SEQUENCING CORRECTED 2026-07-06, Option A**; see
-  `docs/decisions/2026-07-06-prices-ingest-and-p1.md`). Exploring the slot state inverted the original
-  "one prices foundation feeds both spawners" premise: `PriceIngest` was already built, and the two
-  spawners have OPPOSITE gaps. **xcorr (§4a)** needs only the sector-ETF panel (now wired) + a new `scan`
-  orchestrator — nothing blocks it. **dispersion (§4b)** needs a *holdings-derived* vertical (per-basket
-  `MembershipSnapshot` + a constituent price panel keyed by member CUSIPs; runner holdings wiring is a
-  SLOT, only XLK has a fixture), so it cannot spawn a real shadow lead — cannot start the §9e burn-in
-  clock — until that vertical exists, regardless of ordering. Corrected order: **§9a sector-prices panel
-  (landed) → xcorr-live (§4a, landed) → read-only Streamlit dashboard (§11, landed)**. NEXT: the
-  **dispersion + burn-in vertical** (§9e + the holdings/constituent-price path — this is where
-  **holdings-intake coverage** is confronted as its own slice, when its consumer is built), and
-  **email** (§10) last, a nice-to-have. "Runner earns its keep" = xcorr-live + dashboard, now both landed.
-- **Milestone 5 — §11 read-only Streamlit dashboard (landed 2026-07-07)** — the surface that renders the
-  fossil record. Greenfield build, architected as **pure, tested view-models** (`dashboard/views.py` — no
-  streamlit import, no writes, no recompute) + a **thin `st.*` render shell** (`app.py`); streamlit is an
-  OPTIONAL extra (`uv sync --extra dashboard`) so the core stays lean/offline. Panels (spec §11): the
-  weekly dead-man + §8a ceiling tripwire up top; ranked active leads (**the live xcorr firings surface
-  here**); the dispersion shadow/burn-in panel (**honestly-empty** until §4b — "not yet wired", never a
-  faked record); launch survey; the coverage/**dormant-pile** blindness map (ranked, latest-disposition-
-  per-fund); the read-only **macro catalog** (`off-thesis-real` — never a trade/tilt trigger, never an
-  alert stream); manual-resolution queue; fault log; run history; unknown-type + registry-health; per-lead
-  thaw-backward timeline. CONTRACT honored: read-only, no recompute/autorefresh/run-now; the firewall grep
-  guards it. Proven by 12 view-model tests + a skip-guarded headless `AppTest` render smoke. See
-  `docs/decisions/2026-07-07-dashboard-11.md`.
-- **Milestone 5 — §4a xcorr wired LIVE into the runner (landed 2026-07-07)** — the runner's PRIMARY lead-
-  spawner. Built the missing `xcorr.scan` orchestrator (the pipeline was pure math + the backtest's replay;
-  there was no per-tick driver): drive returns→β-strip→residual-corr→Fisher-z→departure-z once, then per
-  pair reconstruct the Schmitt state from the record (§9f, `_xcorr_last_event_types`) and step ONE tick on
-  the latest z. `_run_xcorr` resolves the universe tickers→series ids from **this tick's mf map**
-  (`_universe_series_ids`, NOT the registry — the seed universe is never launched/registered, so reading
-  the registry would leave xcorr inert; SPY excluded, a UIT with no series id / only the β-strip factor). A
-  spawn is **LIVE** (`shadow=false`) → it pages and counts toward the §8a ceiling via `active_nonshadow`,
-  no extra code. Stress gate (§4a CONTRACT): a crisis-day would-be entry is a stressed `xcorr.departure` on
-  `_system`, never a spawn. Event vocabulary matches the backtest's exactly (one shape, two drivers). Proven
-  by the acceptance-gate discipline: fires-live end-to-end (mf resolves a pair, planted panel → a real spawn
-  that pushes), null-silent, stress-gate-freezes, §9f state reconstruction, and a soft-fault batch boundary.
-  See `docs/decisions/2026-07-07-xcorr-live.md`.
-- **Milestone 5 — §9a sector-prices panel ingest + P1 guard (landed 2026-07-06)** — the runner builds the
-  sector-ETF correlation grid every tick (`_build_sector_panel`): pull each `universe` ticker's adjusted
-  closes from the live primary (Yahoo → `adjclose`), freeze-before-parse via the built `PriceIngest.pull`,
-  assemble `build_panel`; a per-ticker failure / empty frame is a soft fault (§9g), the grid builds from
-  the rest. The **P1 guard** (`guard_live_source`) fails Stooq CLOSED as a live source until
-  `prices.stooq_adjusted_verified` is set — its `Close` is only *assumed* adjusted (unlike Yahoo's
-  `adjclose`), and an unadjusted close silently corrupts every return across a split (the base of the
-  sensor stack); `parse_stooq`'s docstring is corrected to say so. The panel is the shared substrate xcorr
-  consumes next; the empirical NVDA-2024-split confirmation is a flagged out-of-band step (Stooq is
-  JS-gated, so it is not a blocker). See `docs/decisions/2026-07-06-prices-ingest-and-p1.md`.
-- **Milestone 5 — §4d mandate-diff on cadence + §9c frozen-prior (landed 2026-07-06)** — the runner runs
-  the mandate-diff each tick (`_run_mandate`): for each registered fund, `latest_prospectus` (current) +
-  the last **frozen** prospectus as the prior (`_last_frozen_prospectus` via `prospectus_history` +
-  `has_frozen` — **never** the registry `prospectus_accession` field, which an intra-run identity pass may
-  advance, §9c), then `mandate.scan` (freeze → diff strategy section → `mandate.changed` silent / `fault`).
-  Real execution from day one (baseline, then diffs across cadences); self-sufficient (records on
-  `_system` with no lead). Proven by the invariant gate (the diff uses the frozen prior, not the advanced
-  field). See `docs/decisions/2026-07-06-mandate-9c.md`.
-- **Milestone 5 — §9d deferred SOI-corroboration retry loop (landed 2026-07-06)** — the runner now drives
-  the deferred SOI resolution each tick (`_run_soi_corroboration`): `pending_soi_resolution` folds the
-  `sectors_unresolved` launches from the events (§9f, never a side table), `resolve_soi_target` (step 2)
-  fetches each, and `sensors/soi.scan` reaches back preserving `detected_at` as **T2**. Bounded by
-  `corroboration.retry_horizon_days` (365, DEFAULT); a not-yet (`resolve_soi_target` → None) stays
-  `sectors_unresolved`, re-attempted; per-launch failures are soft faults. Live yield is bounded (input
-  from the unwired holdings-corroboration SLOT; overlap from the xcorr/dispersion SLOTs; anchor =
-  `entry.name`, needs a stable stem) — mechanism landed and tested (the three-property fires-not-called
-  gate). See `docs/decisions/2026-07-06-soi-corroboration-retry-9d.md`.
-- **Milestone 5 — identity-integrity fixes I1/B1/B2 (landed 2026-07-06)** — the runner-path prerequisites
-  hardening the HECO reused-ticker guarantee before live cadence. **I1**: `sensors/launch.scan` threads
-  the *detected* series id into `register_launch` → `resolve_series` (+ the `detected_series_id` retry-
-  queue column), so identity keys on the detected series, never a `matches[0]` re-derive by ticker; plus
-  the `ambiguous_symbol` fault in `resolve_ticker`. **B1** (owner-ratified scope): resolve-by-series fixes
-  the identity half; the residual trust-wide `prospectus_accession` is deferred (needs filing-header parse
-  — the mandate-diff gate — or a §2 `FundEntry` field). **B2**: `confirm_prospectus` flags
-  `older_filings_unread` when `filings.files[]` pages exist, instead of a silent `no_prospectus`; full
-  pagination deferred. See `docs/decisions/2026-07-06-identity-integrity.md`. (**H4** landed with step 2.)
-- **v2 (banked, not built)** — the **proto-cluster / pseudo-ETF** layer (spec rev8 Appendix B): a
-  price-only, observation-only re-read of dispersion history (the canary is a cluster, never a single
-  name, and never the trade). v1's only action is the generous dispersion payload that banks its
-  substrate (see `docs/decisions/2026-07-03-dispersion-payload-generous.md`).
-- Milestone 6 — discourse capture + budget guard.
-- Milestone 7 — infra-as-code + deploy.
+**Deferred (named, with reason):**
+- **§9e — dispersion + the holdings/constituent-price vertical** (the next lift). Wire dispersion into the
+  runner in **shadow** mode (silent, non-paging, excluded from the §8a ceiling — starts its 90-day
+  burn-in clock), which pulls in **constituent-price ingest** and confronts **holdings-intake coverage**
+  as its own slice. Dispersion is *built* but cannot spawn a real shadow lead until this vertical exists
+  (it needs a per-basket `MembershipSnapshot` + a constituent price panel keyed by member CUSIPs; the
+  runner holdings wiring is a SLOT, only XLK has a fixture). The **"prove a spawner fires on real seed
+  data, not merely that it's wired"** rule — learned when xcorr would have been permanently inert reading
+  an empty registry — gets its first test here. See `docs/decisions/2026-07-03-dispersion-shadow-first.md`.
+- **§10 — the email sender.** Weekly heartbeat/dead-man + state-change push, with **nuisance-alarm
+  suppression** (push once on a *new* fault, then fall to the weekly heartbeat until it clears/changes) —
+  the one place the architecture as-is would train the operator to ignore the alarm. Currently `NullNotifier`.
+- **Rebalance runner wiring** — the accretion sensor (`sensors/rebalance.py`) is built, but its per-tick
+  wiring is a SLOT pending the same holdings vertical as §9e.
+- **Milestone 3b** — dispersion **PIT backtest** + the **NPORT-P parser** + delisted-price coverage —
+  data-availability-gated (survivorship-clean historical holdings + delisted-constituent prices, *worse*
+  for the proto-cluster layer, where winners vanish from the survivor set exactly when their thesis was
+  real). `parse_nport_holdings` is a deliberately thin, labeled §3b stub, not an unfinished edge;
+  dispersion runs shadow / live burn-in meanwhile.
+- **Broader holdings-intake coverage** (secondary) — per-issuer holdings parsers / NPORT-P look-through;
+  the SOI path already resolves the active-fund sector case, so this turns the live cross-stream lag from
+  an *existence proof* into a *representative rate* rather than unblocking it. Intake was deliberately not
+  widened inside the corroboration slice.
+- **Milestone 6** — discourse capture + budget guard. **Milestone 7** — infra-as-code + **scheduled**
+  deploy (where `pros run` stops being a manual invocation); M7 also owns the SOI-corroboration **cadence
+  gate** (0 cost today — the dormant pile is empty) and the read-only-media **WAL-checkpoint**.
+- **v2 (banked, not built)** — the **proto-cluster / pseudo-ETF** layer (spec Appendix B): price-only,
+  observation-only new-category detection below the corpus (the canary is a *cluster*, never a single
+  name, and never the trade — its substrate already accrues via the generous dispersion payload, so v1's
+  only action is to keep capturing) and the discourse-interpretation program. See
+  `docs/decisions/2026-07-03-dispersion-payload-generous.md`.
+
+**The load-bearing honesty line:** everything under **Built** is *built and running*, not *validated*. The
+firing is **n=1**, the false-discovery rate is **unmeasured**, and the edge question is unanswered — the
+runner exists to convert existence proofs into *rates*, and that work has barely started. **Falsifiability
+is demonstrated; profitability is not. "Live" is not "proven."**
 
 ---
 
@@ -390,9 +369,13 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ```sh
 uv sync                 # set up the environment
-uv run pytest -q        # 367 tests, offline
+uv run pytest -q        # 499 tests, offline
 uv run pros --help      # the CLI
+uv run pros run         # one cadence tick (§9): ingest → sensors → snapshots → push-on-state-change
 uv run pros backtest --from 2019-01-01 --to 2024-12-31 --sweep   # regenerate the acceptance gate
+
+uv sync --extra dashboard                          # add the (optional) Streamlit dependency
+uv run streamlit run prospector/dashboard/app.py   # the §11 read-only dashboard
 ```
 
 The backtest reads price data frozen under `store/ingest/prices/` (gitignored). See
