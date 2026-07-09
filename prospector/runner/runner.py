@@ -31,8 +31,9 @@ from the mechanics; they are marked inline where they live:
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
-from datetime import date
+from datetime import date, timedelta
 
 from prospector.config import check_config_honesty
 from prospector.fold.fold import active_nonshadow, fold, state_changed
@@ -40,16 +41,19 @@ from prospector.fold.snapshots import SnapshotConfig, should_snapshot, write_sna
 from prospector.identity.resolution import ResolutionMachine
 from prospector.ingest.edgar import (SOI_AMBIGUOUS, SOI_ERROR, classify_soi_target,
                                      latest_prospectus, prospectus_history)
-from prospector.ingest.prices import (PriceIngestError, build_panel, guard_live_source,
-                                       required_pull_start)
+from prospector.ingest.holdings import MembershipSnapshot, weight_covering_members
+from prospector.ingest.prices import (CALENDAR_PER_TRADING_DAY, PriceIngestError, build_panel,
+                                       guard_live_source, required_pull_start)
 from prospector.ingest.prospectus import ProspectusIngest
 from prospector.ingest.soi import SoiIngest
 from prospector.runner.deps import RunnerDeps
 from prospector.runner.runlog import RunLog, write_run_log
+from prospector.sensors import dispersion as dispersion_sensor
 from prospector.sensors import launch as launch_sensor
 from prospector.sensors import mandate as mandate_sensor
 from prospector.sensors import soi as soi_sensor
 from prospector.sensors import xcorr as xcorr_sensor
+from prospector.sensors.dispersion import dispersion_lead_id
 from prospector.sensors.launch_corroboration import (lead_sectors, pending_soi_resolution,
                                                      series_id_sectors)
 from prospector.store.envelope import SYSTEM_LEAD, parse_ts
@@ -120,13 +124,20 @@ def _load_prior_mf_snapshot(layout, current_date: str):
     return json.loads((edgar_root / dates[-1] / "company_tickers_mf.json").read_bytes())
 
 
-def _compute_push(changed_leads: dict, faults: list) -> bool:
-    """§10 CONTRACT — the push is pinned to `fold.state_changed`: push iff some lead's
-    {status, shadow, verdict} changed (that is exactly what `changed_leads` holds), OR any fault
-    (a fault ALWAYS pushes — the dead-man beats silence). Ticks, silent corroborations
-    (rebalance / mandate.changed / launch accretion), and queue mechanics produce NO
-    {status,shadow,verdict} delta, so they do not push — the anti-slot-machine cadence, mechanical."""
-    return bool(changed_leads) or bool(faults)
+def _compute_push(page_worthy: dict, faults: list) -> bool:
+    """§10 CONTRACT — the push is pinned to a NON-SHADOW `fold.state_changed`: push iff some lead is
+    non-shadow *after* a {status, shadow, verdict} change (that is exactly what `page_worthy` holds —
+    see `_materialize_snapshots`), OR any fault (a fault ALWAYS pushes — the dead-man beats silence).
+
+    §9e resolved a two-CONTRACT collision here: §8a says push on state change, §4b says a SHADOW lead
+    is excluded from paging. Dispersion is the first shadow spawner, so a shadow spawn (`status:
+    None->active`, `shadow: True`) IS a state change — but must NOT page. Gating on *non-shadow after
+    the change* suppresses a shadow spawn/tick/revert (the fold leaves `shadow=True` on a revert),
+    leaves every xcorr non-shadow path unchanged, and pages a future promotion (`shadow: true->false`)
+    for free. The runlog's `changed_leads` still records ALL changes (the fossil stays whole); only the
+    push decision reads the non-shadow subset. Ticks, silent corroborations, and queue mechanics
+    produce no {status,shadow,verdict} delta at all, so they do not push — the anti-slot-machine cadence."""
+    return bool(page_worthy) or bool(faults)
 
 
 def run_tick(deps: RunnerDeps) -> RunLog:
@@ -134,7 +145,7 @@ def run_tick(deps: RunnerDeps) -> RunLog:
 
         1. config honesty (fossilize a config change BEFORE any sensor)   [subtle bit #1]
         2. ingest            (§9a — mf-tickers + the sector-price panel)
-        3. sensors §4a-§4d   (WIRED: launch §4c, xcorr §4a, mandate §4d, SOI corrob §9d; §4b dispersion SLOT)
+        3. sensors §4a-§4d   (WIRED: xcorr §4a, dispersion §4b/§9e shadow, launch §4c, mandate §4d, SOI §9d)
         4. identity retries  (drain the retry-then-manual queue)
         5. capture           (no-op until M6)
         6. snapshots         (reactive materialization)
@@ -150,6 +161,7 @@ def run_tick(deps: RunnerDeps) -> RunLog:
     store = _CountingStore(deps.event_store, counts)  # every append flows through here (§9g counts)
     faults: list = []
     changed_leads: dict = {}
+    page_worthy: dict = {}  # the NON-shadow subset of changed_leads — the push comparand (§4b/§9e)
     runlog = RunLog(run_id=deps.run_id, ts=now, date=date)
 
     try:
@@ -177,11 +189,11 @@ def run_tick(deps: RunnerDeps) -> RunLog:
     finally:
         # 6. SNAPSHOTS + 7. PUSH — always, even after a fault (the weekly dead-man depends on it).
         try:
-            changed_leads = _materialize_snapshots(deps, store, now, faults)
+            changed_leads, page_worthy = _materialize_snapshots(deps, store, now, faults)
         except Exception as e:  # a snapshot-phase failure still writes the run-log
             _emit_fault(store, "snapshots", e, now, faults)
 
-        pushed = _compute_push(changed_leads, faults)
+        pushed = _compute_push(page_worthy, faults)  # §4b/§9e: NON-shadow changes (+ faults) page
         if pushed:
             # NullNotifier in the skeleton: records the intended push, sends nothing (§10). A send
             # failure is itself a soft fault — it must not lose the run-log.
@@ -206,10 +218,10 @@ def run_tick(deps: RunnerDeps) -> RunLog:
 
 def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, runlog: RunLog) -> None:
     """Run-order steps 2-5 (§9). WIRED: mf-tickers + §9a prices ingest, launch recording (§4c), the §4a
-    xcorr spawner, the §4d mandate-diff accretion, and the §9d SOI-corroboration deferred pass. Still a
-    SLOT: the §4b dispersion spawner (needs the holdings/constituent-price vertical). The CONTRACT run
-    order stays visible in code (a test pins it). One ResolutionMachine (with a real FundRegistry) serves
-    both launch and the retries, so a retry that resolves can complete its registry entry.
+    xcorr spawner, the §4b dispersion shadow spawner (§9e — its own holdings/constituent-price vertical),
+    the §4d mandate-diff accretion, and the §9d SOI-corroboration deferred pass. The CONTRACT run order
+    stays visible in code (a test pins it). One ResolutionMachine (with a real FundRegistry) serves both
+    launch and the retries, so a retry that resolves can complete its registry entry.
 
     N6: the prologue must not run outside a fault boundary — a bad value here (e.g. a non-integer
     `identity.retry_days` typo) would otherwise escape to run_tick's single backstop as ONE fatal `runner`
@@ -257,11 +269,17 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
     except Exception as e:  # a batch-level failure is a soft fault, never a run-abort (§9g)
         runlog.sensors["xcorr"] = "fault"
         _emit_fault(store, "sensor.xcorr", e, now, faults)
-    #    §4b dispersion — SLOT (follow-on). SUBTLE BIT #4 lives here: the dispersion shadow clock
-    #        (§9e) surfaces burn-in readiness in the heartbeat/dashboard, but the runner NEVER
-    #        auto-promotes shadow->paging — that is a human config flip that leaves a config.changed
-    #        fossil (auto-promotion would re-trust survivor-biased calibration). Dispersion's inputs
-    #        (per-basket membership + constituent prices) are a holdings-derived vertical, its own slice.
+    #    §4b dispersion — WIRED (§9e). The runner's SECOND live spawner, in SHADOW (burn-in). SUBTLE
+    #        BIT #4 lives here: the dispersion shadow clock surfaces burn-in readiness in the
+    #        heartbeat/dashboard, but the runner NEVER auto-promotes shadow->paging — that is a human
+    #        config flip that leaves a config.changed fossil (auto-promotion would re-trust survivor-
+    #        biased calibration). Its own holdings/constituent-price vertical (membership from the LIVE
+    #        SPDR feed, never the empty registry). A shadow spawn does not page (§9e push gate, above).
+    try:
+        _run_dispersion(deps, store, now, faults, runlog, current_mf)
+    except Exception as e:  # a batch-level failure is a soft fault, never a run-abort (§9g)
+        runlog.sensors["dispersion"] = "fault"
+        _emit_fault(store, "sensor.dispersion", e, now, faults)
     #    §4c launch     — WIRED.
     if current_mf is not None:
         try:
@@ -422,6 +440,140 @@ def _run_xcorr(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog, 
     runlog.sensors["xcorr"] = "ran"
 
 
+_DISPERSION_TRIGGER_TYPES = ("lead.spawned", "dispersion.tick", "dispersion.reverted")
+
+
+def _dispersion_pull_start(as_of_date: str, cfg: dict) -> str:
+    """Earliest ISO pull date for a fully-warmed dispersion departure-z: the constituent-correlation
+    window (`dispersion.window_days`) plus the Q baseline (`dispersion.baseline_days`), sized to
+    CALENDAR days with the same 1.5 buffer prices.py uses. Reads dispersion's OWN windows (§4b), NEVER
+    `cfg['windows']` (that is xcorr's 567-day beta-strip chain — reusing `required_pull_start` here
+    would silently couple dispersion's history depth to xcorr's config)."""
+    d = cfg["dispersion"]
+    trading = int(d["baseline_days"]) + int(d["window_days"])          # 252 + 63 = 315 at defaults
+    days = math.ceil(trading * CALENDAR_PER_TRADING_DAY)
+    return (date.fromisoformat(as_of_date) - timedelta(days=days)).isoformat()
+
+
+def _tiingo_symbol(ticker: str) -> str:
+    """SPDR holdings carry class-share tickers in DOT form (BRK.B); Tiingo's symbol path wants DASH
+    form (BRK-B). Normalize HERE, at the constituent-pull seam — NEVER in the shared price URL builder
+    (a Tiingo-only quirk must not leak onto the yahoo/stooq sector-ETF path). A genuinely unresolvable
+    symbol still hits Tiingo, 404s, and is dropped from the panel (a coverage gap, never a guess).
+    PRIMARY-SOURCE GATE (§9e decision record): verified only against clean fixtures — confirm against
+    the real XLF/XLC files (BRK.B, GOOG/GOOGL, FOX/FOXA) before the live run; extend, never fit silently."""
+    return ticker.strip().upper().replace(".", "-")
+
+
+def _dispersion_last_event_types(deps: RunnerDeps) -> dict:
+    """§9f — reconstruct each dispersion lead's Schmitt-state SOURCE from the fossil record: `{lead_id
+    -> its last TRIGGER-relevant event type}`. Leads keyed `disp-` (`dispersion_lead_id`), read straight
+    from the registry (never a side cache), filtered to the trigger vocabulary. Dispersion has NO
+    `.departure` event (spawn/tick -> active, reverted -> quiet), so the set is spawn/tick/reverted.
+    Mirrors `_xcorr_last_event_types`; a basket that never spawned has no lead here -> None -> quiet."""
+    out: dict[str, str | None] = {}
+    for lead in deps.registry.all_leads():
+        if lead == SYSTEM_LEAD or not str(lead).startswith("disp-"):
+            continue
+        last = None
+        for r in deps.registry.events_for_lead(lead):
+            if r["type"] in _DISPERSION_TRIGGER_TYPES:
+                last = r["type"]
+        out[lead] = last
+    return out
+
+
+def _build_constituent_panel(deps: RunnerDeps, member_map: dict, source: str, start: str, end: str):
+    """Pull each constituent's adjusted closes BY TICKER (Tiingo is queried by symbol), then RE-KEY the
+    panel columns to the constituent IDENTIFIER (CUSIP) — the dispersion sensor CONTRACT: the panel keys
+    on the stable identifier (`membership.identifiers()`), the ticker is only the lookup attribute (HECO
+    one level down). Re-key by overwriting each tidy frame's `ticker` column to its CUSIP BEFORE
+    `build_panel`, so BOTH the columns AND `attrs['sources']` come out identifier-keyed (a post-hoc
+    `.rename()` would leave `attrs['sources']` ticker-keyed -> a silent source-lookup miss). The frozen
+    price fossil stays keyed by the real Tiingo symbol (freeze happens inside `pull`, before the re-key).
+
+    Per-constituent granularity: a constituent whose pull fails is DROPPED (a coverage gap — counted by
+    absence, never an 8-names-404 fault storm); `corr_matrix_at` drops any name lacking a full window and
+    `min_constituents` guards degeneracy, so a partial panel degrades honestly. Returns the re-keyed
+    panel, or None if no constituent landed (the caller then SKIPS the basket, distinct from a
+    holdings-fetch failure which FAULTS it — a broken feed is worth surfacing, a price gap is not)."""
+    frames = []
+    for ticker, identifier in member_map.items():          # membership order (weight desc) preserved
+        try:
+            frame = deps.price_ingest.pull(_tiingo_symbol(ticker), source, start, end)
+            if frame.empty:
+                continue
+            frame = frame.copy()
+            frame["ticker"] = identifier                   # re-key BEFORE build_panel (columns + attrs)
+            frames.append(frame)
+        except Exception:                                  # one constituent's gap never faults the basket
+            continue
+    if not frames:
+        return None
+    return build_panel(frames)
+
+
+def _run_dispersion(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog,
+                    current_mf: dict | None) -> None:
+    """§4b dispersion — the runner's SECOND live spawner, SHADOW-wired (§9e burn-in). For each of the 11
+    SPDR baskets resolvable THIS tick (`_universe_series_ids` from the mf map — never the empty registry,
+    the trap that would leave it permanently inert): pull the basket's holdings THIS tick (freeze-before-
+    parse), truncate to the weight-covering membership (0.90), pull constituent prices BY TICKER, re-key
+    the panel to CUSIP identifiers (the sensor CONTRACT), reconstruct Schmitt state from the record (§9f),
+    and drive `dispersion.scan` with `tick_due=True` (mirrors xcorr's per-run tick — daily when the runner
+    runs daily; `dispersion.tick_cadence_days` stays advisory until M7 owns the schedule). A spawn is
+    `shadow=true`: it starts the burn-in clock and `active_nonshadow` excludes it from the ceiling and
+    corroboration, while the §9e push gate keeps a shadow-only change from paging.
+
+    Soft-fault granularity (§9g): the per-basket try/except makes a HOLDINGS fetch/parse failure a
+    per-basket FAULT (a broken feed for an expected basket must surface) that never aborts the run; a
+    basket with no priceable constituents is SKIPPED (a coverage gap, honest — distinct from a broken
+    feed, never a guess). `runlog.sensors['dispersion']` is 'ran' (>=1 basket drove the sensor) or
+    'skipped' (none resolvable / none priceable) — never a silent no-op."""
+    ticker_to_series_id = _universe_series_ids(deps.cfg, current_mf)
+    if not ticker_to_series_id:
+        runlog.sensors["dispersion"] = "skipped"  # no resolvable baskets this tick — honest
+        return
+    dcfg = deps.cfg["dispersion"]
+    cov = float(dcfg["weight_coverage"])
+    source = (deps.cfg.get("prices") or {}).get("primary", "yahoo")
+    try:
+        # P1 (§3): the SAME fail-closed wall the sector panel enforces — NEVER pull/freeze constituent
+        # prices from a source whose adjusted close is unverified (`parse_stooq` only ASSUMES Close is
+        # adjusted; an unadjusted close silently corrupts every constituent return across a split). Skip
+        # the whole pass loudly rather than fabricate the substrate the dispersion correlation reads.
+        guard_live_source(source, deps.cfg)
+    except PriceIngestError as e:
+        runlog.sensors["dispersion"] = "skipped"
+        _emit_fault(store, "sensor.dispersion", e, now, faults)
+        return
+    date_ = now[:10]
+    start = _dispersion_pull_start(date_, deps.cfg)
+    last_event_types = _dispersion_last_event_types(deps)
+    ran_any = False
+    for ticker, series_id in ticker_to_series_id.items():
+        lead_id = dispersion_lead_id(series_id)
+        try:
+            frame = deps.holdings_ingest.pull(series_id, ticker)      # freeze-before-parse (§3)
+            members, actual = weight_covering_members(frame, cov)
+            member_map = {m["ticker"]: m["identifier"]               # the ticker<->CUSIP re-key map
+                          for m in members if m.get("ticker") and m.get("identifier")}
+            if not member_map:
+                continue  # membership parsed but no ticker/CUSIP pairs — a coverage gap, skip (not a fault)
+            panel = _build_constituent_panel(deps, member_map, source, start, date_)
+            if panel is None:
+                continue  # no constituent priced — SKIP this basket (coverage gap, never a guess)
+            membership = MembershipSnapshot(series_id=series_id, ticker=ticker, as_of=date_,
+                                            source="spdr", members=members, coverage_target=cov,
+                                            coverage_actual=actual)
+            dispersion_sensor.scan(series_id, ticker, membership, panel, deps.cfg, now,
+                                   last_event_types.get(lead_id), store.append, tick_due=True)
+            ran_any = True
+        except Exception as e:  # one basket's failure (holdings feed / parse) never blinds the others (§9g)
+            _emit_fault(store, "sensor.dispersion", f"{ticker}: {e}", now, faults, lead=lead_id)
+    runlog.sensors["dispersion"] = "ran" if ran_any else "skipped"
+
+
 def _lead_context(deps: RunnerDeps, fund_registry: FundRegistry) -> tuple[dict, list]:
     """The shared corroboration/audit context: the sector-ETF universe tickers resolved to series_ids
     (via the registry), and the currently ACTIVE (non-shadow) lead ids (folded from the record — §9f).
@@ -557,11 +709,14 @@ def _run_soi_corroboration(deps: RunnerDeps, store, now: str, faults: list, runl
     runlog.sensors["soi_corroboration"] = "ran"
 
 
-def _materialize_snapshots(deps: RunnerDeps, store, now: str, faults: list) -> dict:
+def _materialize_snapshots(deps: RunnerDeps, store, now: str, faults: list) -> tuple[dict, dict]:
     """Run-order step 6 (§9): re-fold every real lead and materialize on the reactive cadence
     (`should_snapshot` — immediate on a state change, dense while active, weekly floor otherwise).
-    Returns {lead: [changed fields]} for the push decision (§10). `_system` is infra, not a lead
-    (mirrors the CLI's lead views) — its events fold into the run-log/queue, never a lead snapshot.
+    Returns `(changed_leads, page_worthy)`: `changed_leads` = {lead: [changed fields]} for the WHOLE
+    record (the runlog + run-summary keep every change, shadow included — the fossil stays honest);
+    `page_worthy` = the subset whose lead is NON-shadow AFTER the change — the §10 push comparand
+    (§4b/§9e: a shadow-only change is recorded but never pages). `_system` is infra, not a lead — its
+    events fold into the run-log/queue, never a lead snapshot.
 
     The prior state for the state-change comparison is read from the lead's LAST snapshot (before
     this tick writes a new one), so `state_changed(prior, new)` is honest. A snapshot divergence is
@@ -570,6 +725,7 @@ def _materialize_snapshots(deps: RunnerDeps, store, now: str, faults: list) -> d
     snap_cfg = SnapshotConfig.from_cfg(deps.cfg.get("snapshots") or {})
     now_dt = parse_ts(now)
     changed_leads: dict = {}
+    page_worthy: dict = {}
     for lead in deps.registry.all_leads():
         if lead == SYSTEM_LEAD:
             continue
@@ -586,10 +742,15 @@ def _materialize_snapshots(deps: RunnerDeps, store, now: str, faults: list) -> d
             changed = state_changed(prior_state, new_state)  # §10's single arbiter
             if changed:
                 changed_leads[lead] = changed
+                # §4b/§9e: a shadow lead's change is recorded above but is NOT page-worthy. Gate on the
+                # NEW state's shadow (the fold leaves shadow=True on a revert, and a promotion ends
+                # shadow=False -> it pages) — see _compute_push.
+                if not new_state.get("shadow", False):
+                    page_worthy[lead] = changed
             decision = should_snapshot(new_state, last_ts, changed, now_dt, snap_cfg)
             if decision.save:
                 write_snapshot(deps.layout, deps.registry, lead, new_state, decision.reason, now,
                                fault_sink=store.append)
         except Exception as e:  # one lead's failure never blinds the others (§9g)
             _emit_fault(store, "snapshot", e, now, faults, lead=lead)
-    return changed_leads
+    return changed_leads, page_worthy

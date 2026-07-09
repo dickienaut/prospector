@@ -27,7 +27,7 @@ def test_real_tekx_file_is_xlsx_and_parses_without_fault():
     # parses-without-fault + the holdings FRAME is non-empty (the parse works). No pre-asserted sectors.
     assert REAL_TEKX[:4] == b"PK\x03\x04"
     df = parse_spdr_holdings(REAL_TEKX, "TEKX")
-    assert list(df.columns) == ["name", "identifier", "weight", "sector"]
+    assert list(df.columns) == ["name", "ticker", "identifier", "weight", "sector"]
     assert len(df) >= 30                                 # ~35 real holdings — non-empty frame
     assert 0.99 <= df["weight"].sum() <= 1.02            # weights are fractions summing ~100%
     assert "NVIDIA CORP" in set(df["name"])              # a recognizable real constituent

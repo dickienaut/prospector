@@ -70,7 +70,7 @@ path places, sizes, or recommends a trade.
 | `backtest/report.py` | The acceptance-gate artifact (recall/precision/falsification/lag) | `build_report()`, `render_markdown()` |
 | `backtest/corroboration.py` | Cross-stream corroboration scoring (sector→keyword) | `score_all()` |
 | `backtest/beta_diagnostic.py` | **Read-only** crash-flags diagnostic (never wired to the sensor) | `scoped_beta_slice()`, `two_clock_read()` |
-| `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push. WIRED: §9a sector-prices panel ingest (`_build_sector_panel`, P1 guard), **§4a xcorr — the PRIMARY live spawner** (`_run_xcorr`; universe→series_id from the mf map, §9f state, LIVE/paging/ceiling-counting), launch-recording (§4c), the §9d deferred SOI-corroboration retry, the §4d mandate-diff (§9c frozen-prior). SLOTS: dispersion (§4b) / rebalance + §9e | `run_tick()` |
+| `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push. WIRED: §9a sector-prices panel ingest (`_build_sector_panel`, P1 guard), **§4a xcorr — the PRIMARY live spawner** (`_run_xcorr`; universe→series_id from the mf map, §9f state, LIVE/paging/ceiling-counting), launch-recording (§4c), the §9d deferred SOI-corroboration retry, the §4d mandate-diff (§9c frozen-prior), **§4b dispersion — the 2nd live spawner, in SHADOW** (`_run_dispersion`, §9e; membership from the live SPDR feed, shadow-gated push). SLOT: rebalance (§4d holdings-diff) | `run_tick()` |
 | `runner/deps.py` / `runner/notify.py` / `runner/runlog.py` | Injected seam bundle; the `Notifier` transport (`NullNotifier` until the M5 email slice); per-tick run-log (§9g, its own `runs` table, telemetry — never a lead event) | `RunnerDeps`, `NullNotifier`, `RunLog`, `write_run_log()` |
 | `cli/main.py` | The `pros` CLI — read surfaces + verdict/identity/backtest + the `run` cadence entrypoint | `cli` |
 | `dashboard/views.py` / `dashboard/app.py` | The §11 **read-only** Streamlit dashboard — pure, tested view-models (folds of the record) + a thin `st.*` render shell. No recompute/autorefresh/run-now. Streamlit is an OPTIONAL extra (`uv sync --extra dashboard`); `views` is streamlit-free | `rank_active_leads()`, `dormant_pile()`, `heartbeat()`, `main()` |
@@ -306,6 +306,15 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
     tickers→series-ids resolve from *this tick's mf map* (`_universe_series_ids`, NOT the registry — the
     seed universe is never registered, so reading the registry would leave xcorr inert); the stress gate
     freezes a crisis-day entry to a `_system` `xcorr.departure`, never a spawn. See `2026-07-07-xcorr-live.md`.
+  - **§4b dispersion wired LIVE in SHADOW — the 2nd spawner** (`dispersion.scan`, `_run_dispersion`, §9e):
+    per-basket membership from the **live SPDR holdings feed** (never the empty registry), a constituent
+    price panel keyed by member **CUSIP** (the ticker↔CUSIP bridge is the SPDR file's own Ticker column —
+    parse now keeps the ticker as a display-only lookup attribute; re-keyed to CUSIP before `build_panel`),
+    P1-guarded like the sector panel. A spawn is `shadow=true` → it starts the 90-day burn-in and is
+    **excluded from paging/ceiling/corroboration** (`active_nonshadow`) **and from the push trigger** —
+    a §9e fix: `_compute_push` now gates on a *non-shadow* change, closing a latent §8a-vs-§4b collision
+    dispersion was the first spawner to make live. Generous payload captured; **the SPDR→Tiingo symbol
+    primary-source gate is pending the desktop live run.** See `2026-07-09-dispersion-vertical-9e.md`.
   - **launch-recording** (§4c, §9f frozen mf prior); the **§9d deferred SOI-corroboration retry**
     (`_run_soi_corroboration` — folds `sectors_unresolved` launches, `resolve_soi_target` fetches, and
     `soi.scan` reaches back preserving `detected_at`=T2, bounded by `retry_horizon_days`); the **§4d
@@ -327,19 +336,18 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   See `docs/decisions/2026-07-08-live-cadence-qa-fixes.md`.
 
 **Deferred (named, with reason):**
-- **§9e — dispersion + the holdings/constituent-price vertical** (the next lift). Wire dispersion into the
-  runner in **shadow** mode (silent, non-paging, excluded from the §8a ceiling — starts its 90-day
-  burn-in clock), which pulls in **constituent-price ingest** and confronts **holdings-intake coverage**
-  as its own slice. Dispersion is *built* but cannot spawn a real shadow lead until this vertical exists
-  (it needs a per-basket `MembershipSnapshot` + a constituent price panel keyed by member CUSIPs; the
-  runner holdings wiring is a SLOT, only XLK has a fixture). The **"prove a spawner fires on real seed
-  data, not merely that it's wired"** rule — learned when xcorr would have been permanently inert reading
-  an empty registry — gets its first test here. See `docs/decisions/2026-07-03-dispersion-shadow-first.md`.
+- **§9e follow-ons** — the dispersion spawner itself is **built and shadow-wired** (above); what remains is
+  the **live `pros run` on real SPDR data + the SPDR→Tiingo symbol-mapping primary-source gate** (class
+  shares — BRK.B / GOOG·GOOGL / FOX·FOXA — which the synthetic fixtures don't carry, so a green suite does
+  not verify the mapping), and **broader holdings-intake coverage** (per-issuer / NPORT-P — a rate-widening,
+  not an unblock). The **"prove a spawner fires on real seed data"** rule got its first post-xcorr test here
+  (a shadow spawn on real holdings-derived membership + a genuinely-departing constituent panel). See
+  `2026-07-09-dispersion-vertical-9e.md`, `docs/decisions/2026-07-03-dispersion-shadow-first.md`.
 - **§10 — the email sender.** Weekly heartbeat/dead-man + state-change push, with **nuisance-alarm
   suppression** (push once on a *new* fault, then fall to the weekly heartbeat until it clears/changes) —
   the one place the architecture as-is would train the operator to ignore the alarm. Currently `NullNotifier`.
 - **Rebalance runner wiring** — the accretion sensor (`sensors/rebalance.py`) is built, but its per-tick
-  wiring is a SLOT pending the same holdings vertical as §9e.
+  wiring is a SLOT; it can now reuse the **§9e holdings/constituent vertical** (built) for its holdings-diff.
 - **Milestone 3b** — dispersion **PIT backtest** + the **NPORT-P parser** + delisted-price coverage —
   data-availability-gated (survivorship-clean historical holdings + delisted-constituent prices, *worse*
   for the proto-cluster layer, where winners vanish from the survivor set exactly when their thesis was

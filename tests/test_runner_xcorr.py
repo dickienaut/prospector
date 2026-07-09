@@ -24,6 +24,7 @@ import pandas as pd
 from prospector.config import load_config
 from prospector.fold.fold import active_nonshadow, fold
 from prospector.ingest.edgar import MF_TICKERS_URL, EdgarClient, EdgarError
+from prospector.ingest.holdings import HoldingsIngest
 from prospector.ingest.prices import PriceIngest, PriceIngestError
 from prospector.primitives.atomic import write_atomic
 from prospector.runner import RunnerDeps, run_tick
@@ -38,6 +39,11 @@ NOW = "2026-07-06T22:30:00Z"
 XLK_ROW = [1001, "S000000001", "C000000001", "XLK"]
 XLU_ROW = [1002, "S000000002", "C000000002", "XLU"]
 XLKxXLU = xcorr_lead_id(["S000000001", "S000000002"])
+
+# §9e: dispersion now runs every tick. A valid SPDR holdings body lets its membership parse; this file's
+# price fetch only serves the sector ETFs, so the constituent-price pulls miss and dispersion cleanly
+# SKIPS (no fault, no shadow spawn) — leaving these xcorr assertions untouched.
+_XLK_HOLDINGS = (Path(__file__).parent / "fixtures" / "holdings" / "XLK_2026-07-02.csv").read_bytes()
 
 
 def _mf_bytes(rows):
@@ -79,6 +85,7 @@ def _deps(layout, registry, edgar_fetch, price_fetch, *, cfg=None, notifier=None
         # fake one keeps the offline panel building. sleep no-op: the panel pulls 12+ tickers.
         price_ingest=PriceIngest(layout, fetch=price_fetch, clock=lambda: NOW[:10],
                                  sleep=lambda _s: None, api_token="tiingo-test-token"),
+        holdings_ingest=HoldingsIngest(layout, fetch=lambda u, h: _XLK_HOLDINGS, clock=lambda: NOW[:10]),
         notifier=notifier if notifier is not None else NullNotifier(),
         cfg=cfg if cfg is not None else base_cfg, cfg_hash=base_hash,
         now=NOW, run_id="run_test", monotonic=lambda: 0.0)

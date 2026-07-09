@@ -23,6 +23,7 @@ from pathlib import Path
 
 from prospector.config import load_config
 from prospector.ingest.edgar import MF_TICKERS_URL, EdgarClient, EdgarError
+from prospector.ingest.holdings import HoldingsIngest
 from prospector.ingest.prices import PriceIngest
 from prospector.primitives.atomic import write_atomic
 from prospector.runner import RunnerDeps, run_tick
@@ -31,6 +32,9 @@ from prospector.store.envelope import SYSTEM_LEAD
 from prospector.store.event_store import EventStore
 
 CONFIG = Path("config") / "prospector.yaml"
+# §9e: dispersion runs every tick; a valid holdings body parses, constituents don't price here -> it
+# SKIPS cleanly (no fault/spawn), so the same-day idempotency comparison is unaffected.
+_XLK_HOLDINGS = (Path(__file__).parent / "fixtures" / "holdings" / "XLK_2026-07-02.csv").read_bytes()
 NOW = "2026-07-02T22:30:00Z"
 PRIOR_DATE = "2026-07-01"
 
@@ -85,6 +89,7 @@ def _deps(layout, registry, fetch, *, now=NOW):
         price_ingest=PriceIngest(layout, fetch=lambda u, h: _tiingo_ok_body(),
                                  clock=lambda: now[:10], sleep=lambda _s: None,
                                  api_token="tiingo-test-token"),
+        holdings_ingest=HoldingsIngest(layout, fetch=lambda u, h: _XLK_HOLDINGS, clock=lambda: now[:10]),
         notifier=NullNotifier(), cfg=cfg, cfg_hash=cfg_hash,
         now=now, run_id="run_test", monotonic=lambda: 0.0)
 

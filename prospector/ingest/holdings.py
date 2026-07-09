@@ -17,9 +17,10 @@ The §3 discipline, mirrored verbatim from ingest/prices.py:
 Identity (the HECO rule, §2/§5 CONTRACT). A basket is keyed on the fund's **SEC series id**; the pull
 FETCHES by ticker (SPDR's URL is a source/display attribute) but FREEZES and KEYS by series_id — the
 same discipline as prices' "a source quirk never leaks past the URL builder." **Constituents are
-individual equities, not funds:** they carry a name + issuer identifier (CUSIP/ISIN) only, are never
-run through the FundRegistry (they'd fail SERIES_ID_RE), and never key a lead. The basket is the
-identity; the constituents are payload content.
+individual equities, not funds:** they carry a name + issuer identifier (CUSIP/ISIN) + a display
+ticker (the §4b price-lookup attribute only — the dispersion panel keys on the CUSIP, HECO one level
+down), are never run through the FundRegistry (they'd fail SERIES_ID_RE), and never key a lead. The
+basket is the identity; the constituents are payload content.
 """
 
 from __future__ import annotations
@@ -51,8 +52,12 @@ SPDR_URL_TEMPLATE = ("https://www.ssga.com/us/en/intermediary/library-content/pr
 BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 
-# The tidy membership frame's columns.
-MEMBER_COLUMNS = ("name", "identifier", "weight", "sector")
+# The tidy membership frame's columns. `ticker` is the constituent's display symbol — carried ONLY as
+# the Tiingo price-lookup attribute for the §4b dispersion vertical (the constituent panel keys on the
+# stable `identifier`/CUSIP, NEVER the ticker — HECO one level down; tickers are display-only, §2/§5).
+# The SPDR primary file itself supplies the ticker↔CUSIP pairing, so no third-party symbol feed is
+# needed (a bought feed would breach the primary-source wall).
+MEMBER_COLUMNS = ("name", "ticker", "identifier", "weight", "sector")
 
 # A full holdings file's parsed FRACTIONAL weights sum to ~1.0 (a whole portfolio). This band is an
 # order-of-magnitude sanity gate on _parse_weight's percent assumption, NOT a precise-sum check — cash and
@@ -73,9 +78,10 @@ class HoldingsIngestError(Exception):
 @dataclass(frozen=True)
 class MembershipSnapshot:
     """A basket's weight-covering membership as of a date. Keyed on the basket's series_id; the
-    members are constituent equities (name + identifier + weight fraction + sector string), never
-    funds. `coverage_actual` is the fraction of total basket weight the truncated list captures
-    (>= coverage_target by construction)."""
+    members are constituent equities (name + display ticker + identifier + weight fraction + sector
+    string), never funds. The ticker is the §4b Tiingo price-lookup attribute only; the panel keys on
+    the identifier. `coverage_actual` is the fraction of total basket weight the truncated list
+    captures (>= coverage_target by construction)."""
 
     series_id: str
     ticker: str
@@ -119,7 +125,7 @@ def _rows_from_body(body: bytes) -> list[list[str]]:
 
 def parse_spdr_holdings(body: bytes, ticker: str) -> pd.DataFrame:
     """Parse a SPDR daily holdings file (xlsx — the real SSGA format — or CSV) into a tidy membership
-    frame [name, identifier, weight, sector], sorted by weight desc. Robust to the file's shape: a
+    frame [name, ticker, identifier, weight, sector], sorted by weight desc. Robust to the file's shape: a
     multi-line preamble (fund name / ticker / 'As of' date / blank), the header row, the holdings,
     then a footer/disclaimer.
 
@@ -143,6 +149,7 @@ def parse_spdr_holdings(body: bytes, ticker: str) -> pd.DataFrame:
         raise HoldingsIngestError(f"no holdings header (Name/Weight) in body for {ticker}")
 
     name_i, weight_i = col["name"], col["weight"]
+    ticker_i = col.get("ticker")  # §4b: the constituent's Tiingo price-lookup symbol (display-only)
     ident_i = col.get("identifier")
     sector_i = col.get("sector")
 
@@ -156,9 +163,11 @@ def parse_spdr_holdings(body: bytes, ticker: str) -> pd.DataFrame:
         if weight is None:
             continue  # non-numeric weight => a disclaimer row, skip (never fabricate)
         name = row[name_i].strip()
+        ticker = row[ticker_i].strip() if ticker_i is not None and len(row) > ticker_i else ""
         identifier = row[ident_i].strip() if ident_i is not None and len(row) > ident_i else ""
         sector = row[sector_i].strip() if sector_i is not None and len(row) > sector_i else ""
-        members.append({"name": name, "identifier": identifier, "weight": weight, "sector": sector})
+        members.append({"name": name, "ticker": ticker, "identifier": identifier,
+                        "weight": weight, "sector": sector})
 
     if not members:
         raise HoldingsIngestError(f"header found but no holdings rows in body for {ticker}")
@@ -212,8 +221,9 @@ def weight_covering_members(holdings: pd.DataFrame, coverage: float = 0.90) -> t
     members = []
     for _, row in ordered.iterrows():
         cumulative += float(row["weight"])
-        members.append({"name": row["name"], "identifier": row["identifier"],
-                        "weight": float(row["weight"]), "sector": row["sector"]})
+        members.append({"name": row["name"], "ticker": row.get("ticker", ""),
+                        "identifier": row["identifier"], "weight": float(row["weight"]),
+                        "sector": row["sector"]})
         if cumulative / total >= coverage:
             break
     return members, cumulative / total
