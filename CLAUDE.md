@@ -184,6 +184,9 @@ leaves a `config.changed` fossil — never by a self-updating rule:
   `docs/decisions/2026-07-02-crash-flags-guidance-rev2.md` §8.
 
 ## Development
+- **Always work on a new branch.** Never commit directly to `main`. At the start of any change,
+  branch off `main` (`git switch -c <descriptive-name>`) and do the work there; graduate it to `main`
+  by pull request. If a session begins on `main` with work to do, create the branch first.
 - `uv sync` to set up; `uv run pytest` to test; `uv run pros --help` for the CLI.
 - Tests are offline: a network guard fails any test that opens a real socket. Recorded fixtures
   live in `tests/fixtures/`.
