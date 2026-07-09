@@ -33,11 +33,14 @@ separate lead-to-baskets cache (a redundant materialization that can drift from 
 hashing inverts the lookup so no such cache is needed). Single source of truth: the fold, materialized
 in the registry.
 
-DEFERRED (own defined-next-slices, not built here): `mandate.changed` (a new prospectus filing whose
-mandate *text* differs — needs an EDGAR prospectus-text fetch + `ingest/prospectus/` blob-per-accession
-storage + a text diff; named unblock), and the quarterly NPORT-P authoritative cross-check (gated on
-`holdings.parse_nport_holdings`, the deliberately thin §3b stub). Both are event-driven off the one
-daily filings-index check when the §9 runner exists — never a calendar cron. See
+STATUS (these were three deferred defined-next-slices; one has since landed): `mandate.changed` — a
+new prospectus filing whose mandate *text* differs — is now BUILT: its named unblock (an EDGAR
+prospectus-text fetch + `ingest/prospectus/` blob-per-accession storage + a strategy-section text diff)
+shipped as `ingest/prospectus.py` + `sensors/mandate.py`, wired live in the §9 runner's `_run_mandate`.
+STILL DEFERRED here: this rebalance sensor's OWN runner wiring (the holdings-diff needs the holdings/
+constituent vertical, a later slice), and the quarterly NPORT-P authoritative cross-check (gated on
+`holdings.parse_nport_holdings`, the deliberately thin §3b stub). Both remaining slices are event-driven
+off the runner's one daily filings-index check — never a calendar cron. See
 `docs/decisions/2026-07-03-rebalance-accretion-and-routing.md` and spec rev9 §4d.
 """
 

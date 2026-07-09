@@ -28,8 +28,11 @@ industry weights don't RECONCILE to the `COMMON STOCKS — N%` header within tol
 reconcile check already earned its keep: a first-draft all-uppercase regex silently dropped GICS
 `SPECIALIZED REITs` (lowercase `s`), and the 96.4%-vs-99.2% mismatch caught it.
 
-Live EDGAR fetch (which accession/document to pull) is DEFERRED to M5 (tied to EdgarClient) — see the
-decision doc. This module is the READER + freeze/read side; tests drive it on hand-frozen fixtures.
+Live EDGAR fetch (which accession/document to pull) is now WIRED in the M5 runner — see the decision
+doc: `_run_soi_corroboration` resolves the target via `classify_soi_target` and fetches the exhibit
+via `EdgarClient.filing_text`, feeding the bytes through this module's `freeze`. This module remains
+the READER + freeze/read side. The two intake paths never conflate (CLAUDE.md): tests drop-and-freeze
+hand-built fixtures; the runner fetches on cadence — fixtures are never refreshed by fetch code.
 """
 
 from __future__ import annotations
@@ -59,9 +62,10 @@ class SoiIngest:
     mirroring ProspectusIngest — the derived sector concentration is then a pure function of the frozen
     bytes (extract-on-read), so a later, better parser re-reads old filings with no stored staleness.
 
-    The freeze/read side is what's built now; the LIVE fetch (which NPORT-EX/N-CSR accession + document
-    carries the SOI) is the deferred M5 slice, tied to EdgarClient. `freeze` is the write primitive that
-    the M5 fetch and the by-hand fixture drop both go through."""
+    The freeze/read side and the LIVE fetch (which NPORT-EX/N-CSR accession + document carries the SOI)
+    are both built now: the M5 runner resolves the accession+document via EdgarClient and feeds the bytes
+    through `freeze`. `freeze` stays the single write primitive that both the runner fetch and the by-hand
+    fixture drop go through — so a later, better parser re-reads either provenance identically."""
 
     def __init__(self, layout):
         self._layout = layout

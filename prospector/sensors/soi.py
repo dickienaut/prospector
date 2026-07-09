@@ -20,8 +20,9 @@ NEVER spawns a lead (rev7). The outcomes mirror the mandate sensor's discipline:
 
 Routing reuses the rebalance forward-hash (`lead_sectors` builds `active_lead_sectors` upstream, exactly
 as the holdings path does). The LIVE fetch — which NPORT-EX/N-CSR accession + document carries the SOI —
-is the deferred M5 slice (tied to EdgarClient); here the bytes arrive via `fetch_body` (the runner wires
-it to EdgarClient; tests pass a fixture-reading thunk) or are already frozen on file.
+is now WIRED in the M5 runner (`_run_soi_corroboration`); here the bytes arrive via `fetch_body` (the
+runner wires it to `EdgarClient.filing_text`; tests pass a fixture-reading thunk) or are already frozen
+on file.
 """
 
 from __future__ import annotations
