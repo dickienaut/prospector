@@ -37,3 +37,7 @@ class RunnerDeps:
     now: str                         # ISO-8601 UTC; ALL events this tick share it (determinism, §9)
     run_id: str
     monotonic: Callable[[], float]   # elapsed only — NEVER a record time (record times are `now`)
+    heartbeat: bool = False          # §8a/§10: also fire the WEEKLY heartbeat this tick (the dead-man rides
+    # the weekly run, so a heartbeat email proves the whole pipeline ran). Set by `pros run --heartbeat`;
+    # M7's scheduler calls that weekly. Default False (a daily tick pages on change only). Trailing +
+    # defaulted so existing RunnerDeps(...) constructions (incl. the test _deps helpers) are unaffected.

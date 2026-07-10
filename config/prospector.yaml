@@ -365,9 +365,18 @@ edgar:
   user_agent: "Prospector/1.0 (lyle.e.dickie@gmail.com)"
   max_requests_per_sec: 8  # safety margin under SEC's 10/s
 
-email:                     # milestone 5 — keys reserved now
-  to: lyle.e.dickie@gmail.com
+email:                     # §8a/§10 — the email sender (DEFAULT-class; transport = SMTP app-password,
+                           # ratified over SES for portability — no AWS/domain step, works from the Mac mini).
+  to: lyle@alphalabsengineering.com
+  # from: defaults to `to` (single-mailbox self-send). Set only if sending from a different address.
   subject_prefix: "[PROS]"
+  # SMTP transport. Leave smtp_host null/absent to run WITHOUT email (NullNotifier — records intent, sends
+  # nothing); set it to enable sending. The app-password is a SECRET — it lives ONLY in the git-ignored
+  # .env as PROSPECTOR_SMTP_PASSWORD (env, never here, never committed), exactly like TIINGO_API_TOKEN.
+  # `pros run` fails fast if smtp_host is set but PROSPECTOR_SMTP_PASSWORD is unset.
+  smtp_host: null          # e.g. smtp.gmail.com  (null -> email disabled)
+  smtp_port: 587           # 587 STARTTLS (default) | 465 SSL
+  smtp_security: starttls  # "starttls" | "ssl"
 
 schedule:                  # milestone 7 — keys reserved now
   daily_utc: "22:30"       # after US close + EOD data settle

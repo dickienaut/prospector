@@ -43,14 +43,16 @@ def test_command_tree_is_exactly_the_contract_surface():
     # backtest is calibration over frozen history, writing only under backtest/ — not a
     # run-now surface (it never recomputes the live record). `run` is the M5 cadence entrypoint
     # (spec §9): one invocation = one tick, cron-invoked — NOT a recompute/capture-on-demand
-    # surface (its only option is --store; asserted below). Still no capture trigger, no
-    # recompute-on-demand of the live store (CLAUDE.md, no-run-now CONTRACT).
+    # surface. Still no capture trigger, no recompute-on-demand of the live store (CLAUDE.md,
+    # no-run-now CONTRACT).
     assert set(cli.commands) == {"store", "lead", "verdict", "identity", "backtest", "run"}
     assert set(cli.commands["store"].commands) == {"reindex"}
     assert set(cli.commands["lead"].commands) == {"list", "show"}
     assert set(cli.commands["identity"].commands) == {"resolve", "queue"}
-    # `pros run` is a cadence entrypoint, not a run-now surface: its ONLY parameter is --store.
-    assert {p.name for p in cli.commands["run"].params} == {"store_path"}
+    # `pros run` is a cadence entrypoint, not a run-now surface: its only params are --store and the
+    # §10 --heartbeat flag (which ONLY adds the weekly heartbeat email to the tick — it never
+    # recomputes or captures on demand, so the no-run-now CONTRACT holds).
+    assert {p.name for p in cli.commands["run"].params} == {"store_path", "heartbeat"}
 
 
 # -- lead list ------------------------------------------------------------------------
@@ -223,6 +225,22 @@ def test_run_missing_tiingo_token_errors_before_any_fetch(runner, tmp_path, monk
     result = runner.invoke(cli, ["run", "--store", str(tmp_path / "store")])
     assert result.exit_code != 0
     assert "TIINGO_API_TOKEN unset" in result.output
+    assert not (tmp_path / "store").exists()  # failed before creating the store
+
+
+def test_run_email_configured_without_password_errors_before_any_fetch(runner, tmp_path, monkeypatch):
+    # §10 fail-fast (mirrors the Tiingo one): email.smtp_host set but PROSPECTOR_SMTP_PASSWORD unset ->
+    # a ClickException at startup, BEFORE the store is created — a silent no-send would defeat the dead-man.
+    # prices.primary stays default (yahoo) so this is the email check firing, not the Tiingo one.
+    (tmp_path / "config").mkdir(parents=True)
+    (tmp_path / "config" / "prospector.yaml").write_text(
+        'edgar:\n  user_agent: "Test/1.0 (t@e.com)"\n'
+        'email:\n  smtp_host: smtp.example.com\n  to: me@e.com\n', encoding="utf-8")
+    monkeypatch.delenv("PROSPECTOR_SMTP_PASSWORD", raising=False)
+    monkeypatch.chdir(tmp_path)   # no .env here -> the password stays unset
+    result = runner.invoke(cli, ["run", "--store", str(tmp_path / "store")])
+    assert result.exit_code != 0
+    assert "PROSPECTOR_SMTP_PASSWORD is unset" in result.output
     assert not (tmp_path / "store").exists()  # failed before creating the store
 
 

@@ -125,13 +125,22 @@ def store_reindex(store_path):
 
 @cli.command("run")
 @_store_option
-def run(store_path):
+@click.option("--heartbeat", "--weekly", "heartbeat", is_flag=True, default=False,
+              help="Also send the §8a WEEKLY heartbeat/dead-man email this tick (the scheduler runs "
+                   "`pros run --heartbeat` weekly; the dead-man's silence=broken guarantee arms at M7).")
+def run(store_path, heartbeat):
     """Execute ONE cadence tick: config honesty -> ingest -> sensors -> identity retries ->
     snapshots -> push-on-state-change (spec §9). This is the scheduled ENTRYPOINT — cron/EventBridge
     invokes it (scheduling itself is milestone 7). It is NOT a run-now surface: one invocation is one
     tick, it records on cadence and pushes on state change, and there is deliberately no flag to
     recompute or capture on demand (CLAUDE.md, no-run-now CONTRACT). The runner adds no intelligence;
-    it sequences the deterministic sensors and never touches a trade path (firewall CONTRACT)."""
+    it sequences the deterministic sensors and never touches a trade path (firewall CONTRACT).
+
+    `--heartbeat` additionally fires the §8a weekly heartbeat email (fires regardless of activity — the
+    dead-man). It rides the tick (not a separate read-only send) so a heartbeat email proves the WHOLE
+    pipeline ran; M7's scheduler calls it weekly. Email is sent only when `email.smtp_host` is configured
+    AND `PROSPECTOR_SMTP_PASSWORD` is set; otherwise the run proceeds with a NullNotifier (records intent,
+    sends nothing) so an un-configured/offline local run still works."""
     import time
     from uuid import uuid4
 
@@ -139,7 +148,7 @@ def run(store_path):
     from prospector.ingest.prices import PriceIngest
     from prospector.primitives.atomic import write_atomic
     from prospector.runner import RunnerDeps, run_tick
-    from prospector.runner.notify import NullNotifier
+    from prospector.runner.notify import NullNotifier, SmtpNotifier, smtp_config
 
     _load_dotenv()  # pick up TIINGO_API_TOKEN from a git-ignored .env before we read the env below
     layout = _layout(store_path)  # a writer: Registry() below creates the store if absent
@@ -159,6 +168,24 @@ def run(store_path):
         raise click.ClickException(
             "TIINGO_API_TOKEN unset but prices.primary is tiingo — set it in .env or the environment "
             "(it rides the Authorization header; never put a token in config).")
+    # §10 email sender. The SMTP app-password is a SECRET — env-only (PROSPECTOR_SMTP_PASSWORD from the
+    # git-ignored .env), exactly like the Tiingo token, never in config. Fail FAST if email is configured
+    # (email.smtp_host set) but the password is unset: a silent no-send would defeat the dead-man. When
+    # email is NOT configured, fall back to NullNotifier so an offline/local `pros run` still works.
+    smtp = smtp_config(cfg)
+    if smtp is not None:
+        smtp_password = os.environ.get("PROSPECTOR_SMTP_PASSWORD")
+        if not smtp_password:
+            raise click.ClickException(
+                "email.smtp_host is set but PROSPECTOR_SMTP_PASSWORD is unset — set the app-password in "
+                ".env or the environment (it is a secret; never put it in config). Unset email.smtp_host "
+                "to run without email.")
+        notifier = SmtpNotifier(password=smtp_password, **smtp)
+    else:
+        notifier = NullNotifier()
+        if heartbeat:  # asked for a heartbeat but nowhere to send it — say so, don't fail the tick
+            click.echo("note: --heartbeat set but email.smtp_host is unconfigured — no email sent "
+                       "(NullNotifier). Configure email.* + PROSPECTOR_SMTP_PASSWORD to enable.")
     now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     tick_date = now[:10]
 
@@ -183,8 +210,9 @@ def run(store_path):
         deps = RunnerDeps(
             layout=layout, registry=registry, event_store=EventStore(layout, registry),
             edgar_client=edgar_client, price_ingest=price_ingest, holdings_ingest=holdings_ingest,
-            notifier=NullNotifier(),
-            cfg=cfg, cfg_hash=cfg_hash, now=now, run_id=uuid4().hex, monotonic=time.monotonic)
+            notifier=notifier,
+            cfg=cfg, cfg_hash=cfg_hash, now=now, run_id=uuid4().hex, monotonic=time.monotonic,
+            heartbeat=heartbeat)
         runlog = run_tick(deps)
     finally:
         registry.close()

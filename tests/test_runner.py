@@ -316,11 +316,17 @@ def test_real_lead_state_change_snapshots_and_pushes(layout, registry):
 
 
 def test_compute_push_is_pinned_to_state_change_or_fault():
-    # The §10 arbiter in isolation: a {status,shadow,verdict} delta pushes; a fault always pushes;
-    # nothing else does (a silent tick with no delta and no fault stays quiet).
-    assert _compute_push({}, []) is False
-    assert _compute_push({"ld_x": ["status"]}, []) is True
-    assert _compute_push({}, [{"subsystem": "ingest.mf_tickers", "message": "boom"}]) is True
+    # The §10 arbiter in isolation: a NON-shadow {status,shadow,verdict} delta pushes; a NEW/changed fault
+    # pushes; nothing else does. Third arg is the prior run's faults (the nuisance-suppression comparand).
+    boom = [{"subsystem": "ingest.mf_tickers", "message": "boom"}]
+    assert _compute_push({}, [], []) is False                       # quiet tick: no delta, no fault
+    assert _compute_push({"ld_x": ["status"]}, [], []) is True      # a non-shadow state change pages
+    assert _compute_push({}, boom, []) is True                      # a NEW fault (no prior) pages
+    # §10 NUISANCE-ALARM SUPPRESSION: the SAME fault as the prior run does NOT page (it rides the heartbeat);
+    # a CHANGED message does; a state change pages regardless of the fault repeating.
+    assert _compute_push({}, boom, boom) is False                   # recurring identical fault: suppressed
+    assert _compute_push({}, boom, [{"subsystem": "ingest.mf_tickers", "message": "different"}]) is True
+    assert _compute_push({"ld_x": ["status"]}, boom, boom) is True  # state change wins over a stale fault
 
 
 # -- guards: the firewall and the runs_path shape -------------------------------------------
