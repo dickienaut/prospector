@@ -235,10 +235,14 @@ def board_snapshot_markdown(registry, states: Iterable[dict], runs, machine, cfg
               ""]
     launches = views.launch_panel(registry)
     parts += ["## Launches (survey)",
-              _md_table(["ts", "ticker", "series_id", "name", "detected_at"],
-                        [[l["ts"], l.get("ticker"), l.get("series_id"), l.get("name"),
-                          l.get("detected_at")] for l in launches]),
-              ""]
+              _md_table(["ts", "ticker", "series_id", "detected_at"],
+                        [[l["ts"], l.get("ticker"), l.get("series_id"), l.get("detected_at")]
+                         for l in launches])]
+    unlisted = views.unlisted_launch_count(registry)
+    if unlisted:  # keep the no-ticker detections a VISIBLE coverage fact, not a silently-dropped blind spot
+        parts.append(f"\n_{unlisted} unlisted (no-ticker) detection{'' if unlisted == 1 else 's'} kept in "
+                     "the record, omitted from this listed-launch survey._")
+    parts.append("")
 
     # 6. Manual-resolution queue — only when non-empty.
     queue = views.manual_queue(machine)
