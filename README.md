@@ -21,9 +21,10 @@ sequences it all and pushes on state change:
 - **§4a excess-correlation (`xcorr`)** — the primary live spawner. Two sector baskets that decouple
   from their trailing relationship spawn a lead (Schmitt-triggered on a departure *z*, a stress gate
   freezing crisis-day entries).
-- **§4b dispersion** — a basket fracturing from *within* (spectral bipartition of the constituent
-  correlation matrix). **Built, shadow-designed, not yet wired live** (its constituent-price vertical
-  is the next slice).
+- **§4b dispersion** — a basket fracturing from within (spectral bipartition of the constituent
+  correlation matrix). Wired live in shadow (§9e); the constituent-price vertical (CUSIP-keyed, with
+  foreign/cash exclusion) landed with it. Starts the 90-day burn-in; promotion to paging is a human
+  config flip.
 - **§4c launch** — new US-listed ETFs as the consensus clock; a resolved launch's sectors are
   corroborated against live leads to measure the signed cross-stream lag.
 - **§4d accretion** (`rebalance`, `mandate`, `soi`) — silent corroborations that accrete facts onto
