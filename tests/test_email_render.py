@@ -86,7 +86,40 @@ def test_manual_queue_section_only_when_nonempty():
 def test_empty_active_and_faults_render_honestly_not_blank():
     body = email_render.render_push(_ctx(), PREFIX)[1]
     assert "Active leads (live):" in body and "(none" in body
-    assert "Faults (recent):" in body
+    assert "Faults (recent) — operational:" in body and "Manual review — advisories" in body
+
+
+# === the §10 fault taxonomy in the render (operational vs review-advisory, split distinctly) ========
+
+def _f(subsystem, message, category, *, on_live_lead=False) -> dict:
+    return {"ts": "2026-07-10T00:00:00Z", "subsystem": subsystem, "message": message,
+            "category": category, "on_live_lead": on_live_lead}
+
+
+def test_faults_and_advisories_render_distinctly_with_a_split_count():
+    ctx = _ctx(
+        faults=[_f("ingest.prices", "boom", "operational"),
+                _f("mandate", "unreliable — manual review", "review-advisory"),
+                _f("mandate", "held fund reworded", "review-advisory", on_live_lead=True)],
+        recent_faults=[_f("ingest.prices", "boom", "operational"),
+                       _f("mandate", "unreliable — manual review", "review-advisory"),
+                       _f("mandate", "held fund reworded", "review-advisory", on_live_lead=True)])
+    subj, body = email_render.render_push(ctx, PREFIX)
+    # The split count — 1 operational fault, 2 for review (never a single flat number).
+    assert "1 fault(s) · 2 for review this run" in body
+    # Distinct sections; the operational fault under Faults, the advisories under Manual review.
+    assert "Faults (recent) — operational:" in body and "ingest.prices: boom" in body
+    assert "Manual review — advisories" in body and "unreliable — manual review" in body
+    # The live-lead advisory is flagged (it paged); a page-worthy fault sets the FAULT subject.
+    assert "held fund reworded  [LIVE-LEAD — paged]" in body
+    assert subj.startswith("[PROS] FAULT:")
+
+
+def test_a_non_live_advisory_alone_does_not_set_a_fault_subject():
+    # Only non-live advisories this tick: none page-worthy, so a co-occurring state change owns the subject.
+    ctx = _ctx(changed_leads={"ld_x": ["status"]},
+               faults=[_f("mandate", "unreliable — manual review", "review-advisory")])
+    assert email_render.push_subject(ctx, PREFIX).startswith("[PROS] state change:")
 
 
 # === determinism / no-LLM ==========================================================================

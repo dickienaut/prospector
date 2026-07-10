@@ -37,6 +37,7 @@ from prospector.store.envelope import SYSTEM_LEAD
 def scan(launch: Mapping, accession: str, fund_anchor: str,
          active_lead_sectors: Mapping[str, frozenset[str]],
          soi: SoiIngest, cfg: dict, now: str, emit: Callable[[dict], object],
+         report_advisory: Callable[..., None],
          *, fetch_body: Callable[[], bytes] | None = None) -> dict:
     """One deferred SOI-corroboration pass for a launch. `launch` is the launch record ({series_id,
     ticker, name?, detected_at, unverified_ref?}); `accession` is the SOI filing's accession;
@@ -60,13 +61,13 @@ def scan(launch: Mapping, accession: str, fund_anchor: str,
 
     if not res["reliable"]:
         # Flag, don't guess: a false sector set is worse than a missed one (the §4d extraction-unreliable
-        # discipline, shared with the mandate sensor).
-        emit({"ts": now, "lead": SYSTEM_LEAD, "type": "fault",
-              "payload": {"subsystem": "soi", "series_id": series_id, "ticker": ticker,
-                          "accession": accession,
-                          "message": (f"SOI {accession} for {series_id}: sector extraction unreliable "
-                                      f"({res['reason']}) — manual review")},
-              "schema": 1})
+        # discipline, shared with the mandate sensor). §10: a REVIEW-ADVISORY (the sensor correctly PUNTED —
+        # nothing broke) routed through the runner's ONE fault accumulator; counted + surfaced, pages only
+        # if this fund touches a live lead. NEVER a raw fault write (that bypass was the split-path bug).
+        report_advisory("soi",
+                        f"SOI {accession} for {series_id}: sector extraction unreliable "
+                        f"({res['reason']}) — manual review",
+                        series_id, extra={"ticker": ticker, "accession": accession})
         return {"action": "flagged_unreliable", "reason": res["reason"], "accession": accession}
 
     sectors = dominant_sectors(res["sectors"], float(cfg["corroboration"]["sector_min_weight"]))

@@ -44,7 +44,7 @@ STRUCTURAL_SPAWN = "2023-01-25T00:00:00Z"            # T1 — the xcorr lead's r
 def test_jul2025_soi_resolves_the_launch_and_attaches_the_593_lag(layout):
     events = []
     res = soi_sensor.scan(TEKX, "0001410368-25-011151", ANCHOR, ACTIVE, SoiIngest(layout), CFG, NOW,
-                          events.append, fetch_body=lambda: JUL2025)
+                          events.append, lambda *a, **k: None, fetch_body=lambda: JUL2025)
     assert res["action"] == "corroborated" and res["matched"] == [PAIR]
     # Pin the DERIVED set in-line (symmetry with the dormant golden): a rollup bug that inflates a spurious
     # 5th ≥10% sector would keep the subset-overlap green, so the golden must constrain membership itself.
@@ -63,7 +63,7 @@ def test_jul2025_soi_resolves_the_launch_and_attaches_the_593_lag(layout):
 def test_jan2026_soi_is_recorded_dormant_utilities_below_the_frozen_floor(layout):
     events = []
     res = soi_sensor.scan(TEKX, "0001410368-26-034129", ANCHOR, ACTIVE, SoiIngest(layout), CFG, NOW,
-                          events.append, fetch_body=lambda: JAN2026)
+                          events.append, lambda *a, **k: None, fetch_body=lambda: JAN2026)
     assert res["action"] == "dormant_no_match"
     assert set(res["sectors"]) == {"Industrials", "Information Technology"}   # Utilities 6.4% < 0.10 -> out
     (ev,) = events

@@ -136,10 +136,62 @@ the moment the window logic lands. Less severe (a genuinely intermittent fault i
 **Doc-lag note:** the design thread folds §10→BUILT and this suppression fix together into the next
 state-of-project pass (**rev7**) — the reduced-doc-cadence (update-on-push) working as set, not drift.
 
+## Follow-up 2 (owner email observation → QA-traced) — the fault taxonomy (operational vs review-advisory)
+
+A live heartbeat read **"0 fault(s) this run"** while its "Faults (recent)" section listed nine `mandate`
+faults timestamped for that same run. **Diagnosis (traced):** the count (`len(ctx['faults'])`) read the
+runner's per-tick `faults` list, but the mandate/SOI **"extraction-unreliable → manual review"** faults were
+written **straight to the store** by the sensor (`emit({"type":"fault"})`), bypassing that list — so they
+showed in `views.fault_log` (all fault events) but not the count, AND never reached `_compute_push`. A whole
+class of faults silently escaped the alarm path (the count-honesty was a dead-man *lying*, the same standard
+Follow-up 1 was held to).
+
+**Ruling (the design thread, making the §8a call it would otherwise defer to):** **operational faults page;
+manual-review advisories are counted + surfaced but do not page** — with the risk-owner's carve-out (the owner
+chose): **an advisory on a fund touching a live (active, non-shadow) lead DOES page** (a held/watched fund
+quietly rewording its mandate is the one advisory worth interrupting for). Reject "unify the count AND page
+everything" (§8a literalism losing to the deeper cadence discipline — a class of low-value launch-wave
+advisories would train the operator that a push might be nothing).
+
+**Mechanism — the shadow-push shape, one layer down** (keep the record whole, filter page-worthiness at the
+push decision):
+- Every fault reaches the ONE `faults` accumulator: `_emit_fault` is the single fault-emit path, and a
+  sensor's advisory now routes through the runner-provided **`_advisory_reporter`** (never a raw
+  `store.append({"type":"fault"})` — that bypass was the bug). `_emit_fault` carries a `category`
+  (`operational` default | `review-advisory`) + `series_id` + `on_live_lead`.
+- The reporter computes `on_live_lead` where the lead context lives, via the **shared forward-hash
+  `watching_leads`** (reused verbatim — same routing as rebalance/mandate).
+- **`_compute_push` filters to the page-worthy subset** (`_page_worthy_faults` — operational + live-lead
+  advisories); a non-live advisory is in `faults` (count/display) but never pages, and the nuisance-suppression
+  signature compares the page-worthy subset. Unknown/legacy category → treated as operational (fail-safe: an
+  unrecognized fault must not silently escape the alarm). `email_render._page_worthy` mirrors it exactly, so
+  the subject/count and the push decision agree.
+- **Display distinctly** (a complete summary is not a flat one): the scan line reads `N fault(s) · M for
+  review this run`, and the body splits **"Faults (recent) — operational"** from **"Manual review —
+  advisories"** (a live-lead advisory marked `[LIVE-LEAD — paged]`). `views.fault_log` carries `category` +
+  `on_live_lead` so the dashboard + board-snapshot render the two classes too.
+
+**§8a refinement to record (CONTRACT — alarm posture; folds into rev7):** *"Push on any **operational** fault
+(a pipeline breakage, a failed fetch, a tripped guard) and on state changes. **Manual-review advisories** — a
+sensor's extraction-unreliable punt (mandate/SOI), where nothing broke and the sensor correctly declined to
+guess — are counted and surfaced in the heartbeat and review surfaces, but do not page; **except** an advisory
+on a fund touching a live (active, non-shadow) lead, which pages."*
+
+**Flagged, not built (named refinement):** surfacing a live-lead advisory on the lead's own timeline (today
+all advisories land on `_system` undifferentiated; the case doesn't fire yet — the registry holds new
+launches, not lead-basket funds). The runner's `soi.corroboration.{AMBIGUOUS|ERROR}` fault stays
+**operational** (it pages) — whether AMBIGUOUS should be an advisory is a separate design-thread call.
+
 ## Verification
 
-Full suite **545 passed / 2 xfailed** after the follow-up fix (the volatile-message package + the
-ticker-guard test; the 2 xfailed are the pre-existing N9 cadence gate and the deferred E2 flapping case).
+Full suite **554 passed / 2 xfailed** after the fault-taxonomy fix (the 2 xfailed are the pre-existing N9
+cadence gate and the deferred E2 flapping case). The taxonomy slice adds `test_runner_fault_taxonomy.py`
+(the page-worthy filter; operational-pages / advisory-doesn't / live-lead-advisory-does; an advisory flood
+never pages even recurring; suppression over the page-worthy subset; the reporter computes `on_live_lead`),
+the `email_render` split-count + distinct-sections tests, the `fault_log` category/live-lead test, and the
+mandate/SOI sensor tests assert the advisory is a `review-advisory` routed through the reporter. Earlier:
+full suite **545 passed / 2 xfailed** after the volatile-message follow-up (the volatile-message package + the
+ticker-guard test).
 The §10 slice itself was **541 passed / 1 xfailed** (+20: `test_email_render.py` render/subjects/body/determinism +
 `build_context`; `test_notify_smtp.py` message-shape/redaction/send-failure/`smtp_config`;
 `test_runner_notify.py` the nuisance-suppression violation test — a recurring fault pages ONCE not N, a

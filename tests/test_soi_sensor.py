@@ -31,6 +31,17 @@ def _syn_soi(cs_pct, industries):
             ).encode()
 
 
+def _advisory_to(events):
+    """Mirror the runner's §10 fault-reporter: a review-advisory fault into `events` (where the old raw
+    emit fault landed), so a test reads it there and proves scan routes the extraction-unreliable punt
+    through report_advisory rather than a raw fault write. Inert when the advisory path isn't hit."""
+    def report(subsystem, message, series_id, extra=None):
+        events.append({"ts": NOW, "lead": SYSTEM_LEAD, "type": "fault",
+                       "payload": {"subsystem": subsystem, "message": message, "series_id": series_id,
+                                   "category": "review-advisory", **(extra or {})}})
+    return report
+
+
 def test_reliable_overlap_accretes_launch_match_onto_the_lead(layout):
     # IT 50% + Utilities 10% both clear -> overlaps the XLK×XLU pair -> match, detected_at preserved.
     pair = xcorr_lead_id([XLK, XLU])
@@ -38,7 +49,7 @@ def test_reliable_overlap_accretes_launch_match_onto_the_lead(layout):
     body = _syn_soi(60.0, [("SOFTWARE", 50.0), ("ELECTRIC UTILITIES", 10.0)])
     events = []
     res = soi_sensor.scan(LAUNCH, ACC, "Synthetic Tech", active, SoiIngest(layout), CFG, NOW,
-                          events.append, fetch_body=lambda: body)
+                          events.append, _advisory_to(events), fetch_body=lambda: body)
     assert res["action"] == "corroborated" and res["matched"] == [pair]
     (ev,) = events
     assert ev["lead"] == pair and ev["type"] == "launch" and ev["payload"]["corroboration"] == "match"
@@ -57,10 +68,10 @@ def test_freeze_is_idempotent_second_pass_reads_the_frozen_blob(layout):
         calls["n"] += 1
         return body
 
-    soi_sensor.scan(LAUNCH, ACC, "Synthetic Tech", active, soi, CFG, NOW, [].append, fetch_body=fetch)
+    soi_sensor.scan(LAUNCH, ACC, "Synthetic Tech", active, soi, CFG, NOW, [].append, _advisory_to([]), fetch_body=fetch)
     assert soi.has_frozen(LAUNCH["series_id"], ACC) and calls["n"] == 1
     # second pass: blob on file -> no refetch (drop-and-freeze, extract-on-read)
-    soi_sensor.scan(LAUNCH, ACC, "Synthetic Tech", active, soi, CFG, NOW, [].append, fetch_body=fetch)
+    soi_sensor.scan(LAUNCH, ACC, "Synthetic Tech", active, soi, CFG, NOW, [].append, _advisory_to([]), fetch_body=fetch)
     assert calls["n"] == 1
 
 
@@ -70,11 +81,13 @@ def test_unreliable_extraction_faults_on_system_and_accretes_nothing(layout):
     body = _syn_soi(60.0, [("SOFTWARE", 50.0), ("MADE UP INDUSTRY", 10.0)])   # unknown industry
     events = []
     res = soi_sensor.scan(LAUNCH, ACC, "Synthetic Tech", active, SoiIngest(layout), CFG, NOW,
-                          events.append, fetch_body=lambda: body)
+                          events.append, _advisory_to(events), fetch_body=lambda: body)
     assert res["action"] == "flagged_unreliable"
     (ev,) = events
     assert ev["lead"] == SYSTEM_LEAD and ev["type"] == "fault"
     assert ev["payload"]["subsystem"] == "soi" and "manual review" in ev["payload"]["message"]
+    # §10: a REVIEW-ADVISORY routed through report_advisory (not a raw emit fault), carrying its series_id.
+    assert ev["payload"]["category"] == "review-advisory" and ev["payload"]["series_id"] == LAUNCH["series_id"]
     assert not any(e["type"] == "launch" for e in events)          # no sector claim, no accretion
 
 
@@ -84,7 +97,7 @@ def test_no_overlap_records_dormant_on_system(layout):
     body = _syn_soi(60.0, [("SOFTWARE", 50.0), ("CAPITAL MARKETS", 10.0)])   # Financials, not Utilities
     events = []
     res = soi_sensor.scan(LAUNCH, ACC, "Synthetic Tech", active, SoiIngest(layout), CFG, NOW,
-                          events.append, fetch_body=lambda: body)
+                          events.append, _advisory_to(events), fetch_body=lambda: body)
     assert res["action"] == "dormant_no_match"
     (ev,) = events
     assert ev["lead"] == SYSTEM_LEAD and ev["payload"]["corroboration"] == "dormant_no_match"
@@ -102,7 +115,7 @@ def test_reliable_but_no_dominant_sector_records_no_dominant_sector_on_system(la
                            ("AUTOMOBILES", 9.0), ("MACHINERY", 6.0)])
     events = []
     res = soi_sensor.scan(LAUNCH, ACC, "Synthetic Tech", active, SoiIngest(layout), CFG, NOW,
-                          events.append, fetch_body=lambda: body)
+                          events.append, _advisory_to(events), fetch_body=lambda: body)
     assert res["action"] == "no_dominant_sector" and res["matched"] == []
     (ev,) = events
     assert ev["lead"] == SYSTEM_LEAD and ev["payload"]["corroboration"] == "no_dominant_sector"
@@ -114,5 +127,5 @@ def test_no_blob_and_no_fetch_is_a_noop_never_a_guess(layout):
     # The M5 runner supplies fetch_body; until then a fund with no frozen SOI is simply not resolved yet
     # (no event) rather than guessed.
     events = []
-    res = soi_sensor.scan(LAUNCH, ACC, "Synthetic Tech", {}, SoiIngest(layout), CFG, NOW, events.append)
+    res = soi_sensor.scan(LAUNCH, ACC, "Synthetic Tech", {}, SoiIngest(layout), CFG, NOW, events.append, _advisory_to(events))
     assert res["action"] == "none" and events == []

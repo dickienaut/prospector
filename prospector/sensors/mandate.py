@@ -35,11 +35,13 @@ def scan(series_id: str, ticker: str, cik: int,
          current_accession: str | None, current_doc: str | None, prior_accession: str | None,
          universe_series_ids: Iterable[str], active_lead_ids: Iterable[str],
          prospectus: ProspectusIngest, cfg: dict, now: str,
-         emit: Callable[[dict], object]) -> dict:
+         emit: Callable[[dict], object], report_advisory: Callable[..., None]) -> dict:
     """One per-fund mandate-diff pass. `current_accession`/`current_doc` are the fund's latest
     prospectus (from `edgar.latest_prospectus`); `prior_accession` is the last filing on file (the
     prior frozen accession). Returns a summary; emits nothing when there is no new filing or the
-    strategy is unchanged."""
+    strategy is unchanged. `emit` writes the normal `mandate.changed` accretion; `report_advisory`
+    (§10) raises the extraction-unreliable REVIEW-ADVISORY through the runner's ONE fault accumulator
+    — never a raw fault write (that bypass was the split-path bug)."""
     if not current_accession:
         return {"action": "none", "reason": "no prospectus filing on record"}
 
@@ -64,13 +66,13 @@ def scan(series_id: str, ticker: str, cik: int,
 
     if not d["reliable"]:
         # Flag, don't diff: a false mandate.changed is worse than a missed one (§4d extraction-unreliable).
-        emit({"ts": now, "lead": SYSTEM_LEAD, "type": "fault",
-              "payload": {"subsystem": "mandate", "series_id": series_id, "ticker": ticker,
-                          "accession": current_accession,
-                          "message": (f"new prospectus {current_accession} for {series_id}: "
-                                      f"strategy-section extraction unreliable ({d['reason']}) — "
-                                      "manual review")},
-              "schema": 1})
+        # §10: a REVIEW-ADVISORY (the sensor correctly PUNTED — nothing broke). Routed through the runner's
+        # fault-reporter so it lands in the ONE accumulator, is counted + surfaced, and pages ONLY if this
+        # fund touches a live lead (the reporter computes on_live_lead). NEVER a raw fault write.
+        report_advisory("mandate",
+                        f"new prospectus {current_accession} for {series_id}: strategy-section "
+                        f"extraction unreliable ({d['reason']}) — manual review",
+                        series_id, extra={"ticker": ticker, "accession": current_accession})
         return {"action": "flagged_unreliable", "reason": d["reason"], "accession": current_accession}
 
     if not d["changed"]:

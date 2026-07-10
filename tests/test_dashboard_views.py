@@ -156,6 +156,25 @@ def test_fault_log_is_recent_first(layout, registry):
     assert [f["subsystem"] for f in log] == ["sensor.xcorr", "ingest.mf_tickers"]
 
 
+def test_fault_log_carries_the_category_and_live_lead_flag(layout, registry):
+    # §10 taxonomy: fault_log distinguishes operational (something broke) from review-advisory (a sensor
+    # correctly punted), + the live-lead flag — so the email/dashboard render the two classes distinctly.
+    emit = _emit(layout, registry)
+    emit({"ts": "2026-07-05T00:00:00Z", "lead": SYSTEM_LEAD, "type": "fault",
+          "payload": {"subsystem": "ingest.prices", "message": "boom"}, "schema": 1})  # no category -> op
+    emit({"ts": "2026-07-06T00:00:00Z", "lead": SYSTEM_LEAD, "type": "fault",
+          "payload": {"subsystem": "mandate", "message": "unreliable — manual review",
+                      "category": "review-advisory", "series_id": "S1"}, "schema": 1})
+    emit({"ts": "2026-07-07T00:00:00Z", "lead": SYSTEM_LEAD, "type": "fault",
+          "payload": {"subsystem": "mandate", "message": "held fund reworded", "series_id": "S2",
+                      "category": "review-advisory", "on_live_lead": True}, "schema": 1})
+    by_ts = {f["ts"]: f for f in views.fault_log(registry)}
+    assert by_ts["2026-07-05T00:00:00Z"]["category"] == "operational"          # missing -> operational
+    assert by_ts["2026-07-06T00:00:00Z"]["category"] == "review-advisory"
+    assert by_ts["2026-07-06T00:00:00Z"]["on_live_lead"] is False
+    assert by_ts["2026-07-07T00:00:00Z"]["on_live_lead"] is True
+
+
 # === the weekly dead-man ============================================================================
 
 def test_heartbeat_ok_within_the_floor_broken_beyond_it():
