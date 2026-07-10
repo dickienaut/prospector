@@ -41,7 +41,8 @@ from prospector.fold.snapshots import SnapshotConfig, should_snapshot, write_sna
 from prospector.identity.resolution import ResolutionMachine
 from prospector.ingest.edgar import (SOI_AMBIGUOUS, SOI_ERROR, classify_soi_target,
                                      latest_prospectus, prospectus_history)
-from prospector.ingest.holdings import MembershipSnapshot, weight_covering_members
+from prospector.ingest.holdings import (MembershipSnapshot, priceable_members, priced_coverage,
+                                         weight_covering_members)
 from prospector.ingest.prices import (CALENDAR_PER_TRADING_DAY, PriceIngestError, build_panel,
                                        guard_live_source, required_pull_start)
 from prospector.ingest.prospectus import ProspectusIngest
@@ -460,8 +461,13 @@ def _tiingo_symbol(ticker: str) -> str:
     form (BRK-B). Normalize HERE, at the constituent-pull seam — NEVER in the shared price URL builder
     (a Tiingo-only quirk must not leak onto the yahoo/stooq sector-ETF path). A genuinely unresolvable
     symbol still hits Tiingo, 404s, and is dropped from the panel (a coverage gap, never a guess).
-    PRIMARY-SOURCE GATE (§9e decision record): verified only against clean fixtures — confirm against
-    the real XLF/XLC files (BRK.B, GOOG/GOOGL, FOX/FOXA) before the live run; extend, never fit silently."""
+    PRIMARY-SOURCE GATE (§9e, WIDENED): the caller (`_run_dispersion`) now excludes FOREIGN (non-USD) and
+    cash/placeholder lines at the membership boundary via `priceable_members`, so a foreign local ticker
+    that COLLIDES with a US symbol (`ENR`=Siemens abroad, also NYSE:Energizer) does NOT reach here to
+    silently return the wrong series. Before the live run, confirm on real XLF/XLC/XLY files that dual-class
+    (BRK.B, GOOG/GOOGL, FOX/FOXA) AND foreign/cash lines are handled — the dual-class dot/dash check alone
+    would NOT catch `ENR` (a clean-looking symbol pointing at the wrong company is a different failure
+    mode). See docs/2026-07-10-9e-constituent-symbol-resolution.md."""
     return ticker.strip().upper().replace(".", "-")
 
 
@@ -483,7 +489,7 @@ def _dispersion_last_event_types(deps: RunnerDeps) -> dict:
     return out
 
 
-def _build_constituent_panel(deps: RunnerDeps, member_map: dict, source: str, start: str, end: str):
+def _build_constituent_panel(deps: RunnerDeps, members, source: str, start: str, end: str):
     """Pull each constituent's adjusted closes BY TICKER (Tiingo is queried by symbol), then RE-KEY the
     panel columns to the constituent IDENTIFIER (CUSIP) — the dispersion sensor CONTRACT: the panel keys
     on the stable identifier (`membership.identifiers()`), the ticker is only the lookup attribute (HECO
@@ -492,13 +498,18 @@ def _build_constituent_panel(deps: RunnerDeps, member_map: dict, source: str, st
     `.rename()` would leave `attrs['sources']` ticker-keyed -> a silent source-lookup miss). The frozen
     price fossil stays keyed by the real Tiingo symbol (freeze happens inside `pull`, before the re-key).
 
+    `members` is an ordered iterable of `(ticker, identifier)` pairs — CUSIP-keyed FROM THE START (§9e
+    Option 2), NOT a `{ticker: identifier}` dict: SSGA writes cash lines with a non-unique `-` ticker, and
+    a dict would collapse two of them to one key, silently dropping a CUSIP. A list of pairs preserves
+    every CUSIP, and `build_panel` FAULTS on a genuinely duplicate CUSIP rather than fabricate.
+
     Per-constituent granularity: a constituent whose pull fails is DROPPED (a coverage gap — counted by
     absence, never an 8-names-404 fault storm); `corr_matrix_at` drops any name lacking a full window and
     `min_constituents` guards degeneracy, so a partial panel degrades honestly. Returns the re-keyed
     panel, or None if no constituent landed (the caller then SKIPS the basket, distinct from a
     holdings-fetch failure which FAULTS it — a broken feed is worth surfacing, a price gap is not)."""
     frames = []
-    for ticker, identifier in member_map.items():          # membership order (weight desc) preserved
+    for ticker, identifier in members:                     # membership order (weight desc) preserved
         try:
             frame = deps.price_ingest.pull(_tiingo_symbol(ticker), source, start, end)
             if frame.empty:
@@ -518,8 +529,10 @@ def _run_dispersion(deps: RunnerDeps, store, now: str, faults: list, runlog: Run
     """§4b dispersion — the runner's SECOND live spawner, SHADOW-wired (§9e burn-in). For each of the 11
     SPDR baskets resolvable THIS tick (`_universe_series_ids` from the mf map — never the empty registry,
     the trap that would leave it permanently inert): pull the basket's holdings THIS tick (freeze-before-
-    parse), truncate to the weight-covering membership (0.90), pull constituent prices BY TICKER, re-key
-    the panel to CUSIP identifiers (the sensor CONTRACT), reconstruct Schmitt state from the record (§9f),
+    parse), truncate to the weight-covering membership (0.90), FILTER to the constituents priceable by a
+    bare US ticker (§9e: drop foreign/cash/placeholder lines — never a silent wrong series; excluded
+    weight becomes a reported coverage gap), pull those prices BY TICKER, re-key the panel to CUSIP
+    identifiers (the sensor CONTRACT), reconstruct Schmitt state from the record (§9f),
     and drive `dispersion.scan` with `tick_due=True` (mirrors xcorr's per-run tick — daily when the runner
     runs daily; `dispersion.tick_cadence_days` stays advisory until M7 owns the schedule). A spawn is
     `shadow=true`: it starts the burn-in clock and `active_nonshadow` excludes it from the ceiling and
@@ -555,17 +568,31 @@ def _run_dispersion(deps: RunnerDeps, store, now: str, faults: list, runlog: Run
         lead_id = dispersion_lead_id(series_id)
         try:
             frame = deps.holdings_ingest.pull(series_id, ticker)      # freeze-before-parse (§3)
-            members, actual = weight_covering_members(frame, cov)
-            member_map = {m["ticker"]: m["identifier"]               # the ticker<->CUSIP re-key map
-                          for m in members if m.get("ticker") and m.get("identifier")}
-            if not member_map:
-                continue  # membership parsed but no ticker/CUSIP pairs — a coverage gap, skip (not a fault)
-            panel = _build_constituent_panel(deps, member_map, source, start, date_)
+            total_weight = float(frame["weight"].sum())               # denominator for honest coverage
+            members, _ = weight_covering_members(frame, cov)          # top-`cov` by weight (the O(n^2) bound)
+            # §9e constituent-symbol resolution: keep only lines priceable by a BARE US ticker BEFORE the
+            # pull — drop foreign (non-USD) listings (the `ENR`=Siemens/Energizer collision that silently
+            # returns the WRONG series) and cash/derivative/placeholder lines. Excluded weight is a reported
+            # coverage gap, never a silent wrong substrate. docs/2026-07-10-9e-constituent-symbol-resolution.md.
+            priceable = priceable_members(members)
+            if not priceable:
+                continue  # membership parsed but nothing priceable by a US ticker — a coverage gap, skip
+            # CUSIP-keyed from the start (Option 2): a `{ticker: id}` dict collapses two non-unique tickers
+            # (SSGA writes cash lines as `-`) into one key, silently dropping a CUSIP; a list of pairs keeps
+            # every CUSIP (and build_panel FAULTS on a genuinely duplicate CUSIP, never fabricates).
+            panel = _build_constituent_panel(
+                deps, [(m["ticker"], m["identifier"]) for m in priceable], source, start, date_)
             if panel is None:
                 continue  # no constituent priced — SKIP this basket (coverage gap, never a guess)
+            # Coverage honesty (§9e): report the fraction of TOTAL basket weight that ACTUALLY priced
+            # (after exclusions AND per-constituent price-pull drops), not the pre-pull top-`cov` sum — so
+            # the burn-in Q is trustworthy (you know what universe it was computed on). `members` on the
+            # snapshot is the priceable set (the intended price universe); the payload reads name/weight
+            # from it by the panel's CUSIP columns, so a 404-dropped name simply does not appear.
+            coverage_actual = priced_coverage(priceable, set(panel.columns), total_weight)
             membership = MembershipSnapshot(series_id=series_id, ticker=ticker, as_of=date_,
-                                            source="spdr", members=members, coverage_target=cov,
-                                            coverage_actual=actual)
+                                            source="spdr", members=priceable, coverage_target=cov,
+                                            coverage_actual=coverage_actual)
             dispersion_sensor.scan(series_id, ticker, membership, panel, deps.cfg, now,
                                    last_event_types.get(lead_id), store.append, tick_due=True)
             ran_any = True

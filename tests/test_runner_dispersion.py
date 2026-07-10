@@ -355,8 +355,8 @@ def test_constituent_panel_rekeys_ticker_to_identifier(layout):
     class _Deps:  # a thin stand-in — _build_constituent_panel only touches deps.price_ingest
         price_ingest = ingest
 
-    member_map = dict(zip(XLK_CUSIPS.keys(), XLK_CUSIPS.values()))  # {ticker: cusip}, membership order
-    panel = _build_constituent_panel(_Deps(), member_map, "tiingo", "2022-01-01", NOW[:10])
+    pairs = list(XLK_CUSIPS.items())               # (ticker, cusip) pairs, membership order (§9e Option 2)
+    panel = _build_constituent_panel(_Deps(), pairs, "tiingo", "2022-01-01", NOW[:10])
 
     assert list(panel.columns) == list(XLK_CUSIPS.values())          # columns are CUSIPs, not tickers
     assert set(panel.attrs["sources"]) == set(XLK_CUSIPS.values())   # the source map re-keyed too

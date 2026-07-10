@@ -313,8 +313,13 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
     P1-guarded like the sector panel. A spawn is `shadow=true` → it starts the 90-day burn-in and is
     **excluded from paging/ceiling/corroboration** (`active_nonshadow`) **and from the push trigger** —
     a §9e fix: `_compute_push` now gates on a *non-shadow* change, closing a latent §8a-vs-§4b collision
-    dispersion was the first spawner to make live. Generous payload captured; **the SPDR→Tiingo symbol
-    primary-source gate is pending the desktop live run.** See `2026-07-09-dispersion-vertical-9e.md`.
+    dispersion was the first spawner to make live. Generous payload captured. **Constituent-symbol
+    resolution (QA fix, `priceable_members`):** the pull now excludes FOREIGN (non-USD) and cash/placeholder
+    lines at the membership boundary — a real SSGA file's `ENR` (Siemens Energy, EUR) collides with
+    NYSE:Energizer, so a bare pull would silently return the wrong series (HECO one level down); excluded
+    weight is a reported coverage gap and `coverage_actual` reflects the *priced* set. The **widened**
+    SPDR→Tiingo symbol primary-source gate (dual-class + foreign/cash on real XLF/XLC/XLY) is pending the
+    desktop live run. See `2026-07-09-dispersion-vertical-9e.md`, `2026-07-10-9e-constituent-symbol-resolution.md`.
   - **launch-recording** (§4c, §9f frozen mf prior); the **§9d deferred SOI-corroboration retry**
     (`_run_soi_corroboration` — folds `sectors_unresolved` launches, `resolve_soi_target` fetches, and
     `soi.scan` reaches back preserving `detected_at`=T2, bounded by `retry_horizon_days`); the **§4d
@@ -336,13 +341,18 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   See `docs/decisions/2026-07-08-live-cadence-qa-fixes.md`.
 
 **Deferred (named, with reason):**
-- **§9e follow-ons** — the dispersion spawner itself is **built and shadow-wired** (above); what remains is
-  the **live `pros run` on real SPDR data + the SPDR→Tiingo symbol-mapping primary-source gate** (class
-  shares — BRK.B / GOOG·GOOGL / FOX·FOXA — which the synthetic fixtures don't carry, so a green suite does
-  not verify the mapping), and **broader holdings-intake coverage** (per-issuer / NPORT-P — a rate-widening,
-  not an unblock). The **"prove a spawner fires on real seed data"** rule got its first post-xcorr test here
-  (a shadow spawn on real holdings-derived membership + a genuinely-departing constituent panel). See
-  `2026-07-09-dispersion-vertical-9e.md`, `docs/decisions/2026-07-03-dispersion-shadow-first.md`.
+- **§9e follow-ons** — the dispersion spawner itself is **built and shadow-wired** (above), and the QA
+  constituent-symbol fix (foreign/cash/placeholder exclusion, CUSIP-keyed pull, honest coverage) is **built**;
+  what remains is the **live `pros run` on real SPDR data + the widened SPDR→Tiingo symbol primary-source
+  gate** — confirm on real XLF/XLC/XLY that dual-class (BRK.B / GOOG·GOOGL / FOX·FOXA) AND foreign/cash lines
+  are handled, and that a clean-looking colliding symbol like `ENR` does not silently return a US security's
+  series (the synthetic fixtures don't carry either case, so a green suite does not verify the live mapping);
+  **also confirm the live sector-grid firings — e.g. XLI — are computed on clean US-equity constituents.**
+  **Foreign CUSIP/SEDOL→US-symbol resolution (Option 3) and surfacing large per-basket coverage gaps are
+  deferred, named** (not-yet-live foreign scope; needs a primary-source mapping). Broader holdings-intake
+  coverage (per-issuer / NPORT-P) remains a rate-widening, not an unblock. The **"prove a spawner fires on
+  real seed data"** rule got its first post-xcorr test here. See `2026-07-09-dispersion-vertical-9e.md`,
+  `2026-07-10-9e-constituent-symbol-resolution.md`, `docs/decisions/2026-07-03-dispersion-shadow-first.md`.
 - **§10 — the email sender.** Weekly heartbeat/dead-man + state-change push, with **nuisance-alarm
   suppression** (push once on a *new* fault, then fall to the weekly heartbeat until it clears/changes) —
   the one place the architecture as-is would train the operator to ignore the alarm. Currently `NullNotifier`.
