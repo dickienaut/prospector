@@ -374,7 +374,7 @@ email:                     # §8a/§10 — the email sender (DEFAULT-class; tran
   # nothing); set it to enable sending. The app-password is a SECRET — it lives ONLY in the git-ignored
   # .env as PROSPECTOR_SMTP_PASSWORD (env, never here, never committed), exactly like TIINGO_API_TOKEN.
   # `pros run` fails fast if smtp_host is set but PROSPECTOR_SMTP_PASSWORD is unset.
-  smtp_host: null          # e.g. smtp.gmail.com  (null -> email disabled)
+  smtp_host: smtp.gmail.com          # e.g. smtp.gmail.com  (null -> email disabled)
   smtp_port: 587           # 587 STARTTLS (default) | 465 SSL
   smtp_security: starttls  # "starttls" | "ssl"
 
