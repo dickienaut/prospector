@@ -1,6 +1,6 @@
 """§9e constituent-symbol resolution — the acceptance gate for Claude Science's QA finding
 (`docs/dispersion_foreign_ticker_findings.md`), adjudicated in
-`docs/2026-07-10-9e-constituent-symbol-resolution.md`.
+`docs/decisions/2026-07-10-9e-constituent-symbol-resolution.md`.
 
 THE BUG: `_run_dispersion` pulls each constituent's price BY THE SPDR FILE'S TICKER, then re-keys the
 panel to CUSIP. The pull trusts the ticker to be a valid, unique, US-listed Tiingo symbol — but the

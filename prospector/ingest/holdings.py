@@ -62,7 +62,7 @@ BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.3
 # holding is a FOREIGN (non-USD) listing, whose local ticker may collide with an unrelated US symbol
 # (§9e: SIEMENS ENERGY's `ENR` is also NYSE:Energizer). `priceable_members` reads it to exclude foreign
 # lines from the §4b price universe — no third-party symbol feed, no wall breach. See
-# docs/2026-07-10-9e-constituent-symbol-resolution.md.
+# docs/decisions/2026-07-10-9e-constituent-symbol-resolution.md.
 MEMBER_COLUMNS = ("name", "ticker", "identifier", "weight", "sector", "local_currency")
 
 # A full holdings file's parsed FRACTIONAL weights sum to ~1.0 (a whole portfolio). This band is an
@@ -246,7 +246,7 @@ def weight_covering_members(holdings: pd.DataFrame, coverage: float = 0.90) -> t
 # basket is priced on its US-listed core and the excluded weight is a REPORTED coverage gap — never a
 # silent wrong-series substitution. This is *never-anchor-on-a-ticker* (HECO, §2/§5) one level down; the
 # identity key must be enforced end-to-end, not just at the panel. Decision:
-# docs/2026-07-10-9e-constituent-symbol-resolution.md (Option 1 + Option 2, defer Option 3).
+# docs/decisions/2026-07-10-9e-constituent-symbol-resolution.md (Option 1 + Option 2, defer Option 3).
 
 # A plausible US common-stock ticker: 1–5 letters + an optional class suffix (BRK.B / BF.B — `_tiingo_
 # symbol` later dashes the dot). Rejects the un-priceable forms in a real file: `-`/blank (SSGA's cash &
@@ -285,7 +285,7 @@ def priceable_members(members: list[dict]) -> list[dict]:
     wrong substrate (the `ENR` collision) or a fabricated fill. Membership order (weight desc) is
     preserved. Foreign CUSIP/SEDOL→US-symbol resolution (Option 3) is the deferred 'complete' fix; until a
     resolution slice earns it, exclusion-with-a-reported-gap is the honest default. Decision record:
-    docs/2026-07-10-9e-constituent-symbol-resolution.md."""
+    docs/decisions/2026-07-10-9e-constituent-symbol-resolution.md."""
     return [m for m in members if _is_priceable_us_equity(m)]
 
 

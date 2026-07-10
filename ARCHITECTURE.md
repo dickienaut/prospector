@@ -319,7 +319,9 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
     NYSE:Energizer, so a bare pull would silently return the wrong series (HECO one level down); excluded
     weight is a reported coverage gap and `coverage_actual` reflects the *priced* set. The **widened**
     SPDR→Tiingo symbol primary-source gate (dual-class + foreign/cash on real XLF/XLC/XLY) is pending the
-    desktop live run. See `2026-07-09-dispersion-vertical-9e.md`, `2026-07-10-9e-constituent-symbol-resolution.md`.
+    desktop live run. See `docs/decisions/2026-07-09-dispersion-vertical-9e.md`,
+    `docs/decisions/2026-07-10-9e-constituent-symbol-resolution.md` (decision) +
+    `docs/decisions/2026-07-10-9e-constituent-symbol-resolution-build.md` (build record).
   - **launch-recording** (§4c, §9f frozen mf prior); the **§9d deferred SOI-corroboration retry**
     (`_run_soi_corroboration` — folds `sectors_unresolved` launches, `resolve_soi_target` fetches, and
     `soi.scan` reaches back preserving `detected_at`=T2, bounded by `retry_horizon_days`); the **§4d
@@ -352,7 +354,8 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   deferred, named** (not-yet-live foreign scope; needs a primary-source mapping). Broader holdings-intake
   coverage (per-issuer / NPORT-P) remains a rate-widening, not an unblock. The **"prove a spawner fires on
   real seed data"** rule got its first post-xcorr test here. See `2026-07-09-dispersion-vertical-9e.md`,
-  `2026-07-10-9e-constituent-symbol-resolution.md`, `docs/decisions/2026-07-03-dispersion-shadow-first.md`.
+  `docs/decisions/2026-07-10-9e-constituent-symbol-resolution.md` (+ `-build.md` record),
+  `docs/decisions/2026-07-03-dispersion-shadow-first.md`.
 - **§10 — the email sender.** Weekly heartbeat/dead-man + state-change push, with **nuisance-alarm
   suppression** (push once on a *new* fault, then fall to the weekly heartbeat until it clears/changes) —
   the one place the architecture as-is would train the operator to ignore the alarm. Currently `NullNotifier`.

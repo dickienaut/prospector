@@ -467,7 +467,7 @@ def _tiingo_symbol(ticker: str) -> str:
     silently return the wrong series. Before the live run, confirm on real XLF/XLC/XLY files that dual-class
     (BRK.B, GOOG/GOOGL, FOX/FOXA) AND foreign/cash lines are handled — the dual-class dot/dash check alone
     would NOT catch `ENR` (a clean-looking symbol pointing at the wrong company is a different failure
-    mode). See docs/2026-07-10-9e-constituent-symbol-resolution.md."""
+    mode). See docs/decisions/2026-07-10-9e-constituent-symbol-resolution.md."""
     return ticker.strip().upper().replace(".", "-")
 
 
@@ -573,7 +573,7 @@ def _run_dispersion(deps: RunnerDeps, store, now: str, faults: list, runlog: Run
             # §9e constituent-symbol resolution: keep only lines priceable by a BARE US ticker BEFORE the
             # pull — drop foreign (non-USD) listings (the `ENR`=Siemens/Energizer collision that silently
             # returns the WRONG series) and cash/derivative/placeholder lines. Excluded weight is a reported
-            # coverage gap, never a silent wrong substrate. docs/2026-07-10-9e-constituent-symbol-resolution.md.
+            # coverage gap, never a silent wrong substrate. docs/decisions/2026-07-10-9e-constituent-symbol-resolution.md.
             priceable = priceable_members(members)
             if not priceable:
                 continue  # membership parsed but nothing priceable by a US ticker — a coverage gap, skip
