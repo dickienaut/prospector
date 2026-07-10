@@ -71,7 +71,7 @@ path places, sizes, or recommends a trade.
 | `backtest/corroboration.py` | Cross-stream corroboration scoring (sector→keyword) | `score_all()` |
 | `backtest/beta_diagnostic.py` | **Read-only** crash-flags diagnostic (never wired to the sensor) | `scoped_beta_slice()`, `two_clock_read()` |
 | `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push. WIRED: §9a sector-prices panel ingest (`_build_sector_panel`, P1 guard), **§4a xcorr — the PRIMARY live spawner** (`_run_xcorr`; universe→series_id from the mf map, §9f state, LIVE/paging/ceiling-counting), launch-recording (§4c), the §9d deferred SOI-corroboration retry, the §4d mandate-diff (§9c frozen-prior), **§4b dispersion — the 2nd live spawner, in SHADOW** (`_run_dispersion`, §9e; membership from the live SPDR feed, shadow-gated push). SLOT: rebalance (§4d holdings-diff) | `run_tick()` |
-| `runner/deps.py` / `runner/notify.py` / `runner/runlog.py` | Injected seam bundle; the `Notifier` transport (`NullNotifier` until the M5 email slice); per-tick run-log (§9g, its own `runs` table, telemetry — never a lead event) | `RunnerDeps`, `NullNotifier`, `RunLog`, `write_run_log()` |
+| `runner/deps.py` / `runner/notify.py` / `runner/email_render.py` / `runner/runlog.py` | Injected seam bundle; the `Notifier` transport — **`NullNotifier`** (offline / un-configured runs) or **`SmtpNotifier`** (§10 email sender; app-password in a `_Secret` holder, env-only, injectable send seam); **`email_render`** — the pure §8a templating of folds → (subject, body), reusing `dashboard/views.*`; per-tick run-log (§9g, its own `runs` table, telemetry — never a lead event) | `RunnerDeps`, `NullNotifier`, `SmtpNotifier`, `email_render`, `RunLog`, `write_run_log()` |
 | `cli/main.py` | The `pros` CLI — read surfaces + verdict/identity/backtest + the `run` cadence entrypoint | `cli` |
 | `dashboard/views.py` / `dashboard/app.py` / `dashboard/export.py` | The §11 **read-only** Streamlit dashboard — pure, tested view-models (folds of the record) + a thin `st.*` render shell + a **pure §8b board-snapshot export** (one self-describing markdown of the whole board, tick-collapsed timelines; + sortable-panel CSV). No recompute/autorefresh/run-now; the export re-reads the same view-models, so it can't drift. Streamlit is an OPTIONAL extra (`uv sync --extra dashboard`); `views`/`export` are streamlit-free | `rank_active_leads()`, `dormant_pile()`, `board_snapshot_markdown()`, `main()` |
 
@@ -334,6 +334,19 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
     streamlit-free, no writes/recompute) + a thin `st.*` shell (`app.py`, an OPTIONAL extra
     `uv sync --extra dashboard`); read-only **enforced at the substrate** (`mode=ro`), no
     recompute/autorefresh/run-now; the firewall grep guards it. See `2026-07-07-dashboard-11.md`.
+  - **§10 the email sender — built** (`runner/notify.py` `SmtpNotifier` + `runner/email_render.py`):
+    immediate **state-change / fault push** + the weekly **heartbeat/dead-man**, as **deterministic
+    templating of folds** (pure `email_render`, reusing the same `dashboard/views.*` the dashboard shows —
+    no LLM, no drift). The **push decision stays in the runner** (the sender is a dumb templater): the
+    §9e shadow-push gate **plus** the §10 **nuisance-alarm suppression** — `_compute_push` pages once on a
+    *new/changed* fault (signature vs the prior run-log's faults, from the fossil) then falls to the
+    heartbeat while it persists (the GPWS "cried wolf" mode C.1 forbids). Transport = **SMTP app-password**
+    (env-only `PROSPECTOR_SMTP_PASSWORD`, a `_Secret` holder, never config/URL/log; `pros run` fails fast if
+    `email.smtp_host` is set but the password is unset). `pros run --heartbeat` fires the weekly email (the
+    dead-man **rides the tick**, so it proves the whole pipeline ran). **The dead-man's silence=broken
+    guarantee arms at M7**, when the runner is scheduled — the sender is built now, the cadence is not yet
+    live. Also closes the **paid-Tiingo-lapse** dead-man (a dead key empties the panel via soft faults; the
+    7-day heartbeat catches it, once scheduled). See `docs/decisions/2026-07-10-10-email-sender.md`.
 - **Live + hardened.** A real `pros run` fired **5 live xcorr leads** on the SPDR grid (XLU×XLV, XLRE×XLY,
   XLC×XLF, XLC×XLV, XLRE×XLV — the correlated structure collapses these into ~2–3 independent events, XLV
   recurring). The **N1–N10** going-live QA fix batch then closed the first wave of bugs — the read-only
@@ -356,9 +369,9 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   real seed data"** rule got its first post-xcorr test here. See `2026-07-09-dispersion-vertical-9e.md`,
   `docs/decisions/2026-07-10-9e-constituent-symbol-resolution.md` (+ `-build.md` record),
   `docs/decisions/2026-07-03-dispersion-shadow-first.md`.
-- **§10 — the email sender.** Weekly heartbeat/dead-man + state-change push, with **nuisance-alarm
-  suppression** (push once on a *new* fault, then fall to the weekly heartbeat until it clears/changes) —
-  the one place the architecture as-is would train the operator to ignore the alarm. Currently `NullNotifier`.
+- **M7 scheduling** — the email sender (§10) is **built** (above), but the heartbeat/dead-man's
+  *silence=broken* guarantee only truly arms once the runner is **scheduled** (a dead-man on a manually-run
+  `pros run` tells you nothing). SMTP is the v1 transport; **SES** stays deferred with M7's deploy target.
 - **Rebalance runner wiring** — the accretion sensor (`sensors/rebalance.py`) is built, but its per-tick
   wiring is a SLOT; it can now reuse the **§9e holdings/constituent vertical** (built) for its holdings-diff.
 - **Milestone 3b** — dispersion **PIT backtest** + the **NPORT-P parser** + delisted-price coverage —

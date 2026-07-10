@@ -13,12 +13,11 @@ nothing across ticks — all between-tick state is recovered from the fossil rec
 cold runs over the same store produce identical events.
 
 SCOPE — grown well past the thin spine. WIRED, in CONTRACT run order: config honesty (§9-1), the
-§9a mf-tickers + sector-prices ingest, §4a xcorr (the PRIMARY live lead-spawner), §4c launch-
-recording, the §9d deferred SOI-corroboration retry, and the §4d mandate-diff (§9c frozen-prior).
+§9a mf-tickers + sector-prices ingest, §4a xcorr (the PRIMARY live lead-spawner), §4b dispersion
+(§9e shadow), §4c launch-recording, the §9d deferred SOI-corroboration retry, the §4d mandate-diff
+(§9c frozen-prior), and §10 the email sender (heartbeat/state-change/fault push, nuisance-suppressed).
 Remaining spec-cited SLOTS, each additive in its CONTRACT position:
-  §4b dispersion + §9e shadow clock  — needs the holdings/constituent-price vertical (a later slice)
-  §4d rebalance (holdings-diff)      — needs holdings ingest (same vertical)
-  §10 real email sender              — NullNotifier here; the sender is a later slice
+  §4d rebalance (holdings-diff)      — needs holdings ingest (the §9e vertical, now built — unblocked)
 
 THE FOUR SUBTLE BITS (spec §9, "comment the why") — each encodes a CONTRACT that is not obvious
 from the mechanics; they are marked inline where they live:
@@ -36,6 +35,7 @@ from collections import Counter
 from datetime import date, timedelta
 
 from prospector.config import check_config_honesty
+from prospector.dashboard import views
 from prospector.fold.fold import active_nonshadow, fold, state_changed
 from prospector.fold.snapshots import SnapshotConfig, should_snapshot, write_snapshot
 from prospector.identity.resolution import ResolutionMachine
@@ -47,8 +47,9 @@ from prospector.ingest.prices import (CALENDAR_PER_TRADING_DAY, PriceIngestError
                                        guard_live_source, required_pull_start)
 from prospector.ingest.prospectus import ProspectusIngest
 from prospector.ingest.soi import SoiIngest
+from prospector.runner import email_render
 from prospector.runner.deps import RunnerDeps
-from prospector.runner.runlog import RunLog, write_run_log
+from prospector.runner.runlog import RunLog, recent_runs, write_run_log
 from prospector.sensors import dispersion as dispersion_sensor
 from prospector.sensors import launch as launch_sensor
 from prospector.sensors import mandate as mandate_sensor
@@ -125,20 +126,73 @@ def _load_prior_mf_snapshot(layout, current_date: str):
     return json.loads((edgar_root / dates[-1] / "company_tickers_mf.json").read_bytes())
 
 
-def _compute_push(page_worthy: dict, faults: list) -> bool:
-    """§10 CONTRACT — the push is pinned to a NON-SHADOW `fold.state_changed`: push iff some lead is
-    non-shadow *after* a {status, shadow, verdict} change (that is exactly what `page_worthy` holds —
-    see `_materialize_snapshots`), OR any fault (a fault ALWAYS pushes — the dead-man beats silence).
+def _fault_signature(faults: list) -> frozenset:
+    """A tick's fault set as an order-insensitive `(subsystem, message)` signature — the comparand for the
+    §10 nuisance-alarm suppression. MESSAGE-EXACT by design: any message delta is a *changed* fault (it
+    pages), an identical repeat is a nuisance (it does not). This is the line the build note draws — a
+    'suppress recurring faults' rule must never swallow a *changed* fault."""
+    return frozenset((f.get("subsystem"), f.get("message")) for f in faults)
 
-    §9e resolved a two-CONTRACT collision here: §8a says push on state change, §4b says a SHADOW lead
-    is excluded from paging. Dispersion is the first shadow spawner, so a shadow spawn (`status:
-    None->active`, `shadow: True`) IS a state change — but must NOT page. Gating on *non-shadow after
-    the change* suppresses a shadow spawn/tick/revert (the fold leaves `shadow=True` on a revert),
-    leaves every xcorr non-shadow path unchanged, and pages a future promotion (`shadow: true->false`)
-    for free. The runlog's `changed_leads` still records ALL changes (the fossil stays whole); only the
-    push decision reads the non-shadow subset. Ticks, silent corroborations, and queue mechanics
-    produce no {status,shadow,verdict} delta at all, so they do not push — the anti-slot-machine cadence."""
-    return bool(page_worthy) or bool(faults)
+
+def _load_prior_faults(layout, registry) -> list:
+    """The immediately-prior run's fault list, read from the FOSSIL RECORD — the run-log FILE (the `runs`
+    table indexes only `fault_count`; the full list lives in the JSON). This is the nuisance-suppression
+    comparand: 'is this tick's fault new/changed vs the last run?'. Same 'prior from the frozen record,
+    never a side cache' discipline as `_load_prior_mf_snapshot`. At push time in `run_tick`'s finally THIS
+    run's log is not yet written, so `recent_runs(...)[0]` is genuinely the prior run. Returns [] when there
+    is no prior run (first tick ever) or the file is unreadable — so a first/again fault always pages."""
+    try:
+        rows = recent_runs(registry, limit=1)
+        if not rows:
+            return []
+        path = layout.root / rows[0]["file_path"]
+        return json.loads(path.read_bytes()).get("faults", []) or []
+    except Exception:
+        return []  # a missing/corrupt prior run-log must not blind the push — treat as 'no prior fault'
+
+
+def _compute_push(page_worthy: dict, faults: list, prior_faults: list) -> bool:
+    """§10 CONTRACT — push iff a NON-SHADOW `fold.state_changed` OR a NEW/changed fault.
+
+    (1) NON-SHADOW STATE CHANGE. `page_worthy` is exactly the leads non-shadow *after* a
+    {status,shadow,verdict} change (see `_materialize_snapshots`). §9e resolved a two-CONTRACT collision:
+    §8a says push on state change, §4b says a SHADOW lead is excluded from paging. A dispersion shadow
+    spawn (`status: None->active`, `shadow: True`) IS a state change but must NOT page — gating on
+    non-shadow-after-the-change suppresses shadow spawn/tick/revert (the fold leaves `shadow=True` on a
+    revert), leaves every xcorr path unchanged, and pages a future promotion (`shadow: true->false`) free.
+
+    (2) NUISANCE-ALARM SUPPRESSION (§10 — the one thing the sender slice owns beyond plumbing). The naive
+    'or bool(faults)' paged on EVERY tick a fault recurred — the GPWS 'pull-up that cried wolf' failure
+    mode that trains the operator to ignore the alarm. Instead: push once on a NEW or CHANGED fault (the
+    signature differs from the immediately-prior run's), then fall to the weekly heartbeat while the SAME
+    fault persists (visible there, not silent). A *cleared* fault does not push (nothing faulted this
+    tick) — it is reflected in the next heartbeat. The runlog's `changed_leads`/`faults` still record ALL
+    of it (the fossil stays whole); only the push decision is suppressed. Ticks, silent corroborations,
+    and queue mechanics produce no delta at all, so they never push — the anti-slot-machine cadence."""
+    if page_worthy:
+        return True
+    if not faults:
+        return False  # cleared/quiet — a resolved fault rides the next heartbeat, never a push
+    return _fault_signature(faults) != _fault_signature(prior_faults)
+
+
+def _email_context(deps, store, now: str, date: str, runlog: RunLog, changed_leads: dict,
+                   faults: list, pushed: bool) -> dict:
+    """Gather the §8a email folds ONCE — a bounded read of the record THIS tick just wrote (the same
+    `views.*` view-models the dashboard/board-snapshot render, so the email cannot drift from the screen).
+    Synthesizes THIS run as the newest run row so the heartbeat's dead-man reflects the tick that is
+    *sending* it (this run-log is not written until after the push). A read-only ResolutionMachine serves
+    the manual queue (None if it cannot be opened -> an empty queue, never a crash)."""
+    states = views.fold_all_leads(deps.registry)
+    this_run = {"ts": now, "date": date, "run_id": deps.run_id, "pushed": pushed,
+                "fault_count": len(faults), "config_hash": runlog.config_hash}
+    runs = [this_run, *recent_runs(deps.registry)]
+    try:
+        machine = ResolutionMachine(deps.registry, store, None, None)
+    except Exception:
+        machine = None  # the queue degrades to empty; a missing resolution_queue never blanks the email
+    return email_render.build_context(deps.registry, states, runs, machine, deps.cfg, now,
+                                      faults=faults, changed_leads=changed_leads, trigger="run")
 
 
 def run_tick(deps: RunnerDeps) -> RunLog:
@@ -194,15 +248,32 @@ def run_tick(deps: RunnerDeps) -> RunLog:
         except Exception as e:  # a snapshot-phase failure still writes the run-log
             _emit_fault(store, "snapshots", e, now, faults)
 
-        pushed = _compute_push(page_worthy, faults)  # §4b/§9e: NON-shadow changes (+ faults) page
-        if pushed:
-            # NullNotifier in the skeleton: records the intended push, sends nothing (§10). A send
-            # failure is itself a soft fault — it must not lose the run-log.
+        # §10 NUISANCE-ALARM SUPPRESSION: compare this tick's faults to the prior run's (from the fossil,
+        # before THIS run-log is written), so a recurring identical fault rides the heartbeat, not a page.
+        prior_faults = _load_prior_faults(deps.layout, deps.registry)
+        pushed = _compute_push(page_worthy, faults, prior_faults)  # NON-shadow change OR new/changed fault
+
+        # §10 SENDER: build the §8a email folds ONCE, then dispatch. A state-change/fault push AND the
+        # weekly heartbeat can BOTH fire this tick (a change on a weekly run). The notifier RAISES on a
+        # send failure — caught here as a soft `notify` fault so a broken sender never loses the run-log
+        # (a fault email beats silence; the dead-man still records). NullNotifier just records the context.
+        if pushed or deps.heartbeat:
             try:
-                deps.notifier.push({"date": date, "run_id": deps.run_id,
-                                    "changed_leads": changed_leads, "fault_count": len(faults)})
-            except Exception as e:  # a send failure is a soft fault — it must not lose the run-log
-                _emit_fault(store, "notify", e, now, faults)
+                ctx = _email_context(deps, store, now, date, runlog, changed_leads, faults, pushed)
+            except Exception as e:  # a fold/context failure must not abort the run-log write
+                ctx = None
+                _emit_fault(store, "notify.context", e, now, faults)
+            if ctx is not None:
+                if pushed:
+                    try:
+                        deps.notifier.push(ctx)
+                    except Exception as e:  # a send failure is a soft fault — it must not lose the run-log
+                        _emit_fault(store, "notify", e, now, faults)
+                if deps.heartbeat:  # the weekly dead-man — fires regardless of activity (cadence arms at M7)
+                    try:
+                        deps.notifier.heartbeat(ctx)
+                    except Exception as e:
+                        _emit_fault(store, "notify.heartbeat", e, now, faults)
 
         runlog.changed_leads = changed_leads
         runlog.pushed = pushed
