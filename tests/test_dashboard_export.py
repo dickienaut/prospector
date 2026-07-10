@@ -59,8 +59,12 @@ def _seed(layout, registry) -> None:
 
     # A dormant launch (survey + a dormant disposition) and a fault, both on _system.
     store.append({"ts": "2026-07-06T00:00:00Z", "lead": "_system", "type": "launch.unverified",
-                  "payload": {"ticker": "NEWX", "series_id": "S000000009", "name": "New Thing ETF",
+                  "payload": {"ticker": "NEWX", "series_id": "S000000009",
                               "detected_at": "2026-07-06T00:00:00Z"}, "schema": 1})
+    # An UNLISTED detection (empty mf symbol) — filtered from the survey table, KEPT COUNTED as coverage.
+    store.append({"ts": "2026-07-06T00:00:07Z", "lead": "_system", "type": "launch.unverified",
+                  "payload": {"ticker": "", "series_id": "S000000BAD",
+                              "detected_at": "2026-07-06T00:00:07Z"}, "schema": 1})
     store.append({"ts": "2026-07-06T00:00:05Z", "lead": "_system", "type": "launch",
                   "payload": {"series_id": "S000000009", "ticker": "NEWX",
                               "corroboration": "sectors_unresolved", "concentration_sectors": []},
@@ -121,6 +125,16 @@ def test_report_serializes_the_view_models_no_drift(layout, registry):
     # Registry health matches the view-model (1 live, 1 shadow, 1 reverted).
     h = views.registry_health(states)
     assert f"**active_live**: {h['active_live']}" in doc and f"**reverted**: {h['reverted']}" in doc
+
+
+def test_launches_section_drops_name_filters_unlisted_but_keeps_the_count(layout, registry):
+    _seed(layout, registry)
+    doc = _render(layout, registry)
+    section = doc.split("## Launches (survey)")[1].split("## ")[0]
+    assert "| ts | ticker | series_id | detected_at |" in section      # no `name` column
+    assert "NEWX" in section                                           # a listed launch is surveyed
+    assert "S000000BAD" not in section                                 # the unlisted series is NOT listed ...
+    assert "1 unlisted (no-ticker) detection kept in the record" in section  # ... but kept COUNTED (coverage)
 
 
 # === the manifest (self-describing header) ========================================================

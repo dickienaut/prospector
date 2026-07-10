@@ -104,6 +104,11 @@ def test_launch_panel_and_dormant_pile_over_the_record(layout, registry):
     emit({"ts": "2026-07-06T00:00:00Z", "lead": SYSTEM_LEAD, "type": "launch.unverified",
           "payload": {"ticker": "NEWY", "series_id": "S000000010", "detected_at": "2026-07-06T00:00:00Z"},
           "schema": 1})
+    # An UNLISTED detection — a series the mf feed lists with an empty symbol (no ticker). It must be
+    # FILTERED from the survey table but KEPT COUNTED as a coverage fact.
+    emit({"ts": "2026-07-06T00:00:00Z", "lead": SYSTEM_LEAD, "type": "launch.unverified",
+          "payload": {"ticker": "", "series_id": "S000000BAD", "detected_at": "2026-07-06T00:00:00Z"},
+          "schema": 1})
     emit({"ts": "2026-07-06T00:00:00Z", "lead": SYSTEM_LEAD, "type": "launch",
           "payload": {"series_id": "S000000009", "ticker": "NEWX",
                       "corroboration": "holdings_unavailable"}, "schema": 1})
@@ -115,7 +120,11 @@ def test_launch_panel_and_dormant_pile_over_the_record(layout, registry):
                       "corroboration": "match"}, "schema": 1})
 
     launches = views.launch_panel(registry)
-    assert [l["ticker"] for l in launches] == ["NEWY", "NEWX"]  # most recent first
+    assert [l["ticker"] for l in launches] == ["NEWY", "NEWX"]  # most recent first; the blank-ticker one gone
+    assert "S000000BAD" not in {l["series_id"] for l in launches}   # the unlisted series is NOT surveyed
+    assert all("name" not in l for l in launches)                   # the structurally-empty name column is dropped
+    assert set(launches[0]) == {"ts", "ticker", "series_id", "detected_at"}
+    assert views.unlisted_launch_count(registry) == 1              # ... but KEPT COUNTED (coverage fact)
 
     pile = views.dormant_pile(registry)
     assert pile["total"] == 2                                   # the MATCH is excluded (on a lead)

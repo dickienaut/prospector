@@ -69,3 +69,28 @@ no-drift, manifest + over-ceiling banner, all-active-incl-shadow-but-not-reverte
 csv). Existing `test_dashboard_app.py` / `test_dashboard_readonly.py` still pass — the buttons add no write;
 the read-only-substrate firewall is untouched. Independent of §9e and §10 — touches only the read-only
 dashboard.
+
+## Follow-up (review feedback): Launches panel legibility
+
+The first board-snapshot review surfaced two issues in the **Launches (survey)** section — **all names
+blank** and **one blank ticker**. Both traced to source (not export bugs — the export faithfully renders
+`launch_panel`, so the same shows on the live dashboard): the mf-tickers feed carries no name (the launch
+sensor records `name_raw=None` by design — a deferred enrichment), and a mf series with an empty `symbol` is
+recorded as a `("", seriesId)` launch. Fixed as **pure view-model changes** (owner + design thread), fixing
+the live dashboard and the export at once:
+
+- **Dropped the `name` column** from `launch_panel` + the export — structurally empty at the survey stage; a
+  column of "—" reads as missing-data where the truth is not-yet-enriched. It returns when the deferred
+  name-enrichment slice is built (unchanged on the deferred list — building it now to fill a cosmetic gap
+  would be scope-creep, so it was NOT built).
+- **Filtered unlisted (empty-ticker) rows** from the survey table — a survey of LISTED launches shouldn't
+  list a no-ticker series. **A view filter, NOT a launch-detection change** (the capture-broadly/filter-at-
+  the-view discipline: the §4c sensor and the append-only record keep every detection). Crucially, the
+  filtered row is **kept counted as a coverage fact** (`views.unlisted_launch_count` → an "N unlisted
+  (no-ticker) detections kept in the record" line on the panel + export) — a no-ticker series is a real
+  blind spot (a fund the universe can't yet resolve to a ticker); filtering it from the table must not make
+  it silently vanish from the visible surface.
+
+**Upstream nuance noted, NOT fixed here:** a series first seen with an empty symbol is *sticky* — `register_
+launch` dedups on `series_id`, so a later real ticker for the same series isn't re-recorded (the blank-ticker
+`launch.unverified` stands). A known launch-sensor consideration; out of scope for this view-model fix.

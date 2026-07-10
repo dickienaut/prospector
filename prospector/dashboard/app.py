@@ -161,9 +161,14 @@ def main() -> None:
                         "vertical). This panel fills once it ships shadow, starting the 90-day clock.")
 
         with st.expander("Launches (survey)"):
-            st.caption("Recorded launch detections — survey-only, never pushed (§11).")
+            st.caption("Recorded launch detections of LISTED funds — survey-only, never pushed (§11).")
             st.dataframe(_rows_to_table(launches) if launches else [{"—": "no launches recorded"}],
                          width="stretch", hide_index=True)
+            _unlisted = views.unlisted_launch_count(registry)
+            if _unlisted:  # a no-ticker series is a coverage fact, kept visible (not silently filtered away)
+                st.caption(f"{_unlisted} unlisted (no-ticker) detection{'' if _unlisted == 1 else 's'} kept "
+                           "in the record, omitted from this listed-launch survey (a series the mf feed "
+                           "lists with no symbol — a fund the universe can't yet resolve to a ticker).")
 
         with st.expander("Macro catalog"):
             st.caption("Real-but-off-thesis (`off-thesis-real`) verdicts — read-only context for human "

@@ -150,18 +150,36 @@ def fault_log(registry, limit: int = 100) -> list[dict]:
 
 
 def launch_panel(registry) -> list[dict]:
-    """The read-only **launch panel**: recorded launch DETECTIONS (`launch.unverified` on `_system`),
-    most recent first. Survey-only, never pushed (spec §11) — a cluster of unmatched launches in a novel
-    area is itself worth pulling up, not a stream that pages. Bounded today: corroboration (the `launch`
-    disposition events) is gated on the holdings-corroboration SLOT, so most rows are raw detections."""
-    rows = registry.events_by_type("launch.unverified")
+    """The read-only **launch panel**: recorded launch DETECTIONS of LISTED funds (`launch.unverified` on
+    `_system`, WITH a ticker), most recent first. Survey-only, never pushed (spec §11) — a cluster of
+    unmatched launches in a novel area is itself worth pulling up, not a stream that pages.
+
+    Two deliberate omissions (both honest, neither hides data):
+    - The fund **name is not surfaced** — the mf-tickers feed carries none (the launch sensor records
+      `name_raw=None`), so it is structurally empty at the survey stage; the column returns when the deferred
+      name-enrichment slice lands (see sensors/launch.py). A column of "—" would signal missing-data where
+      the truth is not-yet-enriched.
+    - **Unlisted detections** (a series the mf feed lists with an EMPTY symbol — a fund with no ticker) are
+      filtered from this listed-launch table, but KEPT COUNTED as a coverage fact (`unlisted_launch_count`) —
+      the append-only record keeps every detection; this is a view filter, never a silently-hidden blind spot."""
     out = []
-    for r in rows:
+    for r in registry.events_by_type("launch.unverified"):
         p = _payload(r)
-        out.append({"ts": r["ts"], "ticker": p.get("ticker"), "series_id": p.get("series_id"),
-                    "name": p.get("name") or p.get("name_raw"), "detected_at": p.get("detected_at") or r["ts"]})
+        ticker = p.get("ticker")
+        if not ticker:  # an unlisted series (empty mf symbol) — counted below, not a listed-launch survey row
+            continue
+        out.append({"ts": r["ts"], "ticker": ticker, "series_id": p.get("series_id"),
+                    "detected_at": p.get("detected_at") or r["ts"]})
     out.sort(key=lambda e: e["ts"], reverse=True)
     return out
+
+
+def unlisted_launch_count(registry) -> int:
+    """The count of `launch.unverified` detections with NO ticker — a series the mf feed lists with an empty
+    symbol (a fund the universe detected but can't yet resolve to a ticker). `launch_panel` filters these out
+    of the listed-launch survey; this keeps them a VISIBLE coverage fact (never a silently-hidden blind spot).
+    The append-only record keeps every detection regardless."""
+    return sum(1 for r in registry.events_by_type("launch.unverified") if not _payload(r).get("ticker"))
 
 
 def dormant_pile(registry) -> dict:
