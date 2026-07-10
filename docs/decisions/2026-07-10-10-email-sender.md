@@ -93,9 +93,54 @@ schedules it. §10 is the piece that makes that failure mode catchable.
 - **HTML email** — the v1 body is plain-text/markdown-ish (deterministic, simple); no HTML.
 - **Rebalance runner wiring** — a separate M4-into-runner slice (unblocked by §9e), not bundled here.
 
+## Follow-up (QA, same day) — the nuisance-suppression is defeated by a volatile fault message
+
+Claude Science's cold real-data pass found a **HIGH**-severity gap, reproduced end-to-end (not inferred):
+`_fault_signature` was **message-exact** (`(subsystem, message)`), which is right only if a persisting fault
+renders the *same message* every tick — but the live `ingest.prices` HTTP fault message embeds the fetch
+**URL**, and the Tiingo URL carries `?startDate=…&endDate=…` (Yahoo carries `period1`/`period2` epochs),
+**both derived from the run date**. So a persistent identical failure (a lapsed Tiingo sub → HTTP 403 — the
+*exact* case §10 claims to close) rendered a *different* message every day → a different signature → it
+**paged every day**: the GPWS "cried wolf" mode the suppression exists to prevent, silently reopened on the
+live-primary path. The suppression *logic* was sound; its *comparand* was wrong for the messages the live
+code emits. Third time the project's characteristic pattern surfaced — reads right, passes its tests, breaks
+on the real substrate — and the first on the alarm layer itself. The synthetic test used a stable `"boom"`;
+no test drove a *price* fault, whose URL moves. (Findings: `docs/email_nuisance_suppression_findings.md`;
+package: `docs/PROSPECTOR_FAULT_SUPPRESSION_README.md`.)
+
+**The fix (design-thread-adjudicated Option 1 — separate the suppression key from the display message):**
+- **`_emit_fault` gains an optional `key=`** (stored on the fault dict + the fossil payload); **`_fault_
+  signature` keys on `(subsystem, key or message)`.** When a fault carries no key it still signatures on its
+  message — fully backward-compatible for the many stable-message faults (empty-frame, P1 guard, token-unset,
+  SOI reason). The **message keeps the full URL for forensics**; only the *suppression key* is stabilized.
+- **The two URL-bearing sites pass a stable `key=f"{ticker}:{status}"`** — the sector-panel pull
+  (`_build_sector_panel`) and the per-basket dispersion pull (`_run_dispersion`); `PriceIngestError`/
+  `EdgarError` already carry `.status`. A persisting lapsed-sub 403 is now **one** fault, paged once then
+  ridden by the heartbeat.
+- **Both key dimensions are load-bearing and pinned by tests** — a changed **status** (403→500) pages, and a
+  different failing **ticker** (AAPL:403 vs NVDA:403) pages (the design-thread mirror test). So a future
+  "coarsen the key to subsystem-only/subsystem+status" refactor **fails a test**, not just a comment. We did
+  **not** normalize-inside-`_fault_signature` (regex whack-a-mole, reopens on the next new token) nor coarsen
+  to subsystem-only (swallows a genuinely changed fault — the build note's forbidden move).
+- **Discoverability for the next implementer:** a one-line convention at `_emit_fault` — *"if a fault message
+  can carry a per-tick token (URL, timestamp, reset-epoch, row count), pass a stable `key=`."* It can't force
+  future sites, but it puts the requirement where they'll trip over it (the residual Option 1 can't fully
+  close without regex whack-a-mole).
+
+**Deferred (named): E2 — the flapping fault.** `_compute_push` compares only to the *immediately-prior* run,
+so a fault that clears then returns pages on every recurrence (even with a stable key). The
+"escalate-then-fall-silent over an N-day window" shape would cover it; deferred as a design choice and pinned
+by `test_flapping_fault_does_not_page_on_every_recurrence` (`xfail(strict=True)`) — it flips to a loud XPASS
+the moment the window logic lands. Less severe (a genuinely intermittent fault is arguably worth seeing).
+
+**Doc-lag note:** the design thread folds §10→BUILT and this suppression fix together into the next
+state-of-project pass (**rev7**) — the reduced-doc-cadence (update-on-push) working as set, not drift.
+
 ## Verification
 
-Full suite **541 passed / 1 xfailed** (+20: `test_email_render.py` render/subjects/body/determinism +
+Full suite **545 passed / 2 xfailed** after the follow-up fix (the volatile-message package + the
+ticker-guard test; the 2 xfailed are the pre-existing N9 cadence gate and the deferred E2 flapping case).
+The §10 slice itself was **541 passed / 1 xfailed** (+20: `test_email_render.py` render/subjects/body/determinism +
 `build_context`; `test_notify_smtp.py` message-shape/redaction/send-failure/`smtp_config`;
 `test_runner_notify.py` the nuisance-suppression violation test — a recurring fault pages ONCE not N, a
 changed fault pages again, the heartbeat fires regardless of activity and on a faulted tick; the CLI

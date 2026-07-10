@@ -346,7 +346,15 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
     dead-man **rides the tick**, so it proves the whole pipeline ran). **The dead-man's silence=broken
     guarantee arms at M7**, when the runner is scheduled — the sender is built now, the cadence is not yet
     live. Also closes the **paid-Tiingo-lapse** dead-man (a dead key empties the panel via soft faults; the
-    7-day heartbeat catches it, once scheduled). See `docs/decisions/2026-07-10-10-email-sender.md`.
+    7-day heartbeat catches it, once scheduled). **Hardened same-day (QA cold-read):** the suppression
+    comparand was message-exact, but the live price-fault message embeds the fetch URL whose dates move every
+    tick — so a persistent lapsed-sub 403 paged *daily* (the very case §10 closes). Fixed by keying the
+    signature on a **stable `(subsystem, key)`** — `_emit_fault` gained an optional `key=` (default = the
+    message, backward-compatible), the two URL-bearing sites pass `key=(ticker, status)`, and the message
+    keeps the full URL for forensics; both key dimensions are pinned by tests so the key can't later be
+    coarsened. E2 (a *flapping* fault pages on each return — a one-tick-back memory) is deferred, pinned by an
+    `xfail(strict=True)`. See `docs/decisions/2026-07-10-10-email-sender.md` (follow-up) +
+    `docs/email_nuisance_suppression_findings.md`.
 - **Live + hardened.** A real `pros run` fired **5 live xcorr leads** on the SPDR grid (XLU×XLV, XLRE×XLY,
   XLC×XLF, XLC×XLV, XLRE×XLV — the correlated structure collapses these into ~2–3 independent events, XLV
   recurring). The **N1–N10** going-live QA fix batch then closed the first wave of bugs — the read-only

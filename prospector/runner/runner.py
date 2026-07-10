@@ -84,13 +84,25 @@ class _CountingStore:
         return getattr(self._inner, name)
 
 
-def _emit_fault(store, subsystem: str, message, now: str, faults: list, *, lead: str | None = None):
+def _emit_fault(store, subsystem: str, message, now: str, faults: list, *, lead: str | None = None,
+                key: str | None = None):
     """A SOFT fault (§9g): a per-unit failure is recorded on `_system` and the tick continues —
     one fund's 404 or one basket's degenerate matrix must not blind the others. Never raises: the
     fault surface itself must not abort the run (a fault while recording a fault is swallowed, so
-    the dead-man push still fires)."""
-    faults.append({"subsystem": subsystem, "message": str(message)})
+    the dead-man push still fires).
+
+    §10 CONVENTION — **if a fault message can carry a per-tick token (a URL, timestamp, reset-epoch,
+    row count), pass a STABLE `key=`.** `key` is the nuisance-suppression comparand — the identity of
+    "the same failure" across ticks — held SEPARATELY from the human-readable `message` so the fossil
+    keeps the full detail for forensics while suppression keys on the stable part. Default None keeps
+    keying on the message (correct for the many faults whose message is already stable). This exists
+    because a message-exact signature over a moving message reads a *persisting* failure as NEW every
+    tick and pages daily — the GPWS 'cried wolf' mode §10's suppression is built to prevent (the
+    live Tiingo/Yahoo price URLs carry moving startDate/endDate/period epochs; see `_fault_signature`)."""
+    faults.append({"subsystem": subsystem, "message": str(message), "key": key})
     payload = {"subsystem": subsystem, "message": str(message)}
+    if key is not None:
+        payload["key"] = key
     if lead is not None:
         payload["lead"] = lead
     try:
@@ -127,11 +139,16 @@ def _load_prior_mf_snapshot(layout, current_date: str):
 
 
 def _fault_signature(faults: list) -> frozenset:
-    """A tick's fault set as an order-insensitive `(subsystem, message)` signature — the comparand for the
-    §10 nuisance-alarm suppression. MESSAGE-EXACT by design: any message delta is a *changed* fault (it
-    pages), an identical repeat is a nuisance (it does not). This is the line the build note draws — a
-    'suppress recurring faults' rule must never swallow a *changed* fault."""
-    return frozenset((f.get("subsystem"), f.get("message")) for f in faults)
+    """A tick's fault set as an order-insensitive `(subsystem, key-or-message)` signature — the comparand
+    for the §10 nuisance-alarm suppression. Keys on the STABLE `key` when a fault carries one (an HTTP
+    fault keys on `(ticker, status)`, NOT the URL-bearing message whose dates move every tick), else on
+    the message (the many faults whose message is already stable). A key/message delta is a *changed*
+    fault (it pages); an identical repeat is a nuisance (it does not) — the build-note line 'never swallow
+    a changed fault', now robust to a persisting failure whose *message* carries a moving token (the
+    volatile-message finding, docs/email_nuisance_suppression_findings.md). Both dimensions of the HTTP
+    key — the ticker AND the status — are load-bearing: a different failing ticker OR a changed status is
+    a different fault and must page, so the key must never be coarsened to subsystem-only (tests pin both)."""
+    return frozenset((f.get("subsystem"), f.get("key") or f.get("message")) for f in faults)
 
 
 def _load_prior_faults(layout, registry) -> list:
@@ -436,7 +453,11 @@ def _build_sector_panel(deps: RunnerDeps, store, now: str, faults: list, runlog:
                 continue
             frames.append(frame)
         except Exception as e:  # one ticker's failure never blinds the grid (§9g)
-            _emit_fault(store, "ingest.prices", f"{t}: {e}", now, faults)
+            # §10: the message keeps the URL (moving startDate/endDate) for forensics, but the SUPPRESSION
+            # key is (ticker, status) — a persisting lapsed-sub 403 is ONE fault, not a new one each tick,
+            # so it pages once then rides the heartbeat (`status` is set on Price/EdgarError HTTP failures).
+            _emit_fault(store, "ingest.prices", f"{t}: {e}", now, faults,
+                        key=f"{t}:{getattr(e, 'status', None)}")
     if not frames:
         runlog.ingests["prices"] = "skipped" if not tickers else "fault"
         return None
@@ -668,7 +689,10 @@ def _run_dispersion(deps: RunnerDeps, store, now: str, faults: list, runlog: Run
                                    last_event_types.get(lead_id), store.append, tick_due=True)
             ran_any = True
         except Exception as e:  # one basket's failure (holdings feed / parse) never blinds the others (§9g)
-            _emit_fault(store, "sensor.dispersion", f"{ticker}: {e}", now, faults, lead=lead_id)
+            # §10: same discipline as the sector-panel pull — a persisting per-basket HTTP failure keys on
+            # (ticker, status), not the URL-bearing message, so it pages once then rides the heartbeat.
+            _emit_fault(store, "sensor.dispersion", f"{ticker}: {e}", now, faults, lead=lead_id,
+                        key=f"{ticker}:{getattr(e, 'status', None)}")
     runlog.sensors["dispersion"] = "ran" if ran_any else "skipped"
 
 
