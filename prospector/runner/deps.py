@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from prospector.ingest.edgar import EdgarClient
+from prospector.ingest.holdings import HoldingsIngest
 from prospector.ingest.prices import PriceIngest
 from prospector.runner.notify import Notifier
 from prospector.store.event_store import EventStore
@@ -29,6 +30,7 @@ class RunnerDeps:
     event_store: EventStore          # the base store; the runner wraps it to tally event types (§9g)
     edgar_client: EdgarClient        # persist pre-wired to layout.edgar_path (freeze-before-parse, §3)
     price_ingest: PriceIngest        # §9a prices ingest; fetch closed over fixtures in tests, httpx in prod
+    holdings_ingest: HoldingsIngest  # §4b/§9e SPDR holdings ingest (dispersion membership); fetch fixtures/httpx
     notifier: Notifier
     cfg: dict                        # loaded by the caller; the runner checks its honesty first (§9)
     cfg_hash: str                    # sha256 of canonical_json(cfg) — the config-honesty comparand

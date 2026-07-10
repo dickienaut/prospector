@@ -20,6 +20,7 @@ import pytest
 
 from prospector.config import load_config
 from prospector.ingest.edgar import MF_TICKERS_URL, EdgarClient, EdgarError
+from prospector.ingest.holdings import HoldingsIngest
 from prospector.ingest.prices import PriceIngest, PriceIngestError
 from prospector.primitives.atomic import write_atomic
 from prospector.runner import RunnerDeps, run_tick
@@ -30,6 +31,10 @@ from prospector.store.envelope import SYSTEM_LEAD, canonical_json
 from prospector.store.event_store import EventStore
 from prospector.store.layout import StoreLayout
 from prospector.store.registry import Registry
+
+# §9e: dispersion runs every tick now; a valid SPDR holdings body lets its membership parse, and the
+# constituent-price pulls miss here, so it SKIPS cleanly (no fault/spawn) — these runner assertions hold.
+_XLK_HOLDINGS = (Path(__file__).parent / "fixtures" / "holdings" / "XLK_2026-07-02.csv").read_bytes()
 
 CONFIG = Path("config") / "prospector.yaml"
 NOW = "2026-07-02T22:30:00Z"
@@ -104,6 +109,7 @@ def _deps(layout, registry, fetch, *, now=NOW, notifier=None, event_store=None,
         # one keeps the offline panel building. sleep no-op: the panel pulls 12+ tickers through the throttle.
         price_ingest=PriceIngest(layout, fetch=price_fetch or _price_fetch_ok, clock=lambda: now[:10],
                                  sleep=lambda _s: None, api_token="tiingo-test-token"),
+        holdings_ingest=HoldingsIngest(layout, fetch=lambda u, h: _XLK_HOLDINGS, clock=lambda: now[:10]),
 
         notifier=notifier if notifier is not None else NullNotifier(),
         cfg=cfg if cfg is not None else base_cfg,

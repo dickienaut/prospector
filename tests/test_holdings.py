@@ -39,6 +39,17 @@ def test_parse_builds_tidy_frame_sorted_by_weight():
     assert (frame["weight"] < 1.0).all()
 
 
+def test_parse_extracts_ticker_column_for_price_lookup():
+    # §4b ticker bridge: the SPDR file carries a Ticker column; the parser now KEEPS it as each
+    # constituent's Tiingo price-lookup symbol (display-only) alongside the stable CUSIP identifier —
+    # the primary-source ticker<->CUSIP pairing the dispersion vertical needs, no third-party feed.
+    frame = parse_spdr_holdings(_fixture_bytes(), "XLK")
+    assert "ticker" in frame.columns
+    top = frame.iloc[0]
+    assert top["name"] == "APPLE INC" and top["ticker"] == "AAPL" and top["identifier"] == "037833100"
+    assert (frame["ticker"].str.len() > 0).all()  # the fixture is well-formed: every name resolves a ticker
+
+
 def test_parse_keeps_cash_row_as_recorded():
     frame = parse_spdr_holdings(_fixture_bytes(), "XLK")
     cash = frame[frame["name"] == "CASH"]

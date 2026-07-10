@@ -22,6 +22,7 @@ from pathlib import Path
 
 from prospector.config import load_config
 from prospector.ingest.edgar import MF_TICKERS_URL, EdgarClient, EdgarError
+from prospector.ingest.holdings import HoldingsIngest
 from prospector.ingest.prices import PriceIngest
 from prospector.primitives.atomic import write_atomic
 from prospector.runner.deps import RunnerDeps
@@ -99,6 +100,7 @@ def _deps(layout, registry, event_store, fetch):
                       edgar_client=_edgar(layout, fetch),
                       price_ingest=PriceIngest(layout, fetch=lambda url, headers: b"",
                                                sleep=lambda _s: None),  # inert: _run_soi_corroboration never builds the panel
+                      holdings_ingest=HoldingsIngest(layout, fetch=lambda u, h: b""),  # inert: dispersion never runs here
                       notifier=NullNotifier(),
                       cfg=cfg, cfg_hash=cfg_hash, now=NOW, run_id="run_test",
                       monotonic=lambda: 0.0)

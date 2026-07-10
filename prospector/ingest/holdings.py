@@ -17,15 +17,17 @@ The §3 discipline, mirrored verbatim from ingest/prices.py:
 Identity (the HECO rule, §2/§5 CONTRACT). A basket is keyed on the fund's **SEC series id**; the pull
 FETCHES by ticker (SPDR's URL is a source/display attribute) but FREEZES and KEYS by series_id — the
 same discipline as prices' "a source quirk never leaks past the URL builder." **Constituents are
-individual equities, not funds:** they carry a name + issuer identifier (CUSIP/ISIN) only, are never
-run through the FundRegistry (they'd fail SERIES_ID_RE), and never key a lead. The basket is the
-identity; the constituents are payload content.
+individual equities, not funds:** they carry a name + issuer identifier (CUSIP/ISIN) + a display
+ticker (the §4b price-lookup attribute only — the dispersion panel keys on the CUSIP, HECO one level
+down), are never run through the FundRegistry (they'd fail SERIES_ID_RE), and never key a lead. The
+basket is the identity; the constituents are payload content.
 """
 
 from __future__ import annotations
 
 import csv
 import io
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,8 +53,17 @@ SPDR_URL_TEMPLATE = ("https://www.ssga.com/us/en/intermediary/library-content/pr
 BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 
-# The tidy membership frame's columns.
-MEMBER_COLUMNS = ("name", "identifier", "weight", "sector")
+# The tidy membership frame's columns. `ticker` is the constituent's display symbol — carried ONLY as
+# the Tiingo price-lookup attribute for the §4b dispersion vertical (the constituent panel keys on the
+# stable `identifier`/CUSIP, NEVER the ticker — HECO one level down; tickers are display-only, §2/§5).
+# The SPDR primary file itself supplies the ticker↔CUSIP pairing, so no third-party symbol feed is
+# needed (a bought feed would breach the primary-source wall).
+# `local_currency` is the SSGA file's own `Local Currency` column — the PRIMARY-SOURCE signal that a
+# holding is a FOREIGN (non-USD) listing, whose local ticker may collide with an unrelated US symbol
+# (§9e: SIEMENS ENERGY's `ENR` is also NYSE:Energizer). `priceable_members` reads it to exclude foreign
+# lines from the §4b price universe — no third-party symbol feed, no wall breach. See
+# docs/decisions/2026-07-10-9e-constituent-symbol-resolution.md.
+MEMBER_COLUMNS = ("name", "ticker", "identifier", "weight", "sector", "local_currency")
 
 # A full holdings file's parsed FRACTIONAL weights sum to ~1.0 (a whole portfolio). This band is an
 # order-of-magnitude sanity gate on _parse_weight's percent assumption, NOT a precise-sum check — cash and
@@ -73,9 +84,10 @@ class HoldingsIngestError(Exception):
 @dataclass(frozen=True)
 class MembershipSnapshot:
     """A basket's weight-covering membership as of a date. Keyed on the basket's series_id; the
-    members are constituent equities (name + identifier + weight fraction + sector string), never
-    funds. `coverage_actual` is the fraction of total basket weight the truncated list captures
-    (>= coverage_target by construction)."""
+    members are constituent equities (name + display ticker + identifier + weight fraction + sector
+    string), never funds. The ticker is the §4b Tiingo price-lookup attribute only; the panel keys on
+    the identifier. `coverage_actual` is the fraction of total basket weight the truncated list
+    captures (>= coverage_target by construction)."""
 
     series_id: str
     ticker: str
@@ -119,7 +131,7 @@ def _rows_from_body(body: bytes) -> list[list[str]]:
 
 def parse_spdr_holdings(body: bytes, ticker: str) -> pd.DataFrame:
     """Parse a SPDR daily holdings file (xlsx — the real SSGA format — or CSV) into a tidy membership
-    frame [name, identifier, weight, sector], sorted by weight desc. Robust to the file's shape: a
+    frame [name, ticker, identifier, weight, sector], sorted by weight desc. Robust to the file's shape: a
     multi-line preamble (fund name / ticker / 'As of' date / blank), the header row, the holdings,
     then a footer/disclaimer.
 
@@ -143,8 +155,10 @@ def parse_spdr_holdings(body: bytes, ticker: str) -> pd.DataFrame:
         raise HoldingsIngestError(f"no holdings header (Name/Weight) in body for {ticker}")
 
     name_i, weight_i = col["name"], col["weight"]
+    ticker_i = col.get("ticker")  # §4b: the constituent's Tiingo price-lookup symbol (display-only)
     ident_i = col.get("identifier")
     sector_i = col.get("sector")
+    ccy_i = col.get("local currency")  # §9e: USD/foreign gate for the price universe (blank if absent)
 
     members = []
     for row in rows[header_idx + 1:]:
@@ -156,9 +170,12 @@ def parse_spdr_holdings(body: bytes, ticker: str) -> pd.DataFrame:
         if weight is None:
             continue  # non-numeric weight => a disclaimer row, skip (never fabricate)
         name = row[name_i].strip()
+        ticker = row[ticker_i].strip() if ticker_i is not None and len(row) > ticker_i else ""
         identifier = row[ident_i].strip() if ident_i is not None and len(row) > ident_i else ""
         sector = row[sector_i].strip() if sector_i is not None and len(row) > sector_i else ""
-        members.append({"name": name, "identifier": identifier, "weight": weight, "sector": sector})
+        local_currency = row[ccy_i].strip() if ccy_i is not None and len(row) > ccy_i else ""
+        members.append({"name": name, "ticker": ticker, "identifier": identifier,
+                        "weight": weight, "sector": sector, "local_currency": local_currency})
 
     if not members:
         raise HoldingsIngestError(f"header found but no holdings rows in body for {ticker}")
@@ -212,11 +229,76 @@ def weight_covering_members(holdings: pd.DataFrame, coverage: float = 0.90) -> t
     members = []
     for _, row in ordered.iterrows():
         cumulative += float(row["weight"])
-        members.append({"name": row["name"], "identifier": row["identifier"],
-                        "weight": float(row["weight"]), "sector": row["sector"]})
+        members.append({"name": row["name"], "ticker": row.get("ticker", ""),
+                        "identifier": row["identifier"], "weight": float(row["weight"]),
+                        "sector": row["sector"], "local_currency": row.get("local_currency", "")})
         if cumulative / total >= coverage:
             break
     return members, cumulative / total
+
+
+# --- §9e constituent-symbol resolution: the price-universe gate ---------------------------------------
+#
+# The §4b dispersion vertical prices each constituent by a BARE ticker (Tiingo is queried by symbol),
+# then keys the panel on the CUSIP. But the pull trusts the ticker to be a valid, UNIQUE, US-listed
+# symbol — and a real SSGA file breaks that (the QA finding: docs/dispersion_foreign_ticker_findings.md).
+# The gate below excludes the un-priceable lines AT THE MEMBERSHIP BOUNDARY, before the pull, so the
+# basket is priced on its US-listed core and the excluded weight is a REPORTED coverage gap — never a
+# silent wrong-series substitution. This is *never-anchor-on-a-ticker* (HECO, §2/§5) one level down; the
+# identity key must be enforced end-to-end, not just at the panel. Decision:
+# docs/decisions/2026-07-10-9e-constituent-symbol-resolution.md (Option 1 + Option 2, defer Option 3).
+
+# A plausible US common-stock ticker: 1–5 letters + an optional class suffix (BRK.B / BF.B — `_tiingo_
+# symbol` later dashes the dot). Rejects the un-priceable forms in a real file: `-`/blank (SSGA's cash &
+# derivative sentinel) and internal placeholder codes carrying a digit (e.g. `2670549D`, an ExxonMobil
+# line with no tradable US ticker). A digit anywhere breaks the match — no US common-stock ticker has one.
+_US_EQUITY_TICKER_RE = re.compile(r"^[A-Z]{1,5}([.\-][A-Z]{1,4})?$")
+
+
+def _is_priceable_us_equity(member: dict) -> bool:
+    """True iff a constituent can be priced by a BARE US ticker on Tiingo (§9e). Excludes, as an honest
+    coverage gap (never a guess):
+
+    - **Non-USD `Local Currency`** — a FOREIGN local listing (Siemens Energy's `ENR`, EUR). Its local
+      ticker may COLLIDE with an unrelated US symbol (`ENR` is also NYSE:Energizer), so a bare pull
+      returns the WRONG company's series, silently — the malignant P1 hazard exclusion defends against.
+      A blank/absent currency is NOT treated as foreign (synthetic/CSV fixtures carry no currency column;
+      fall back to the ticker-shape gate) — the filter only fires on an explicit non-USD value.
+    - **A `MONEY MARKET` name** — a cash sweep line even on the rare chance it carries a real-looking
+      ticker (its ~flat NAV would inject a zero-variance column into the correlation matrix). Defense-in-
+      depth: SSGA already marks its cash lines with the `-` ticker, which the shape gate below excludes.
+      (A broader cash/currency name blocklist is deliberately NOT added — false-positive-prone.)
+    - **A ticker that is not a plausible US equity symbol** — `-`/blank or a placeholder code."""
+    ccy = (member.get("local_currency") or "").strip().upper()
+    if ccy and ccy != "USD":
+        return False
+    if "MONEY MARKET" in (member.get("name") or "").upper():
+        return False
+    return bool(_US_EQUITY_TICKER_RE.match((member.get("ticker") or "").strip().upper()))
+
+
+def priceable_members(members: list[dict]) -> list[dict]:
+    """The subset of a weight-covering membership priceable by a bare US ticker — the §9e price-universe
+    gate applied at the MEMBERSHIP boundary, BEFORE the constituent price pull. Foreign (non-USD) listings
+    and cash/derivative/placeholder lines are dropped; their weight becomes a REPORTED coverage gap (the
+    caller recomputes coverage_actual over what actually priced, via `priced_coverage`), never a silent
+    wrong substrate (the `ENR` collision) or a fabricated fill. Membership order (weight desc) is
+    preserved. Foreign CUSIP/SEDOL→US-symbol resolution (Option 3) is the deferred 'complete' fix; until a
+    resolution slice earns it, exclusion-with-a-reported-gap is the honest default. Decision record:
+    docs/decisions/2026-07-10-9e-constituent-symbol-resolution.md."""
+    return [m for m in members if _is_priceable_us_equity(m)]
+
+
+def priced_coverage(priceable: list[dict], priced_identifiers: set, total_weight: float) -> float:
+    """Honest `coverage_actual` (§9e): the fraction of the basket's TOTAL weight that ACTUALLY priced —
+    the priceable members whose CUSIP landed a price column — NOT the pre-pull top-`coverage` weight sum.
+    Overstating priced coverage would make the burn-in Q untrustworthy (you would not know what universe
+    it was computed on); excluded (foreign/cash) and price-pull-dropped weight is a reported gap. Denom is
+    the whole-basket weight (equities + cash), matching `weight_covering_members`."""
+    if total_weight <= 0.0:
+        return 0.0
+    priced = sum(float(m["weight"]) for m in priceable if m["identifier"] in priced_identifiers)
+    return priced / total_weight
 
 
 @dataclass(frozen=True)

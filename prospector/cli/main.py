@@ -135,6 +135,7 @@ def run(store_path):
     import time
     from uuid import uuid4
 
+    from prospector.ingest.holdings import HoldingsIngest
     from prospector.ingest.prices import PriceIngest
     from prospector.primitives.atomic import write_atomic
     from prospector.runner import RunnerDeps, run_tick
@@ -175,9 +176,14 @@ def run(store_path):
             layout, clock=lambda: tick_date,
             max_per_sec=float((cfg.get("prices") or {}).get("max_requests_per_sec", 2.0)),
             api_token=api_token)
+        # §4b/§9e holdings ingest: default httpx fetch (SSGA serves the daily files to a browser UA),
+        # the clock pins frozen holdings pulls to this tick's date. Public files -> no token; the
+        # dispersion pass pulls each resolvable basket's holdings + its constituent prices (Tiingo).
+        holdings_ingest = HoldingsIngest(layout, clock=lambda: tick_date)
         deps = RunnerDeps(
             layout=layout, registry=registry, event_store=EventStore(layout, registry),
-            edgar_client=edgar_client, price_ingest=price_ingest, notifier=NullNotifier(),
+            edgar_client=edgar_client, price_ingest=price_ingest, holdings_ingest=holdings_ingest,
+            notifier=NullNotifier(),
             cfg=cfg, cfg_hash=cfg_hash, now=now, run_id=uuid4().hex, monotonic=time.monotonic)
         runlog = run_tick(deps)
     finally:
