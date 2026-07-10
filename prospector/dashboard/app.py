@@ -20,7 +20,7 @@ from pathlib import Path
 import streamlit as st
 
 from prospector.config import load_config
-from prospector.dashboard import views
+from prospector.dashboard import export, views
 from prospector.identity.resolution import ResolutionMachine
 from prospector.runner.runlog import recent_runs
 from prospector.store.event_store import EventStore
@@ -91,6 +91,16 @@ def main() -> None:
         if cs["over"]:
             st.warning(cs["banner"])
 
+        # --- §8b: one button -> the whole board as a self-describing .md (the review artifact) ------
+        # A PURE serialization of the same view-models rendered below (export.py — no recompute, no fetch),
+        # so the report cannot drift from the screen. The `.md` is what the human reads and the review seat
+        # parses in one pass. Built each rerun: a bounded, pure read of the stored folds (<= 66 leads).
+        st.download_button(
+            "⬇ Download board snapshot (.md)",
+            data=export.board_snapshot_markdown(registry, states, runs, machine, cfg, now,
+                                                str(layout.root)),
+            file_name=export.board_snapshot_filename(now), mime="text/markdown")
+
         # === AT A GLANCE — the three that serve watching the evidence accumulate ==================
         # Lead with active leads (the real firings) · the dormant pile (where we're blind) · health
         # (is it running / what broke). Everything else is a click deeper (collapsed expanders below).
@@ -102,11 +112,16 @@ def main() -> None:
         st.caption("Live (non-shadow) leads, ranked recency × |z| — the wired xcorr (§4a) firings.")
         ranked = views.rank_active_leads(states)
         if ranked:
-            st.dataframe(_rows_to_table([
+            active_rows = [
                 {"lead": s["lead"], "display": s.get("display"), "spawner": s.get("spawner"),
                  "latest_z": s.get("latest_z"), "spawned_at": s.get("spawned_at"),
-                 "verdict": s.get("verdict"), "events": s.get("event_count")} for s in ranked]),
-                width="stretch", hide_index=True)
+                 "verdict": s.get("verdict"), "events": s.get("event_count")} for s in ranked]
+            st.dataframe(_rows_to_table(active_rows), width="stretch", hide_index=True)
+            # §8b: a self-describing CSV for the spreadsheet workflow (sorting a single panel). The
+            # built-in dataframe toolbar export stays too — this just adds a {panel}_{ts} filename.
+            st.download_button("⬇ CSV", export.rows_to_csv(active_rows),
+                               file_name=export.panel_csv_filename("active-leads", now),
+                               mime="text/csv", key="dl_active")
         else:
             st.info("No live leads yet — xcorr (§4a) spawns them on a sustained residual departure.")
 
@@ -115,9 +130,11 @@ def main() -> None:
         st.caption("The §10 blindness map — where intake can't yet resolve a launch (the roadmap for "
                    "widening holdings/SOI coverage). Ranked by disposition.")
         if pile["total"]:
-            st.dataframe(_rows_to_table(
-                [{"disposition": d, "count": pile["counts"][d]} for d in pile["ranked"]]),
-                width="stretch", hide_index=True)
+            pile_rows = [{"disposition": d, "count": pile["counts"][d]} for d in pile["ranked"]]
+            st.dataframe(_rows_to_table(pile_rows), width="stretch", hide_index=True)
+            st.download_button("⬇ CSV", export.rows_to_csv(pile_rows),
+                               file_name=export.panel_csv_filename("dormant-pile", now),
+                               mime="text/csv", key="dl_pile")
         else:
             st.info("Empty — no dormant launches recorded yet (corroboration is bounded on the "
                     "holdings-corroboration SLOT).")
@@ -164,10 +181,15 @@ def main() -> None:
                          width="stretch", hide_index=True)
 
         with st.expander("Run history"):
-            st.dataframe(_rows_to_table([
-                {"date": r["date"], "run_id": r["run_id"], "pushed": bool(r["pushed"]),
-                 "faults": r["fault_count"], "config_hash": r["config_hash"]} for r in runs])
-                if runs else [{"—": "no runs recorded"}], width="stretch", hide_index=True)
+            if runs:
+                run_rows = [{"date": r["date"], "run_id": r["run_id"], "pushed": bool(r["pushed"]),
+                             "faults": r["fault_count"], "config_hash": r["config_hash"]} for r in runs]
+                st.dataframe(_rows_to_table(run_rows), width="stretch", hide_index=True)
+                st.download_button("⬇ CSV", export.rows_to_csv(run_rows),
+                                   file_name=export.panel_csv_filename("run-history", now),
+                                   mime="text/csv", key="dl_runs")
+            else:
+                st.dataframe([{"—": "no runs recorded"}], width="stretch", hide_index=True)
 
         with st.expander("Registry health + unknown-type panel"):
             st.write(views.registry_health(states))
