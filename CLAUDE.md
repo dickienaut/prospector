@@ -135,6 +135,32 @@ Design-thread-authorized amendments to CONTRACT defaults are recorded under `doc
 - A changed mind is a new `verdict` event that supersedes via `superseded_by`, never an edit.
 - Backtests write **only** under `backtest/` (separate store root + registry per run).
 
+## Canonical documents — amended, never regenerated
+The doc-process form of Append-only: never let the present silently rewrite the past. **Canonical
+contract/reference documents are amended, never regenerated.** The build spec, this file (the constitution),
+the package READMEs, and the founding document change by **surgical diff — altering only the clauses a
+recorded decision changed — plus a changelog note of the delta and its decision-record.** All other text is
+preserved verbatim. A **wholesale rewrite is forbidden**: regenerating such a document silently drifts
+contract text no one decided to change, and the drift is invisible precisely because there is no diff to
+check. A clause is **superseded in place with the change recorded** (changelog + decision trail + git), never
+silently dropped — the document states the *current* contract, but *every* change is traceable.
+- **Two document kinds, two rules.** The **state-of-project doc** is the partial exception: its stable
+  conceptual body (**Parts I–IV**) follows the amend rule (carried forward, not rewritten), but its
+  current-status rollup (**Part V**) is **re-synthesized each rev** — it is a snapshot of *now*, not a
+  contract. (Rev 7 carried I–IV verbatim and rewrote Part V; the spec took amendments — correctly.)
+- **The escape valve (so patchwork can't trap you).** A cleanup **rewrite is allowed only as an explicit
+  consolidation rev**, and only with a **clause-by-clause diff proving no contract changed except the ones
+  intended**, recorded in that rev's decision record. The forbidden thing was never *rewrite*; it is *rewrite
+  unchecked* — make the check mandatory and the drift can't hide.
+- **Scope.** Bound: the enumerated canonical set above (+ the state-of-project Parts I–IV). NOT bound (freely
+  authored): working notes, build notes, QA findings, session logs — and the **decision records themselves**,
+  which are append-only (a changed decision is a *new* record superseding, never an edit — the immutable trail
+  this rule points to).
+- **The check (build seat).** Before writing a canonical doc: diff against the prior version and confirm every
+  changed clause traces to a decision record. Ratified with the design thread:
+  `docs/decisions/2026-07-11-canonical-docs-amended-not-regenerated.md`. (This rule was itself added by
+  surgical amendment — fittingly.)
+
 ## Vendored store provenance
 The store/registry primitives in `prospector/primitives/` are ported from
 `prophit_skunkworks/ltee_archive/` (snapshot dated 2026-03-29, vendored 2026-07-02) with the
