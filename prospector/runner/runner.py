@@ -181,7 +181,7 @@ def _fault_signature(faults: list) -> frozenset:
     the message (the many faults whose message is already stable). A key/message delta is a *changed*
     fault (it pages); an identical repeat is a nuisance (it does not) — the build-note line 'never swallow
     a changed fault', now robust to a persisting failure whose *message* carries a moving token (the
-    volatile-message finding, docs/email_nuisance_suppression_findings.md). Both dimensions of the HTTP
+    volatile-message finding, docs/notes/email_nuisance_suppression_findings.md). Both dimensions of the HTTP
     key — the ticker AND the status — are load-bearing: a different failing ticker OR a changed status is
     a different fault and must page, so the key must never be coarsened to subsystem-only (tests pin both)."""
     return frozenset((f.get("subsystem"), f.get("key") or f.get("message")) for f in faults)

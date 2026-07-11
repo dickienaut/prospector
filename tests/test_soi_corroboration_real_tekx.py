@@ -1,5 +1,5 @@
 """GOLDEN — SOI-derived corroboration on the real TEKX filings (spec §4c resolver; design
-docs/2026-07-04-soi-derived-sector-concentration.md).
+docs/notes/2026-07-04-soi-derived-sector-concentration.md).
 
 Assertion B of the split (the LAG, from real sectors through real code — the derivation itself is checked
 independently in test_soi_parser.py, so a rollup bug and a lag bug cannot cancel to a flattering +593).

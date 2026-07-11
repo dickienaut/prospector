@@ -1,6 +1,6 @@
 """§10 nuisance-alarm suppression must hold for a PERSISTENT fault whose MESSAGE moves every tick.
 
-The QA finding (docs/email_nuisance_suppression_findings.md): `_compute_push` suppresses a recurring fault
+The QA finding (docs/notes/email_nuisance_suppression_findings.md): `_compute_push` suppresses a recurring fault
 by comparing this tick's `_fault_signature` — `frozenset((subsystem, message))`, MESSAGE-EXACT — to the
 prior run's. That is correct only if a persisting fault renders the SAME message each tick. The live price
 path does not: `ingest.prices` HTTP faults embed the fetch URL (`prices.py`), and the Tiingo URL carries

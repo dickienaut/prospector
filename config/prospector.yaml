@@ -107,7 +107,7 @@ mandate:
   max_section_lines: 400    # no boundary within this many lines -> runaway -> UNRELIABLE
 
 soi:
-  # SOI-derived sector concentration (design docs/2026-07-04-soi-derived-sector-concentration.md; the
+  # SOI-derived sector concentration (design docs/notes/2026-07-04-soi-derived-sector-concentration.md; the
   # §4c RESOLVER of `sectors_unresolved`). The daily xlsx leaves Sector "-" for an active fund, but the
   # fund's periodic EDGAR filing renders a GICS-INDUSTRY-grouped Schedule of Investments — each industry
   # header carries its % of net assets ("SOFTWARE — 38.7%", "ELECTRIC UTILITIES — 6.4%"). We isolate the

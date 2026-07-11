@@ -1,5 +1,5 @@
 """§9e constituent-symbol resolution — the acceptance gate for Claude Science's QA finding
-(`docs/dispersion_foreign_ticker_findings.md`), adjudicated in
+(`docs/notes/dispersion_foreign_ticker_findings.md`), adjudicated in
 `docs/decisions/2026-07-10-9e-constituent-symbol-resolution.md`.
 
 THE BUG: `_run_dispersion` pulls each constituent's price BY THE SPDR FILE'S TICKER, then re-keys the
