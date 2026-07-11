@@ -161,6 +161,28 @@ silently dropped — the document states the *current* contract, but *every* cha
   `docs/decisions/2026-07-11-canonical-docs-amended-not-regenerated.md`. (This rule was itself added by
   surgical amendment — fittingly.)
 
+## Doc naming — provenance in the filename
+Every doc is **born with a leading ISO date** (`YYYY-MM-DD-…`) so versions are tellable apart at a glance — the
+date orders it and never changes. This mostly formalizes existing practice (decision records are dated; the spec
+and state doc carry date + rev). The rule is deliberately narrow in three ways:
+- **Rev only where it versions.** A `-revN` suffix is added **only** where the doc is one of a versioned series
+  (the spec, the state-of-project doc, a decision revisited as rev 2+). A rev-bump is a **new dated file, the
+  prior moved to `history/`** — never a rename-in-place (already the practice). Date is universal; a `-rev1` on a
+  one-shot fossil (a QA finding that will only ever be rev 1) is just noise.
+- **Stable-named exceptions — because they are amended in place.** `CLAUDE.md`, `INDEX.md`, `ARCHITECTURE.md`,
+  the package `README`s, and `LICENSE` keep fixed names: they are the always-current single instance, amended in
+  place per amend-never-regenerate, their history in git + changelog — not re-fossilized as a dated series. The
+  distinction is principled, the same one that governs how each kind changes: **stable-named = amended-in-place
+  single instance; dated = point-in-time or versioned.**
+- **Forward-only — the load-bearing clause.** This governs **new** files (born dated); **existing filenames are
+  never bulk-renamed.** The reorg's insight was *relocate, never rename* — references point at filenames, so
+  byte-identical names keep ~99% of them resolvable by search; a bulk rename would break exactly those and
+  *multiply* the un-fixable fossil drift the reorg recorded as its one cost (a decision record is immutable — it
+  cannot be edited to point at a renamed file). The escape valve mirrors amend-never-regenerate's: a **specific**
+  legacy misnamed doc may be normalized as a deliberate, **reference-checked one-off** (grep its references, fix
+  the fixable, document any fossil drift — the same shape as the reorg), **never a bulk rename.**
+- Ratified with the design thread: `docs/decisions/2026-07-11-doc-naming-convention.md`.
+
 ## Vendored store provenance
 The store/registry primitives in `prospector/primitives/` are ported from
 `prophit_skunkworks/ltee_archive/` (snapshot dated 2026-03-29, vendored 2026-07-02) with the
