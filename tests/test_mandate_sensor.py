@@ -138,8 +138,17 @@ def _run(layout, by_accession, current, prior, active_lead_ids, *, prefreeze=Non
         prospectus.pull(XLK, CIK, prefreeze, "prior.htm")
         edgar.calls.clear()
     events = []
+
+    def report_advisory(subsystem, message, series_id, extra=None):
+        # Mirror the runner's §10 fault-reporter: a review-advisory fault into the same event stream, so
+        # these unit tests read it exactly where the old raw `emit` fault landed (proving scan routes the
+        # extraction-unreliable punt through report_advisory, never a raw fault write).
+        events.append({"ts": NOW, "lead": SYSTEM_LEAD, "type": "fault",
+                       "payload": {"subsystem": subsystem, "message": message, "series_id": series_id,
+                                   "category": "review-advisory", **(extra or {})}})
+
     result = mandate.scan(XLK, "XLK", CIK, current, "cur.htm", prior, UNIVERSE, active_lead_ids,
-                          prospectus, CFG, NOW, events.append)
+                          prospectus, CFG, NOW, events.append, report_advisory)
     return result, events, edgar
 
 
@@ -189,4 +198,6 @@ def test_scan_unreliable_extraction_faults_and_emits_no_mandate_changed(layout):
     (ev,) = events
     assert ev["lead"] == SYSTEM_LEAD and ev["type"] == "fault"
     assert ev["payload"]["subsystem"] == "mandate" and "manual review" in ev["payload"]["message"]
+    # §10: it is a REVIEW-ADVISORY routed through report_advisory (not an operational fault, not a raw emit).
+    assert ev["payload"]["category"] == "review-advisory" and ev["payload"]["series_id"] == XLK
     assert not any(e["type"] == "mandate.changed" for e in events)

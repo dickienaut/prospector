@@ -217,8 +217,9 @@ def board_snapshot_markdown(registry, states: Iterable[dict], runs, machine, cfg
     # 3. Health — heartbeat (in the manifest) + the fault log.
     faults = views.fault_log(registry)
     parts += ["## Health · fault log",
-              _md_table(["ts", "lead", "subsystem", "message"],
-                        [[f["ts"], f["lead"], f.get("subsystem"), f.get("message")] for f in faults]),
+              _md_table(["ts", "lead", "category", "subsystem", "message"],
+                        [[f["ts"], f["lead"], f.get("category"), f.get("subsystem"), f.get("message")]
+                         for f in faults]),
               ""]
 
     # 4. Run history.

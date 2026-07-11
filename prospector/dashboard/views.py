@@ -140,11 +140,18 @@ def registry_health(states: Iterable[dict]) -> dict:
 
 
 def fault_log(registry, limit: int = 100) -> list[dict]:
-    """The fault log — every `fault` event, most recent first (subsystem + message). A fault always
-    pushed when it happened (§10 dead-man); here it is the forensic record of what broke."""
+    """The fault log — every `fault` event, most recent first. Carries the §10 `category` (operational |
+    review-advisory, default operational for legacy faults) + `on_live_lead`, so the email and the
+    dashboard render the two classes distinctly: an OPERATIONAL fault is 'something broke, go fix it' (it
+    paged); a REVIEW-ADVISORY is a sensor correctly punting an unreliable extraction to a human (surfaced,
+    not paged unless on a live-lead fund). Forensic record of everything that was flagged."""
     rows = registry.events_by_type("fault")
-    out = [{"ts": r["ts"], "lead": r["lead"], **{k: _payload(r).get(k) for k in ("subsystem", "message")}}
-           for r in rows]
+    out = []
+    for r in rows:
+        p = _payload(r)
+        out.append({"ts": r["ts"], "lead": r["lead"], "subsystem": p.get("subsystem"),
+                    "message": p.get("message"), "category": p.get("category", "operational"),
+                    "on_live_lead": bool(p.get("on_live_lead", False))})
     out.sort(key=lambda e: e["ts"], reverse=True)
     return out[:limit]
 

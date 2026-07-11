@@ -58,6 +58,7 @@ from prospector.sensors import xcorr as xcorr_sensor
 from prospector.sensors.dispersion import dispersion_lead_id
 from prospector.sensors.launch_corroboration import (lead_sectors, pending_soi_resolution,
                                                      series_id_sectors)
+from prospector.sensors.rebalance import watching_leads  # §10: on_live_lead routing for advisories
 from prospector.store.envelope import SYSTEM_LEAD, parse_ts
 from prospector.store.fund_registry import FundRegistry
 
@@ -84,13 +85,44 @@ class _CountingStore:
         return getattr(self._inner, name)
 
 
-def _emit_fault(store, subsystem: str, message, now: str, faults: list, *, lead: str | None = None):
+def _emit_fault(store, subsystem: str, message, now: str, faults: list, *, lead: str | None = None,
+                key: str | None = None, category: str = "operational", series_id: str | None = None,
+                on_live_lead: bool = False, extra: dict | None = None):
     """A SOFT fault (§9g): a per-unit failure is recorded on `_system` and the tick continues —
     one fund's 404 or one basket's degenerate matrix must not blind the others. Never raises: the
     fault surface itself must not abort the run (a fault while recording a fault is swallowed, so
-    the dead-man push still fires)."""
-    faults.append({"subsystem": subsystem, "message": str(message)})
-    payload = {"subsystem": subsystem, "message": str(message)}
+    the dead-man push still fires). THE single fault-emit path (§10 taxonomy): the runner's soft-faults
+    call it directly; a sensor's extraction-unreliable advisory reaches it through the runner-provided
+    fault-reporter callback (see `_advisory_reporter`) — so every fault lands in the ONE `faults`
+    accumulator (that split — sensors writing `emit({"type":"fault"})` straight to the store, bypassing
+    this list — is exactly the bug that showed '0 faults this run' beside nine that fired).
+
+    §10 CATEGORY (the alarm-posture taxonomy, CONTRACT): `operational` (something broke — a failed fetch,
+    a tripped guard, a degenerate matrix; it PAGES) vs `review-advisory` (a sensor correctly PUNTED an
+    unreliable extraction to a human — nothing broke; counted + surfaced but does NOT page, UNLESS its
+    fund touches a live lead → `on_live_lead=True`). `_compute_push` reads exactly this. Runner soft-faults
+    default `operational`; a sensor advisory passes `category="review-advisory"` + its `series_id` (+ the
+    reporter's computed `on_live_lead`).
+
+    §10 CONVENTION — **if a fault message can carry a per-tick token (a URL, timestamp, reset-epoch,
+    row count), pass a STABLE `key=`.** `key` is the nuisance-suppression comparand — the identity of
+    "the same failure" across ticks — held SEPARATELY from the human-readable `message` so the fossil
+    keeps the full detail for forensics while suppression keys on the stable part. Default None keeps
+    keying on the message (correct for the many faults whose message is already stable). This exists
+    because a message-exact signature over a moving message reads a *persisting* failure as NEW every
+    tick and pages daily — the GPWS 'cried wolf' mode §10's suppression is built to prevent (the
+    live Tiingo/Yahoo price URLs carry moving startDate/endDate/period epochs; see `_fault_signature`)."""
+    faults.append({"subsystem": subsystem, "message": str(message), "key": key,
+                   "category": category, "series_id": series_id, "on_live_lead": on_live_lead})
+    payload = {"subsystem": subsystem, "message": str(message), "category": category}
+    if key is not None:
+        payload["key"] = key
+    if series_id is not None:
+        payload["series_id"] = series_id
+    if on_live_lead:
+        payload["on_live_lead"] = True
+    if extra:
+        payload.update(extra)  # sensor-provided forensics (accession, ticker) — never overrides the above
     if lead is not None:
         payload["lead"] = lead
     try:
@@ -98,6 +130,22 @@ def _emit_fault(store, subsystem: str, message, now: str, faults: list, *, lead:
                       "payload": payload, "schema": 1})
     except Exception:  # recording a fault must never itself abort the tick
         pass
+
+
+def _advisory_reporter(store, now: str, faults: list, universe_ids, active_ids):
+    """Build the §10 fault-reporter a sensor uses to raise a REVIEW-ADVISORY (an extraction-unreliable
+    punt to a human — the sensor working correctly, declining to guess; nothing broke). It routes the
+    advisory through the ONE `_emit_fault` accumulator (never a raw `store.append({"type":"fault"})` —
+    that bypass is exactly the split-path bug that showed '0 faults this run' beside nine that fired), and
+    computes page-worthiness HERE, where the lead context lives: an advisory whose fund touches a live
+    (active, non-shadow) lead pages (`on_live_lead`, via the shared forward-hash `watching_leads`); every
+    other advisory is counted + surfaced (heartbeat/dashboard) but does NOT page. The risk-owner's call:
+    a held/watched fund quietly rewording its mandate is the one advisory worth interrupting for."""
+    def report(subsystem: str, message: str, series_id: str | None, extra: dict | None = None) -> None:
+        on_live = bool(series_id and watching_leads(series_id, universe_ids, active_ids))
+        _emit_fault(store, subsystem, message, now, faults, category="review-advisory",
+                    series_id=series_id, on_live_lead=on_live, extra=extra)
+    return report
 
 
 def _load_prior_mf_snapshot(layout, current_date: str):
@@ -127,11 +175,16 @@ def _load_prior_mf_snapshot(layout, current_date: str):
 
 
 def _fault_signature(faults: list) -> frozenset:
-    """A tick's fault set as an order-insensitive `(subsystem, message)` signature — the comparand for the
-    §10 nuisance-alarm suppression. MESSAGE-EXACT by design: any message delta is a *changed* fault (it
-    pages), an identical repeat is a nuisance (it does not). This is the line the build note draws — a
-    'suppress recurring faults' rule must never swallow a *changed* fault."""
-    return frozenset((f.get("subsystem"), f.get("message")) for f in faults)
+    """A tick's fault set as an order-insensitive `(subsystem, key-or-message)` signature — the comparand
+    for the §10 nuisance-alarm suppression. Keys on the STABLE `key` when a fault carries one (an HTTP
+    fault keys on `(ticker, status)`, NOT the URL-bearing message whose dates move every tick), else on
+    the message (the many faults whose message is already stable). A key/message delta is a *changed*
+    fault (it pages); an identical repeat is a nuisance (it does not) — the build-note line 'never swallow
+    a changed fault', now robust to a persisting failure whose *message* carries a moving token (the
+    volatile-message finding, docs/email_nuisance_suppression_findings.md). Both dimensions of the HTTP
+    key — the ticker AND the status — are load-bearing: a different failing ticker OR a changed status is
+    a different fault and must page, so the key must never be coarsened to subsystem-only (tests pin both)."""
+    return frozenset((f.get("subsystem"), f.get("key") or f.get("message")) for f in faults)
 
 
 def _load_prior_faults(layout, registry) -> list:
@@ -151,8 +204,23 @@ def _load_prior_faults(layout, registry) -> list:
         return []  # a missing/corrupt prior run-log must not blind the push — treat as 'no prior fault'
 
 
+def _page_worthy_faults(faults: list) -> list:
+    """The §10 fault-taxonomy filter — which faults DRIVE a page (CONTRACT, alarm posture). `operational`
+    faults always (something broke — a failed fetch, a tripped guard, a degenerate matrix). `review-advisory`
+    faults ONLY when their fund touches a live lead (`on_live_lead`) — a held/watched fund quietly rewording
+    its mandate is the one advisory worth interrupting for; every other advisory (a new-launch fund's
+    unreadable prospectus — the sensor correctly punting, nothing broken) is counted + surfaced but does NOT
+    page. Non-page-worthy advisories stay in `faults` for the count/display; only the push decision filters
+    them out — the shadow-push discipline one layer down (keep the record whole, filter at the decision).
+    A fault with no/unknown `category` is treated as operational (it pages — the fail-safe default: an
+    unrecognized fault must not silently escape the alarm). Only an explicit `review-advisory` is held back;
+    this matches `email_render._page_worthy` exactly, so the count/subject and the push decision agree."""
+    return [f for f in faults
+            if f.get("category", "operational") != "review-advisory" or f.get("on_live_lead")]
+
+
 def _compute_push(page_worthy: dict, faults: list, prior_faults: list) -> bool:
-    """§10 CONTRACT — push iff a NON-SHADOW `fold.state_changed` OR a NEW/changed fault.
+    """§10 CONTRACT — push iff a NON-SHADOW `fold.state_changed` OR a NEW/changed PAGE-WORTHY fault.
 
     (1) NON-SHADOW STATE CHANGE. `page_worthy` is exactly the leads non-shadow *after* a
     {status,shadow,verdict} change (see `_materialize_snapshots`). §9e resolved a two-CONTRACT collision:
@@ -161,19 +229,22 @@ def _compute_push(page_worthy: dict, faults: list, prior_faults: list) -> bool:
     non-shadow-after-the-change suppresses shadow spawn/tick/revert (the fold leaves `shadow=True` on a
     revert), leaves every xcorr path unchanged, and pages a future promotion (`shadow: true->false`) free.
 
-    (2) NUISANCE-ALARM SUPPRESSION (§10 — the one thing the sender slice owns beyond plumbing). The naive
-    'or bool(faults)' paged on EVERY tick a fault recurred — the GPWS 'pull-up that cried wolf' failure
-    mode that trains the operator to ignore the alarm. Instead: push once on a NEW or CHANGED fault (the
-    signature differs from the immediately-prior run's), then fall to the weekly heartbeat while the SAME
-    fault persists (visible there, not silent). A *cleared* fault does not push (nothing faulted this
-    tick) — it is reflected in the next heartbeat. The runlog's `changed_leads`/`faults` still record ALL
-    of it (the fossil stays whole); only the push decision is suppressed. Ticks, silent corroborations,
-    and queue mechanics produce no delta at all, so they never push — the anti-slot-machine cadence."""
+    (2) FAULT TAXONOMY + NUISANCE-ALARM SUPPRESSION (§10). Only PAGE-WORTHY faults drive a push
+    (`_page_worthy_faults` — operational faults + review-advisories on a live-lead fund); a review-advisory
+    on a non-live-lead fund is counted + surfaced but never pages (the alarm-posture CONTRACT — a sensor
+    correctly punting an unreadable extraction to a human is not 'look now'). Among the page-worthy set, the
+    naive 'any fault every tick' paged on EVERY recurrence — the GPWS 'cried wolf' failure the sender slice
+    exists to prevent. Instead: push once on a NEW or CHANGED page-worthy fault (signature differs from the
+    immediately-prior run's PAGE-WORTHY subset), then fall to the weekly heartbeat while the SAME fault
+    persists. A *cleared* fault does not push. The runlog's `faults` still record ALL of it (the fossil stays
+    whole); only the push decision filters. Ticks, silent corroborations, queue mechanics, and non-live-lead
+    advisories produce no page-worthy delta, so they never push — the anti-slot-machine cadence."""
     if page_worthy:
         return True
-    if not faults:
-        return False  # cleared/quiet — a resolved fault rides the next heartbeat, never a push
-    return _fault_signature(faults) != _fault_signature(prior_faults)
+    pw = _page_worthy_faults(faults)
+    if not pw:
+        return False  # quiet, or only non-live-lead advisories — they ride the next heartbeat, never a push
+    return _fault_signature(pw) != _fault_signature(_page_worthy_faults(prior_faults))
 
 
 def _email_context(deps, store, now: str, date: str, runlog: RunLog, changed_leads: dict,
@@ -436,7 +507,11 @@ def _build_sector_panel(deps: RunnerDeps, store, now: str, faults: list, runlog:
                 continue
             frames.append(frame)
         except Exception as e:  # one ticker's failure never blinds the grid (§9g)
-            _emit_fault(store, "ingest.prices", f"{t}: {e}", now, faults)
+            # §10: the message keeps the URL (moving startDate/endDate) for forensics, but the SUPPRESSION
+            # key is (ticker, status) — a persisting lapsed-sub 403 is ONE fault, not a new one each tick,
+            # so it pages once then rides the heartbeat (`status` is set on Price/EdgarError HTTP failures).
+            _emit_fault(store, "ingest.prices", f"{t}: {e}", now, faults,
+                        key=f"{t}:{getattr(e, 'status', None)}")
     if not frames:
         runlog.ingests["prices"] = "skipped" if not tickers else "fault"
         return None
@@ -668,7 +743,10 @@ def _run_dispersion(deps: RunnerDeps, store, now: str, faults: list, runlog: Run
                                    last_event_types.get(lead_id), store.append, tick_due=True)
             ran_any = True
         except Exception as e:  # one basket's failure (holdings feed / parse) never blinds the others (§9g)
-            _emit_fault(store, "sensor.dispersion", f"{ticker}: {e}", now, faults, lead=lead_id)
+            # §10: same discipline as the sector-panel pull — a persisting per-basket HTTP failure keys on
+            # (ticker, status), not the URL-bearing message, so it pages once then rides the heartbeat.
+            _emit_fault(store, "sensor.dispersion", f"{ticker}: {e}", now, faults, lead=lead_id,
+                        key=f"{ticker}:{getattr(e, 'status', None)}")
     runlog.sensors["dispersion"] = "ran" if ran_any else "skipped"
 
 
@@ -731,6 +809,7 @@ def _run_mandate(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog
     prospectus = ProspectusIngest(deps.layout, deps.edgar_client)
     ticker_to_series_id, active_ids = _lead_context(deps, fund_registry)
     universe_ids = list(ticker_to_series_id.values())
+    report_advisory = _advisory_reporter(store, now, faults, universe_ids, active_ids)  # §10 taxonomy
     mandate_cfg = deps.cfg.get("mandate") or {}
     for entry in fund_registry.all_funds():
         try:
@@ -741,7 +820,8 @@ def _run_mandate(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog
             prior = _last_frozen_prospectus(prospectus, entry.series_id, subs, cur["accession"])
             mandate_sensor.scan(entry.series_id, entry.ticker_current, int(entry.cik),
                                 cur["accession"], cur["primary_doc"], prior,
-                                universe_ids, active_ids, prospectus, mandate_cfg, now, store.append)
+                                universe_ids, active_ids, prospectus, mandate_cfg, now, store.append,
+                                report_advisory)
         except Exception as e:  # one fund's failure never blinds the others (§9g)
             _emit_fault(store, "mandate", e, now, faults)
     runlog.sensors["mandate"] = "ran"
@@ -782,6 +862,8 @@ def _run_soi_corroboration(deps: RunnerDeps, store, now: str, faults: list, runl
         return
     soi = SoiIngest(deps.layout)
     active = _active_lead_sectors(deps, fund_registry)
+    ticker_to_series_id, active_ids = _lead_context(deps, fund_registry)  # §10: on_live_lead routing
+    report_advisory = _advisory_reporter(store, now, faults, list(ticker_to_series_id.values()), active_ids)
     for launch in pending:
         try:
             entry = fund_registry.get(launch["series_id"])
@@ -791,7 +873,9 @@ def _run_soi_corroboration(deps: RunnerDeps, store, now: str, faults: list, runl
             if target is None:
                 # N8: a genuine NOT-YET stays silent (re-attempt next cycle); an AMBIGUOUS exhibit or an
                 # ERROR is a FAULT — the filing IS there but unresolvable, so it must surface ONCE for
-                # manual review, not silently re-fetch every tick for 180 days (nor mask a real bug).
+                # manual review, not silently re-fetch every tick for 180 days (nor mask a real bug). This
+                # is a RUNNER OPERATIONAL fault (the resolver couldn't place the filing — it pages), NOT
+                # the sensor's review-advisory (that is soi.scan's extraction-unreliable punt, below).
                 if reason in (SOI_AMBIGUOUS, SOI_ERROR):
                     _emit_fault(store, f"soi.corroboration.{reason}",
                                 f"SOI target unresolvable ({reason}) for {launch['series_id']} "
@@ -800,6 +884,7 @@ def _run_soi_corroboration(deps: RunnerDeps, store, now: str, faults: list, runl
                 continue  # not-yet OR surfaced-fault: the launch stays sectors_unresolved this tick
             soi_sensor.scan(
                 launch, target.accession, entry.name, active, soi, deps.cfg, now, store.append,
+                report_advisory,
                 fetch_body=lambda t=target: deps.edgar_client.filing_text(
                     t.cik, t.accession, t.primary_doc))
         except Exception as e:  # one launch's failure never blinds the others (§9g)

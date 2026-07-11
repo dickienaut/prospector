@@ -73,6 +73,24 @@ def build_context(registry, states: Iterable[dict], runs, machine, cfg: dict, no
     }
 
 
+# --- the §10 fault taxonomy (operational vs review-advisory) --------------------------------------
+
+def _partition_faults(faults: list) -> tuple[list, list]:
+    """Split a fault list into (operational, review-advisory) by the §10 `category` — a missing category
+    defaults to operational (the conservative default: an unrecognized fault is treated as breakage)."""
+    op = [f for f in faults if f.get("category", "operational") != "review-advisory"]
+    adv = [f for f in faults if f.get("category") == "review-advisory"]
+    return op, adv
+
+
+def _page_worthy(faults: list) -> list:
+    """The faults that DRIVE a page (§10 alarm-posture taxonomy — mirrors runner._page_worthy_faults):
+    operational faults + review-advisories on a live-lead fund. A non-live-lead advisory is surfaced but
+    never paged, so it never sets a FAULT subject."""
+    return [f for f in faults
+            if f.get("category", "operational") != "review-advisory" or f.get("on_live_lead")]
+
+
 # --- subjects (§8a) --------------------------------------------------------------------------------
 
 def _changed_summary(changed_leads: dict) -> str:
@@ -113,10 +131,12 @@ def heartbeat_subject(ctx: dict, prefix: str) -> str:
 
 
 def push_subject(ctx: dict, prefix: str) -> str:
-    """The immediate-push subject (§8a). A FAULT outranks a state change (the higher-priority signal) when
-    a tick carries both: `[PROS] FAULT: <subsystem>` else `[PROS] state change: <summary>`."""
-    if ctx["faults"]:
-        return f"{prefix} FAULT: {_fault_summary(ctx['faults'])}"
+    """The immediate-push subject (§8a). A PAGE-WORTHY fault (operational, or a review-advisory on a live
+    lead — §10 taxonomy) outranks a state change when a tick carries both: `[PROS] FAULT: <subsystem>` else
+    `[PROS] state change: <summary>`. A non-live-lead advisory never pages, so it never sets the subject."""
+    pw = _page_worthy(ctx["faults"])
+    if pw:
+        return f"{prefix} FAULT: {_fault_summary(pw)}"
     return f"{prefix} state change: {_changed_summary(ctx['changed_leads'])}"
 
 
@@ -126,11 +146,15 @@ def _body(ctx: dict) -> str:
     lines: list[str] = []
     h, hb = ctx["health"], ctx["heartbeat"]
 
-    # Scan stats — the one-glance state (also the dead-man's "is it alive" line).
+    # Scan stats — the one-glance state (also the dead-man's "is it alive" line). Faults and review-
+    # advisories are counted DISTINCTLY (§10): "something broke, go fix it" and "the sensor correctly
+    # punted, look eventually" are different signals — one number would lose that (a complete summary
+    # is not a flat one). This is also the count-honesty fix: never '0 faults' beside faults that fired.
+    op, adv = _partition_faults(ctx["faults"])
     lines.append(
         f"Scan {ctx['now']}: {h['active_live']} live · {h['active_shadow']} shadow · "
         f"{h['reverted']} reverted · {len(ctx['changed_leads'])} changed this run · "
-        f"{len(ctx['faults'])} fault(s) this run.")
+        f"{len(op)} fault(s) · {len(adv)} for review this run.")
     hb_state = "OK" if hb["ok"] else f"BROKEN — {hb['reason']}"
     lines.append(f"Heartbeat: {hb_state} · last run {hb.get('last_run_date') or '—'}.")
 
@@ -172,11 +196,23 @@ def _body(ctx: dict) -> str:
         for q in ctx["queue"]:
             lines.append(f"  · {q['ticker']} — {q['attempts']} attempt(s), first failed {q['first_failed_at']}")
 
-    # Faults — the forensic log (persisting faults stay visible here even when nuisance-suppressed from paging).
-    lines += ["", "Faults (recent):"]
-    if ctx["recent_faults"]:
-        for f in ctx["recent_faults"]:
+    # Faults + advisories — the forensic log, split by §10 category (persisting items stay visible here
+    # even when suppressed/not-paged). OPERATIONAL: something broke (paged, then rides the heartbeat while
+    # it persists). REVIEW-ADVISORIES: a sensor correctly punted an unreliable extraction to a human —
+    # surfaced but not paged, EXCEPT one on a live-lead fund (marked; it paged).
+    op_recent, adv_recent = _partition_faults(ctx["recent_faults"])
+    lines += ["", "Faults (recent) — operational:"]
+    if op_recent:
+        for f in op_recent:
             lines.append(f"  · {f['ts']} · {f.get('subsystem')}: {f.get('message')}")
+    else:
+        lines.append("  (none)")
+
+    lines += ["", "Manual review — advisories (recent, not paged unless on a live lead):"]
+    if adv_recent:
+        for f in adv_recent:
+            flag = "  [LIVE-LEAD — paged]" if f.get("on_live_lead") else ""
+            lines.append(f"  · {f['ts']} · {f.get('subsystem')}: {f.get('message')}{flag}")
     else:
         lines.append("  (none)")
 
