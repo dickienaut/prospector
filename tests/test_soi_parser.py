@@ -1,5 +1,5 @@
 """SOI parser — GICS-industry-grouped sector derivation from the real EDGAR filing (spec §4c resolver;
-design docs/2026-07-04-soi-derived-sector-concentration.md).
+design docs/notes/2026-07-04-soi-derived-sector-concentration.md).
 
 Assertion A of the split (the sector derivation is checked INDEPENDENTLY of the lag, in the golden
 test): parse the two real recorded-real TEKX NPORT-EX filings and confirm the derived `{sector: weight}`

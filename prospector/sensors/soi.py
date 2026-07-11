@@ -1,5 +1,5 @@
 """SOI sensor — the deferred pass that RESOLVES `sectors_unresolved` from the industry-grouped Schedule
-of Investments (spec §4c; design docs/2026-07-04-soi-derived-sector-concentration.md).
+of Investments (spec §4c; design docs/notes/2026-07-04-soi-derived-sector-concentration.md).
 
 The launch-corroboration hook records a launch `sectors_unresolved → dormant` when its daily holdings
 file carries no GICS sectors (every active thematic ETF, per primary-source review). This sensor is that

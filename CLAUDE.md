@@ -3,8 +3,8 @@
 This repo is **Project Prospector**, the offensive twin of the thesis smoke detector. It watches
 the ETF universe for structural novelty and proposes **reading, never orders**.
 
-The canonical spec is `docs/prospector-v1-spec-rev12-2026-07-03.md` (rev12; earlier revs kept as
-history). Read it before changing anything load-bearing. Rev12 folds the launch corroboration hook
+The canonical spec is `docs/prospector-v1-spec-rev14-2026-07-08.md` (rev14; earlier revs kept in
+`docs/history/`). Read it before changing anything load-bearing. Rev12 folds the launch corroboration hook
 (§4c) to **built** (the M4 capstone) and records its finding at deflated strength — the live lag is
 bounded by holdings coverage, an **existence proof, not a rate** — plus the fixture-provenance honesty.
 Primary-source review then sharpened it: the real SSGA daily file is **xlsx, not CSV**, and for an
@@ -107,7 +107,7 @@ Design-thread-authorized amendments to CONTRACT defaults are recorded under `doc
 - **SOI-derived sector concentration — the EDGAR filing carries the GICS grouping; the ticker→GICS
   classifier is RETIRED (§4c resolver)** — ratified:
   `docs/decisions/2026-07-04-soi-derived-sector-concentration.md` (design:
-  `docs/2026-07-04-soi-derived-sector-concentration.md`). The prior bullet's "external ticker→GICS
+  `docs/notes/2026-07-04-soi-derived-sector-concentration.md`). The prior bullet's "external ticker→GICS
   classifier" unblock was a **convergent-prior error**: the primary source already publishes the sector
   grouping. A fund's periodic EDGAR filing renders a **GICS-industry-grouped Schedule of Investments**
   (`SOFTWARE — 38.7%`, `ELECTRIC UTILITIES — 6.4%`); sector concentration is derived by parsing those

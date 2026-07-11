@@ -241,7 +241,7 @@ def weight_covering_members(holdings: pd.DataFrame, coverage: float = 0.90) -> t
 #
 # The §4b dispersion vertical prices each constituent by a BARE ticker (Tiingo is queried by symbol),
 # then keys the panel on the CUSIP. But the pull trusts the ticker to be a valid, UNIQUE, US-listed
-# symbol — and a real SSGA file breaks that (the QA finding: docs/dispersion_foreign_ticker_findings.md).
+# symbol — and a real SSGA file breaks that (the QA finding: docs/notes/dispersion_foreign_ticker_findings.md).
 # The gate below excludes the un-priceable lines AT THE MEMBERSHIP BOUNDARY, before the pull, so the
 # basket is priced on its US-listed core and the excluded weight is a REPORTED coverage gap — never a
 # silent wrong-series substitution. This is *never-anchor-on-a-ticker* (HECO, §2/§5) one level down; the

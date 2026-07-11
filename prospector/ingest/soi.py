@@ -1,5 +1,5 @@
 """SOI ingest + GICS-industry-grouped sector derivation — the §4c RESOLVER of `sectors_unresolved`
-(design: docs/2026-07-04-soi-derived-sector-concentration.md).
+(design: docs/notes/2026-07-04-soi-derived-sector-concentration.md).
 
 The daily xlsx leaves Sector "-" for an active fund, so holdings-file sector concentration is empty and
 a real launch resolves `sectors_unresolved → dormant` (the prior slice). But the sector grouping is
