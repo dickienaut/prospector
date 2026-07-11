@@ -39,6 +39,7 @@ docs/
   prospector-v1-spec-rev14-2026-07-08.md         ← CURRENT build spec
   project-prospector-state-of-project-rev7-2026-07-11.md   ← CURRENT status rollup
   decisions/   dated fossils — every load-bearing decision, chronological, never rewritten
+  bugs/        defects + their regression tests + the rules born from them (meta-bug classes)
   history/     superseded revs of the build spec + the state-of-project doc
   notes/       QA findings, reviews, build-notes, slice-specs, guidance, handoffs (freely authored)
   origins/     founding-era + sibling-project archive (provenance), incl. the PDFs
@@ -112,7 +113,13 @@ whole series is the change-history.*
 - *(earlier: crash-flags guidance, mandate-diff, launch-corroboration existence-proof, SOI-derived
   concentration, identity-integrity, remote-doc-consolidation + reindex.)*
 
-### Working notes — `notes/`
+### Bug & fix archive — `bugs/`
+*The defect lifecycle, and the rules it births. `bugs/README.md` is the index: the **meta-bug classes** — the
+recurring patterns that keep biting (green-on-synthetic/broken-on-real, convergent-priors,
+invariant-in-prose-not-mechanism, never-anchor-on-a-ticker, go-to-the-source, nuisance-alarm, doc-drift), each
+**traced to the rule it spawned** — plus a complete bug index (H/S/B/I/P, N1–N10, §9e, E1/E2) linking each to
+its detail doc + regression test, and a per-bug record template. New bugs get a dated `YYYY-MM-DD-<slug>.md`
+record; historical detail stays in the `notes/` QA findings (indexed, never moved).*
 *A freely-authored kind (per the CLAUDE.md amend-rule scope — not bound, not fossilized). The load-bearing:*
 - **QA findings & reviews** — `prospector_full_review_claude_science.md` (fresh-eyes package review),
   `prospector_followup_review_2026-07-07.md` (live-cadence pass), `2026-07-07-live-cadence-qa-fixes.md`
