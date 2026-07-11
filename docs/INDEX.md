@@ -85,9 +85,14 @@ one into `history/`, and update this index + the pointers in `CLAUDE.md` / `ARCH
 ### Superseded revs — `history/`
 *The prior revs of the two rolling docs, carried for provenance. The current rev always lives at the root; the
 whole series is the change-history.*
-- Build spec: `prospector-v1-spec-rev1` through `rev13` (rev 14 is current, at the root). **rev 1** is
-  `prospector-v1-spec-rev1-2026-07-01.md` — the series' first doc, titled *"Generator v1"* because it predates
-  the "Prospector" rename. Revs 1 / 2 / 4 / 7 / 10 were recovered 2026-07-11 from the design-thread archive.
+- Build spec: `prospector-v1-spec-rev1` through `rev13` (rev 14 is current, at the root). Revs 1 / 2 / 4 / 7 / 10
+  were recovered 2026-07-11 from the design-thread archive.
+  - **rev 1 — one doc, two names (by design).** The file is `history/prospector-v1-spec-rev1-2026-07-01.md`
+    (its **series** name; content keeps the *"Generator v1"* title, as it predates the "Prospector" rename). It
+    is **also known as `generator-v1-spec-2026-07-01.md`** — its **born** name, under which the pre-rename docs
+    reference it: the `origins/` spec-punchlist, the rev 2 spec, and the archive-sort decision record. Those
+    references were **not** rewritten (never change the past), so if you're chasing `generator-v1-spec`, this is
+    the file — series identity in the filename, founding identity in the references.
 - State-of-project: `project-prospector-state-of-project-{2026-07-02,rev2,rev3,rev4,rev5,rev6}-*.md`
   (rev 7 is current, at the root; note rev 1's filename carries no "rev").
 
