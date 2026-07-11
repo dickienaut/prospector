@@ -149,7 +149,9 @@ provenance. Several were recovered 2026-07-11 from the design-thread archive.*
   + `yin-yang-monitoring-system-overview.md` (the offensive/defensive twin philosophy);
   `systems-failure-and-portfolio-resilience-synthesis.md` (the resilience **base-case** — the foundational
   reading the design answers to); `skunkworks-ledger.md` (the founding "experiment freezer" ledger — one
-  door out to production). *Contract-adjacent.*
+  door out to production); **`2026-07-11-recursive-spine.md`** (retrospective synthesis — the project's one
+  axiom, *preserve the primary record*, applied self-similarly at every layer; why the whole is fractal, and
+  bounded by the human-in-the-loop). *Contract-adjacent.*
 - **Founding-era decisions & reviews** — `thesis-generator-decisions-review-2026-06-29.md` + its rev 2
   `...-2026-07-01.md` (the concept-freeze log); the outside reviews — `thesis-generator-outside-read.md`,
   `prospector-v1-spec-punchlist.md`, `generator-review-recommendations.md`. *(The founding build spec itself is
