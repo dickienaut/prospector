@@ -85,7 +85,14 @@ one into `history/`, and update this index + the pointers in `CLAUDE.md` / `ARCH
 ### Superseded revs — `history/`
 *The prior revs of the two rolling docs, carried for provenance. The current rev always lives at the root; the
 whole series is the change-history.*
-- Build spec: `prospector-v1-spec-rev{3,5,6,8,9,11,12,13}-*.md` (rev 14 is current, at the root).
+- Build spec: `prospector-v1-spec-rev1` through `rev13` (rev 14 is current, at the root). Revs 1 / 2 / 4 / 7 / 10
+  were recovered 2026-07-11 from the design-thread archive.
+  - **rev 1 — one doc, two names (by design).** The file is `history/prospector-v1-spec-rev1-2026-07-01.md`
+    (its **series** name; content keeps the *"Generator v1"* title, as it predates the "Prospector" rename). It
+    is **also known as `generator-v1-spec-2026-07-01.md`** — its **born** name, under which the pre-rename docs
+    reference it: the `origins/` spec-punchlist, the rev 2 spec, and the archive-sort decision record. Those
+    references were **not** rewritten (never change the past), so if you're chasing `generator-v1-spec`, this is
+    the file — series identity in the filename, founding identity in the references.
 - State-of-project: `project-prospector-state-of-project-{2026-07-02,rev2,rev3,rev4,rev5,rev6}-*.md`
   (rev 7 is current, at the root; note rev 1's filename carries no "rev").
 
@@ -109,33 +116,49 @@ whole series is the change-history.*
 *A freely-authored kind (per the CLAUDE.md amend-rule scope — not bound, not fossilized). The load-bearing:*
 - **QA findings & reviews** — `prospector_full_review_claude_science.md` (fresh-eyes package review),
   `prospector_followup_review_2026-07-07.md` (live-cadence pass), `2026-07-07-live-cadence-qa-fixes.md`
-  (the ordered fix plan), `email_nuisance_suppression_findings.md` + `PROSPECTOR_FAULT_SUPPRESSION_README.md`
+  (the ordered fix plan), `2026-07-04-soi-slice-design-review.md` (design-thread review of the SOI slice),
+  `email_nuisance_suppression_findings.md` + `PROSPECTOR_FAULT_SUPPRESSION_README.md`
   (the volatile-message suppression bug + RED-first fix), `dispersion_foreign_ticker_findings.md` (the §9e
   ticker-anchor finding), the `PROSPECTOR_REGRESSION_TESTS*_README.md` set (N1–N10 regression tests).
 - **Slice-specs & build-notes** (interim, fold into a future spec rev) —
   `2026-07-04-soi-derived-sector-concentration.md` (SOI resolver design; the *design half* of the
   same-named `decisions/` pair — kept distinct, not a duplicate), `prospector-m5-runner-spec-2026-07-05.md`,
-  `2026-07-10-8b-dashboard-board-snapshot-export.md`, and the `2026-07-*-*-build-note.md` set (§9e dispersion
-  ×2, §10 email-sender).
+  `2026-07-10-8b-dashboard-board-snapshot-export.md`, `2026-07-04-rev13-rev4-fold-for-claude-code.md` (the
+  doc-fold instruction for the SOI slice), and the `2026-07-*-*-build-note.md` set (§9e dispersion ×2,
+  §10 email-sender).
+- **Dev / CI** — `note-github-test-gating.md` + `2026-07-11-ci-branch-protection-setup.md` (gate `main` on a
+  green test suite — make the discipline structural).
 - **Guidance & handoff** — `prospector-crash-flags-guidance-rev2-2026-07-02.md` (+ the superseded
   `...-diagnostic-guidance-2026-07-02.md`) — the March-2020 crash-flag diagnostic + its resolved Box-B
   outcome; `prospector-thread-handoff-2026-07-08.md` — a point-in-time cold-start snapshot (now stale).
 
 ### Origins & sibling-project archive — `origins/`
 *The pre-code thinking — the **"Thesis Generator" era** (Prospector's earlier name) — plus sibling-project
-briefs. Docs were spottier here, before the document discipline set in; kept for provenance.*
-- **The founding document — `thesis-generator-founding-document.md`** — the founding brief: the premise, the
-  consensus trap, novelty-not-quality, the reasoning the whole design rests on; the first experiment at §11.
-  *Contract-adjacent.*
-- **The decisions review — `thesis-generator-decisions-review-2026-06-29.md`** — the concept-freeze companion:
-  every settled choice + the reasoning that load-bears it + the open forks.
+briefs and the foundational reading. Docs were spottier here, before the document discipline set in; kept for
+provenance. Several were recovered 2026-07-11 from the design-thread archive.*
+- **Founding & concept** — `thesis-generator-founding-document.md` (the founding brief: premise, consensus
+  trap, novelty-not-quality — the reasoning the whole design rests on, first experiment at §11);
+  `concept-freeze-2026-06-28.md` (the earliest skunkworks concept snapshot); `two-instruments-for-a-long-horizon.md`
+  + `yin-yang-monitoring-system-overview.md` (the offensive/defensive twin philosophy);
+  `systems-failure-and-portfolio-resilience-synthesis.md` (the resilience **base-case** — the foundational
+  reading the design answers to); `skunkworks-ledger.md` (the founding "experiment freezer" ledger — one
+  door out to production). *Contract-adjacent.*
+- **Founding-era decisions & reviews** — `thesis-generator-decisions-review-2026-06-29.md` + its rev 2
+  `...-2026-07-01.md` (the concept-freeze log); the outside reviews — `thesis-generator-outside-read.md`,
+  `prospector-v1-spec-punchlist.md`, `generator-review-recommendations.md`. *(The founding build spec itself is
+  now `history/prospector-v1-spec-rev1-2026-07-01.md` — rev 1, the pre-rename "Generator v1" spec.)*
 - **Provenance (uncurated)** — `project-prospector-overview-2026-07-02.md` (research-note overview),
   `prospector-milestone3-gate-and-recalibration-brief.md` (the M3 acceptance + the authorized stress-gate
-  recalibration), `generator-review-recommendations.md` (an external read of the decisions review).
-- **Sibling-project** — `thesis-smoke-detector-design-brief.md` (the defensive twin Prospector twins),
-  `bench-note-crowding-detection.md` (a Protector-side sensor-bank brief that vendors Prospector primitives).
-- **The PDFs (fossil captures, not machine-parsed)** — `Prospector.pdf` (the founding-thread transcript) and
-  `Project Prospector … (rev 3).pdf` (an early state-of-project snapshot).
+  recalibration).
+- **Sibling-project (the Thesis Smoke Detector — the defensive twin)** — `thesis-smoke-detector-design-brief.md`,
+  `...-decisions-review-2026-06-29.md`, `...-one-pager.md`, `...-technical-overview.md`;
+  `bench-note-crowding-detection.md` (a Protector-side sensor-bank brief that vendors Prospector primitives);
+  `rho-G-hawkes-criticality-subsystem-design-theory.md` (the sibling's unbuilt criticality-subsystem theory —
+  restored 2026-07-11).
+- **The PDFs** — `Prospector.pdf` (the founding-thread transcript) and `Project Prospector … (rev 3).pdf`
+  (an early state-of-project snapshot) — fossil captures, not machine-parsed. Plus `Systemic Fragility in
+  Global Supply Chains.pdf` — **foundational reading** (the supply-chain fragility research that seeded the
+  project's thinking; the worked-examples companion to `systems-failure-and-portfolio-resilience-synthesis.md`).
 
 ### Deferred / v2 — `deferred/`
 *Parked designs — captured, not queued (the aspirational register; walled off from v1 per the firewall).*
