@@ -149,8 +149,10 @@ provenance. Several were recovered 2026-07-11 from the design-thread archive.*
   `bench-note-crowding-detection.md` (a Protector-side sensor-bank brief that vendors Prospector primitives);
   `rho-G-hawkes-criticality-subsystem-design-theory.md` (the sibling's unbuilt criticality-subsystem theory —
   restored 2026-07-11).
-- **The PDFs (fossil captures, not machine-parsed)** — `Prospector.pdf` (the founding-thread transcript) and
-  `Project Prospector … (rev 3).pdf` (an early state-of-project snapshot).
+- **The PDFs** — `Prospector.pdf` (the founding-thread transcript) and `Project Prospector … (rev 3).pdf`
+  (an early state-of-project snapshot) — fossil captures, not machine-parsed. Plus `Systemic Fragility in
+  Global Supply Chains.pdf` — **foundational reading** (the supply-chain fragility research that seeded the
+  project's thinking; the worked-examples companion to `systems-failure-and-portfolio-resilience-synthesis.md`).
 
 ### Deferred / v2 — `deferred/`
 *Parked designs — captured, not queued (the aspirational register; walled off from v1 per the firewall).*
