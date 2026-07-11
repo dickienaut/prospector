@@ -12,7 +12,9 @@ shipping a slice** — the classes below are where this project's bugs actually 
 
 - **Meta-bug classes** (§1) — the recurring patterns, each with its instances and the **rule/discipline it
   birthed.** This is the load-bearing register: repeat offenders are where rules come from, so a new bug's
-  first question is *"which class is this?"*
+  first question is *"which class is this?"* — which resolves to one of the **§1a taggable failure-classes**
+  (1, 3, 4, 5, 7, 9) or `one-off`. The **§1b frame** (2, 6, 8) is never a tag: it is the lens you *read* to
+  understand a bug — its root (2), the countermeasure (6), the severity axis (8).
 - **The bug index** (§2) — every logged defect, compact: symptom · status · class · guarding test · the rule
   or decision it spawned · where the full detail lives.
 - **Per-bug records** (`YYYY-MM-DD-<slug>.md`) — born dated (per the naming rule), for bugs found **going
@@ -32,10 +34,22 @@ shipping a slice** — the classes below are where this project's bugs actually 
 ## §1 · Meta-bug classes — the patterns that keep biting
 
 *Ordered by how much they've cost. Each is a bug **factory**; the rule in the last column is the machine we
-built to shut it down. When a new defect matches a class here, tag it — and if the class has no rule yet, that
+built to shut it down. When a new defect matches a **taggable** class here, tag it — and if the class has no rule yet, that
 absence is the next rule.*
 
-### 1. Green-on-synthetic / broken-on-real  ·  *the project's signature failure*
+*§1 splits in two. **§1a — taggable failure-classes** (1, 3, 4, 5, 7, 9): the defect *shapes* a new bug
+tags to. **§1b — the frame** (2, 6, 8): the root, the countermeasure, the severity axis — read to understand
+a bug, never tagged (you can tag a bug "class 5"; you can't tag one "class 6 — go to primary source," that's
+the fix, not a defect). **The numbers 1–9 are stable IDs — never renumbered:** the §2 "Class" column
+references them by number, so the split only *groups* them (a `Class` value like `1,2,8` still resolves —
+taggable 1, rooted in frame 2, fails silently per frame 8). The taxonomy's version of moving files into
+folders without renaming them.*
+
+### §1a · Taggable failure-classes — what a new bug tags to
+
+*The actual defect patterns; "which class is this?" resolves to one of these — or `one-off`.*
+
+#### 1. Green-on-synthetic / broken-on-real  ·  *the project's signature failure*
 Code reads correctly, passes its tests, and breaks on the **real** substrate — because the test exercised a
 *synthetic* fixture that couldn't reproduce the real shape. Named explicitly in the §10 finding: *"the third
 time this pattern surfaced… the first on the alarm layer itself."*
@@ -44,27 +58,18 @@ time this pattern surfaced… the first on the alarm layer itself."*
   real TEKX file) · E1 ("same shape as the H1/H4 misses").
 - **Rule born:** the **fixture-provenance discipline** — every fixture is *recorded-real* (source-URL +
   retrieval-date) or *declared-synthetic in-band*; and the QA seat **runs** the code against real
-  config/fixtures, never just reads it. → `CLAUDE.md` §Fixture provenance, and [[validate-slices-against-real-moving-substrate]].
+  config/fixtures, never just reads it. → [`CLAUDE.md` §Fixture provenance](../../CLAUDE.md#fixture-provenance) (validate slices against real/moving substrate).
 
-### 2. Convergent-prior error  ·  *the reason class 1 stays invisible*
-Code **and** fixture share one wrong prior, so no divergent cross-review catches it — only the primary source
-does. "The model that wrote the code is worst-positioned to see its own baked-in premise."
-- **Instances:** the *"SPDR publishes daily CSVs"* prior (residue: H1/H2/H3) · the *"the daily file carries GICS
-  sectors"* prior (drove the entire SOI slice) · S5 (a future NaN fixture).
-- **Rule born:** **primary-source verification is the antidote** — read the *real filed artifact*, don't prove
-  logic against imagined messiness; plus the three-seat workflow (design→build→QA) so the author isn't the
-  reviewer. → `docs/decisions/2026-07-04-real-holdings-xlsx-and-blank-sectors.md`, `2026-07-04-soi-derived-sector-concentration.md`.
-
-### 3. Invariant stated in prose, not enforced in mechanism
+#### 3. Invariant stated in prose, not enforced in mechanism
 The code *says* an invariant in a docstring/comment but nothing makes it un-violatable; the test exercises the
 *easy* version of the invariant, so the gap is invisible. The "governing frame" of the whole N-series fix plan.
 - **Instances:** N1 (§11 read-only firewall — a `# read-only` comment that wrote to the store) · N2 ("two cold
   runs identical") · N3 (§3 no-fabrication) · N8 ("ambiguous → surface") · B3 (docstring "excludes the market").
 - **Rule born:** **(a)** convert the invariant from prose to **mechanism** (make it un-violatable — e.g. open
   the store `mode=ro`); **(b)** land a regression test that **attempts the violation**, not the easy case (the
-  "fires-not-called" discipline). → [[prove-spawners-fire-on-real-seed-data]].
+  "fires-not-called" discipline). → [the `fires-not-called` discipline](../decisions/2026-07-06-soi-corroboration-retry-9d.md).
 
-### 4. A test that passes for the wrong reason
+#### 4. A test that passes for the wrong reason
 The suite is green, but *because of* the bug, or by an accident of the harness — so it certifies the defect.
 - **Instances:** N1 (`test_dashboard_app` smoke passes only because the broken read-write dashboard creates the
   table on the fly) · N2 (two separate fresh stores dodge the same-store path) · N5 (relative config path
@@ -72,7 +77,7 @@ The suite is green, but *because of* the bug, or by an accident of the harness �
 - **Rule born:** **runner-faithful seeds** (test against the real store/path/message the runtime uses) + the
   violation-test rule (3b). Tightly coupled to classes 1 & 3.
 
-### 5. "Never anchor on a ticker" — the HECO lesson, recurring one grain deeper each time
+#### 5. "Never anchor on a ticker" — the HECO lesson, recurring one grain deeper each time
 A ticker is treated as a stable identity; it isn't (reuse, dual-class, foreign collision). Keeps reappearing at
 finer grains as new layers land.
 - **Instances:** I1 (launch series identity discarded, re-derived by ticker) · B1 (prospectus at trust level,
@@ -82,16 +87,7 @@ finer grains as new layers land.
   path) + series-scoped `resolve_series` + the **§9e PRIMARY-SOURCE GATE**. → `docs/decisions/2026-07-06-identity-integrity.md`,
   `2026-07-10-9e-constituent-symbol-resolution.md`.
 
-### 6. Go to the primary source  ·  *the countermeasure that keeps paying off*
-The one you named: the truth is in the filed artifact, and only opening it breaks the shared prior. Every time
-we've gone to the source, it moved the design.
-- **Instances:** the xlsx/blank-Sector discovery (opening a real SSGA file) · P1 (verify vs a known NVDA split
-  before trusting a price source) · B1/B2 (registrant-level EDGAR truth) · 9e-ENR (widened the gate to
-  dual-class + foreign + cash lines).
-- **Rule born:** the **primary-source gate** before a live slice; the **no-third-party-symbol-feed** /
-  **no-LLM-text-as-data** walls (a bought feed or model prose would breach the primary-source discipline).
-
-### 7. Nuisance-alarm / GPWS — "the alarm that cries wolf trains you to disable it"
+#### 7. Nuisance-alarm / GPWS — "the alarm that cries wolf trains you to disable it"
 The smoke-detector brief's §2.4 failure, imported into our alert layer: a fault that pages every tick trains the
 operator to ignore it.
 - **Instances:** C.1 (every-tick fault push) · E1 (volatile message defeats suppression → pages daily) · E2
@@ -101,14 +97,7 @@ operator to ignore it.
   faults page, manual-review advisories are counted+surfaced but don't page (except on a live-lead fund). →
   `docs/decisions/2026-07-10-10-email-sender.md`.
 
-### 8. Fail-loud vs fail-silent  ·  *the severity axis, not a cause*
-The codebase's dominant (good) instinct is to fail loud / fault rather than mis-roll. The bugs that **matter**
-are the few that fail *silently* — this is the axis that ranks every class above, not a class of its own.
-- **The silent set (the dangerous ones):** H1, H4, I1/B1, S1, S5, N1, N2, N3, N8, N10, 9e-ENR, E1, the count-lie.
-- **Rule of thumb:** a finding's severity ≈ how silently it fails. A loud raise is a nuisance; a silent wrong
-  number corrupts the fossil record.
-
-### 9. Doc drift / memory-prosthetic leak
+#### 9. Doc drift / memory-prosthetic leak
 The archive misremembers — tells a returning reader something false — because status prose outside the
 regenerated section rots, or a "closed" changelog line is added without deleting the open to-do it closed.
 - **Instances:** DRIFT-1 (state doc §2.9 "deferred" vs §5.2 "shipped") · DRIFT-2 (aging-monitor "pinned"
@@ -117,6 +106,37 @@ regenerated section rots, or a "closed" changelog line is added without deleting
   decisions, never current build-state**; a changelog "closed" line must **delete-and-restate** the to-do it
   closes. (Kin to the whole doc-discipline: amend-never-regenerate, the `2026-07-11-docs-reorganization` +
   `-doc-naming-convention` rules.)
+
+### §1b · The frame — not taggable (read to understand: root · countermeasure · severity axis)
+
+*Never a bug's tag. These are the lenses: **2** the root (why the silent set stays invisible), **6** the
+countermeasure (go to the primary source), **8** the severity axis (how silently it fails). Convergent-prior
+leads — the rest are its downstream symptoms.*
+
+#### 2. Convergent-prior error  ·  *the root — why the whole silent set stays invisible*
+Code **and** fixture share one wrong prior, so no divergent cross-review catches it — only the primary source
+does. "The model that wrote the code is worst-positioned to see its own baked-in premise."
+- **Instances:** the *"SPDR publishes daily CSVs"* prior (residue: H1/H2/H3) · the *"the daily file carries GICS
+  sectors"* prior (drove the entire SOI slice) · S5 (a future NaN fixture).
+- **Rule born:** **primary-source verification is the antidote** — read the *real filed artifact*, don't prove
+  logic against imagined messiness; plus the three-seat workflow (design→build→QA) so the author isn't the
+  reviewer. → `docs/decisions/2026-07-04-real-holdings-xlsx-and-blank-sectors.md`, `2026-07-04-soi-derived-sector-concentration.md`.
+
+#### 6. Go to the primary source  ·  *the countermeasure that keeps paying off*
+The one you named: the truth is in the filed artifact, and only opening it breaks the shared prior. Every time
+we've gone to the source, it moved the design.
+- **Instances:** the xlsx/blank-Sector discovery (opening a real SSGA file) · P1 (verify vs a known NVDA split
+  before trusting a price source) · B1/B2 (registrant-level EDGAR truth) · 9e-ENR (widened the gate to
+  dual-class + foreign + cash lines).
+- **Rule born:** the **primary-source gate** before a live slice; the **no-third-party-symbol-feed** /
+  **no-LLM-text-as-data** walls (a bought feed or model prose would breach the primary-source discipline).
+
+#### 8. Fail-loud vs fail-silent  ·  *the severity axis, not a cause*
+The codebase's dominant (good) instinct is to fail loud / fault rather than mis-roll. The bugs that **matter**
+are the few that fail *silently* — this is the axis that ranks every class above, not a class of its own.
+- **The silent set (the dangerous ones):** H1, H4, I1/B1, S1, S5, N1, N2, N3, N8, N10, 9e-ENR, E1, the count-lie.
+- **Rule of thumb:** a finding's severity ≈ how silently it fails. A loud raise is a nuisance; a silent wrong
+  number corrupts the fossil record.
 
 ---
 
