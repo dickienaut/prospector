@@ -85,8 +85,9 @@ one into `history/`, and update this index + the pointers in `CLAUDE.md` / `ARCH
 ### Superseded revs — `history/`
 *The prior revs of the two rolling docs, carried for provenance. The current rev always lives at the root; the
 whole series is the change-history.*
-- Build spec: `prospector-v1-spec-rev2` through `rev13` (rev 14 is current, at the root). **rev 1** is the
-  one gap — not in any archive. Revs 2 / 4 / 7 / 10 were recovered 2026-07-11 from the design-thread archive.
+- Build spec: `prospector-v1-spec-rev1` through `rev13` (rev 14 is current, at the root). **rev 1** is
+  `prospector-v1-spec-rev1-2026-07-01.md` — the series' first doc, titled *"Generator v1"* because it predates
+  the "Prospector" rename. Revs 1 / 2 / 4 / 7 / 10 were recovered 2026-07-11 from the design-thread archive.
 - State-of-project: `project-prospector-state-of-project-{2026-07-02,rev2,rev3,rev4,rev5,rev6}-*.md`
   (rev 7 is current, at the root; note rev 1's filename carries no "rev").
 
@@ -136,10 +137,10 @@ provenance. Several were recovered 2026-07-11 from the design-thread archive.*
   + `yin-yang-monitoring-system-overview.md` (the offensive/defensive twin philosophy);
   `systems-failure-and-portfolio-resilience-synthesis.md` (the resilience **base-case** — the foundational
   reading the design answers to). *Contract-adjacent.*
-- **Founding spec & its reviews** — `generator-v1-spec-2026-07-01.md` (the pre-rename build spec, ancestor of
-  the `prospector-v1-spec` rev series); `thesis-generator-decisions-review-2026-06-29.md` + its rev 2
+- **Founding-era decisions & reviews** — `thesis-generator-decisions-review-2026-06-29.md` + its rev 2
   `...-2026-07-01.md` (the concept-freeze log); the outside reviews — `thesis-generator-outside-read.md`,
-  `prospector-v1-spec-punchlist.md`, `generator-review-recommendations.md`.
+  `prospector-v1-spec-punchlist.md`, `generator-review-recommendations.md`. *(The founding build spec itself is
+  now `history/prospector-v1-spec-rev1-2026-07-01.md` — rev 1, the pre-rename "Generator v1" spec.)*
 - **Provenance (uncurated)** — `project-prospector-overview-2026-07-02.md` (research-note overview),
   `prospector-milestone3-gate-and-recalibration-brief.md` (the M3 acceptance + the authorized stress-gate
   recalibration).

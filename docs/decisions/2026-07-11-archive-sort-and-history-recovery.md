@@ -15,18 +15,21 @@ only high-confidence Prospector-own docs were filed; the rest stay in `Archived/
 
 ## What was filed into the repo
 
-- **`history/` (4) — recovered missing spec revs.** `prospector-v1-spec-rev2, rev4, rev7, rev10` fill the exact
-  gaps the reorg (`2026-07-11-docs-reorganization.md`) flagged. The series is now contiguous **rev2–rev14**;
-  **rev 1 remains the one gap** — it is in no archive.
+- **`history/` (5) — recovered missing spec revs.** `prospector-v1-spec-rev2, rev4, rev7, rev10` fill the exact
+  gaps the reorg (`2026-07-11-docs-reorganization.md`) flagged, and **rev 1** was recovered as
+  `generator-v1-spec-2026-07-01.md` — the owner designated it the series' first doc (written before the
+  "Prospector" rename), so it was renamed `prospector-v1-spec-rev1-2026-07-01.md` (its content keeps the
+  original *"Generator v1"* title, faithful to the era). The series is now contiguous **rev1–rev14**.
 - **`notes/` (4).** `2026-07-04-rev13-rev4-fold-for-claude-code`, `2026-07-04-soi-slice-design-review`, and the
   two active CI-gating notes (`note-github-test-gating` + `2026-07-11-ci-branch-protection-setup`) — CI-gating
   (tests must pass to merge) is the current next step.
-- **`origins/` (11 + restored rho-G).** Founding-era Prospector (`generator-v1-spec-2026-07-01` — the pre-rename
-  spec; the decisions-review rev 2; `thesis-generator-outside-read`; `prospector-v1-spec-punchlist`;
-  `concept-freeze-2026-06-28`; `two-instruments-for-a-long-horizon`; `yin-yang-monitoring-system-overview`;
+- **`origins/` (11, incl. restored rho-G).** Founding-era Prospector (the decisions-review rev 2;
+  `thesis-generator-outside-read`; `prospector-v1-spec-punchlist`; `concept-freeze-2026-06-28`;
+  `two-instruments-for-a-long-horizon`; `yin-yang-monitoring-system-overview`;
   `systems-failure-and-portfolio-resilience-synthesis` — the resilience **base-case** the design answers to),
   and sibling-project provenance (`thesis-smoke-detector-{decisions-review-2026-06-29, one-pager,
-  technical-overview}`, alongside the design-brief already present).
+  technical-overview}`, alongside the design-brief already present). *(The founding build spec `generator-v1-spec`
+  went to `history/` as rev 1 — see above.)*
 
 ## rho-G restored — to the canonical version
 
