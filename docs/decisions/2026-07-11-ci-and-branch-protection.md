@@ -10,9 +10,9 @@ this workflow has run on `main`).*
 
 - **`.github/workflows/ci.yml`** (this PR) — runs on every `pull_request` into `main` **and** on `push: main`
   (the push trigger is required so the `test` check registers on the default branch and becomes selectable as
-  a required check). One job `test` on `ubuntu-latest`: `uv sync --locked` → `uv run pytest -ra` → `uv run
-  pros --help`. Single Python 3.12, no matrix, **no secrets** (the suite is offline — the network guard fails
-  any socket, so CI needs no Tiingo/EDGAR/AWS creds).
+  a required check). One job `test` on `ubuntu-latest`: `uv sync --locked --extra dashboard` → `uv run pytest
+  -ra` → `uv run pros --help` — the full **554** tests, **0 skipped**. Single Python 3.12, no matrix, **no
+  secrets** (the suite is offline — the network guard fails any socket, so CI needs no Tiingo/EDGAR/AWS creds).
 - **`main` ruleset** (a GitHub setting, applied via `gh api` **after** this PR merges — see Order below):
   enforcement **Active**, targeting the default branch — **require a PR** (0 approvals), **require status
   check `test`** with **strict / up-to-date-before-merge ON**, **block force pushes**, **restrict deletions**,
@@ -24,6 +24,12 @@ this workflow has run on `main`).*
   without it they skip silently and CI goes green on a partial suite — the exact false-green this project
   distrusts. Verified: `moto[s3]`, `pytest`, `hypothesis` are all in the default `[dependency-groups] dev`,
   so `uv sync --locked` installs them; `pytest -ra` also makes any missing-dep skip visible.
+- **The gate runs the COMPLETE suite (`--extra dashboard` too).** Beyond the dev group, CI installs the
+  `dashboard` extra (streamlit), so the 3 render-shell tests — including `test_dashboard_readonly` (the
+  dashboard's read-only / no-execution property) — **run rather than skip**: **554 passed, 2 xfailed, 0
+  skipped**. A gate that skips even a labeled subset isn't the full gate, and skipping the read-only-property
+  test would be firewall-relevant; streamlit's tests are offline, so this costs only install time. (First CI
+  run caught that `uv.lock` was git-ignored — it is now committed, since `--locked` needs a lockfile.)
 - **`uv sync --locked`** (not `--frozen`): fails if the lockfile drifted from `pyproject.toml` — catches a
   "changed a dep, forgot to re-lock" before it reaches `main`.
 - **0 required approvals.** For a solo repo, requiring 1 would deadlock — GitHub forbids self-approval and
@@ -41,8 +47,8 @@ this workflow has run on `main`).*
 
 ## Acceptance (how it will be proven — done when)
 
-- The workflow's own PR shows `test` **green**: ~554 passed / 2 xfailed, **no unexpected skips** (the moto
-  false-green check); `pros --help` passes.
+- The workflow's own PR shows `test` **green**: **554 passed / 2 xfailed / 0 skipped** (the full suite — the
+  moto false-green check *and* the dashboard render-shell tests); `pros --help` passes.
 - After the ruleset is active, a throwaway PR with a deliberately failing test shows `test` **red** and its
   merge button **blocked** — proving the gate bites, not assuming it.
 - `gh api …/rulesets` shows the ruleset **Active** with **no bypass actors**.

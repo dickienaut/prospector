@@ -27,12 +27,13 @@ jobs:
           enable-cache: true
 
       # --locked installs from the lockfile AND fails if it drifted from pyproject.toml.
-      # The default `dev` dependency-group (pytest, hypothesis, moto[s3]) is installed, so the
-      # FULL ~554-test suite runs — moto[s3] is what keeps the S3/store tests from skipping
-      # silently (a false green). The dashboard extra (streamlit) is not installed; tests don't
-      # need it (the dashboard's data-shaping lives in pure, streamlit-free view-models).
-      - name: Sync dependencies (locked, incl. dev/test group)
-        run: uv sync --locked
+      # The default `dev` group (pytest, hypothesis, moto[s3]) + the `dashboard` extra (streamlit)
+      # are installed, so the FULL 554-test suite runs with ZERO skips: moto[s3] keeps the
+      # S3/store tests from a silent false-green, and --extra dashboard runs the 3 render-shell
+      # tests (incl. the dashboard read-only-property test) instead of skipping them. streamlit's
+      # tests are offline (streamlit.testing.v1, no server), so the hermetic guarantee holds.
+      - name: Sync dependencies (locked, incl. dev group + dashboard extra)
+        run: uv sync --locked --extra dashboard
 
       # -ra surfaces skip/xfail/xpass reasons in the summary: the 2 xfails stay visible, and a
       # missing-dependency skip (would-be false green) shows up loudly rather than silently.
