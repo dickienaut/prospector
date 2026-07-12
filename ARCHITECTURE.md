@@ -46,6 +46,7 @@ path places, sizes, or recommends a trade.
 | `store/layout.py` | The §7 path tree; structural backtest/live separation | `StoreLayout`, `backtest_run_root()` |
 | `store/snapshots.py`→`fold/snapshots.py` | Reactive snapshot policy + writer (fail-loud on divergence) | `should_snapshot()`, `write_snapshot()` |
 | `store/s3_sync.py` | Fire-and-forget S3 mirror; `.backup`-only registry upload | `S3Sync.sync()` |
+| `store/backup.py` | Local dual-HDD fossil backup (§7) — incremental tree mirror + WAL-safe registry `.backup`; fail-loud blessing marker; restore-verify | `backup_store()`, `verify_restore()` |
 | `store/reindex.py` | Rebuild the registry from the `events/`+`snapshots/` trees | `rebuild_registry()` |
 | `store/fund_registry.py` | Series-ID-keyed fund entries; the HECO rule enforced at the write path | `FundRegistry.upsert()` |
 | `primitives/atomic.py` | tmp→fsync→rename atomic write + SHA-256 (vendored, hardened) | `write_atomic()`, `write_json_atomic()` |
@@ -226,6 +227,8 @@ recompute (its only option is `--store`).
 | `pros identity resolve <ticker> --series-id S######` | Manual resolution-queue path (EDGAR-verified) |
 | `pros identity queue` | The manual-resolution queue |
 | `pros store reindex` | Rebuild the index from the fossil record (repair, not run-now) |
+| `pros store verify-restore <dir>` | Rebuild a throwaway store from a backup's fossils; print counts to spot-check (restore proof) |
+| `pros backup` | Mirror the fossil store + WAL-safe registry to the configured HDD targets (durability; a read of the store, fail-loud) |
 | `pros backtest --from … --to …` | Calibration + the acceptance gate (writes only under `backtest/`) |
 
 **Verdict vocabulary — four values, three live meanings** (`VERDICT_VOCAB`; guidance rev2 §8.4):
@@ -418,6 +421,13 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - **Milestone 6** — discourse capture + budget guard. **Milestone 7** — infra-as-code + **scheduled**
   deploy (where `pros run` stops being a manual invocation); M7 also owns the SOI-corroboration **cadence
   gate** (0 cost today — the dormant pile is empty) and the read-only-media **WAL-checkpoint**.
+- **Store durability (`pros backup`) — CODE BUILT, physical activation pending** (`store/backup.py`,
+  `pros backup` + `pros store verify-restore`, 10 offline tests). Mirrors the append-only fossils (incl.
+  `registry/`) + a WAL-safe registry `.backup` to the configured HDD targets, fail-loud on an
+  unmounted/unblessed drive. The one-time dual-HDD activation + restore test is a Mac session
+  (`docs/notes/2026-07-12-mac-backup-activation-checklist.md`); the post-`pros run` cadence pairs with the
+  M7 scheduler. Named follow-ups: reindex-rebuilds-funds, offsite (S3/Backblaze), bit-rot checksums. See
+  `docs/decisions/2026-07-12-store-durability-backup.md`.
 - **v2 (banked, not built)** — the **proto-cluster / pseudo-ETF** layer (spec Appendix B): price-only,
   observation-only new-category detection below the corpus (the canary is a *cluster*, never a single
   name, and never the trade — its substrate already accrues via the generous dispersion payload, so v1's

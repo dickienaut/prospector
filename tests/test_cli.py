@@ -45,8 +45,11 @@ def test_command_tree_is_exactly_the_contract_surface():
     # (spec §9): one invocation = one tick, cron-invoked — NOT a recompute/capture-on-demand
     # surface. Still no capture trigger, no recompute-on-demand of the live store (CLAUDE.md,
     # no-run-now CONTRACT).
-    assert set(cli.commands) == {"store", "lead", "verdict", "identity", "backtest", "run"}
-    assert set(cli.commands["store"].commands) == {"reindex"}
+    # `backup` and `store verify-restore` are READS of the store (durability mirror + restore proof) —
+    # they compute nothing new and write only to external targets / a throwaway scratch, so they are in
+    # the same allowed class as `store reindex`, NOT run-now surfaces (CLAUDE.md no-run-now CONTRACT).
+    assert set(cli.commands) == {"store", "lead", "verdict", "identity", "backtest", "run", "backup"}
+    assert set(cli.commands["store"].commands) == {"reindex", "verify-restore"}
     assert set(cli.commands["lead"].commands) == {"list", "show"}
     assert set(cli.commands["identity"].commands) == {"resolve", "queue"}
     # `pros run` is a cadence entrypoint, not a run-now surface: its only params are --store and the
