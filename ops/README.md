@@ -14,28 +14,40 @@ Mini** — nothing here executes on its own.*
 | `com.prospector.run.plist` | The LaunchAgent **template** (`__PLACEHOLDERS__`). `install.sh` fills it in. |
 | `install.sh` | Substitutes the template, validates it (`plutil -lint`), installs to `~/Library/LaunchAgents/`, and `launchctl bootstrap`s it. Idempotent. |
 | `uninstall.sh` | `launchctl bootout` + removes the installed plist. |
+| `deploy.sh` | Ship a release to the prod worktree: `ops/deploy.sh <tag>` (run from the dev repo). Tag-only; preserves machine config; `uv sync`s. |
 
-## The deploy-from-tag shape — do this, not "checkout the tag"
+## The deploy-from-tag shape — a git worktree, one store, one command
 
-**The scheduler runs from a *separate production checkout* pinned at the `v1.0.0` tag — never your dev clone
-on `main`.** If the running copy and the dev copy are the same directory, `git checkout v1.0.0` and "keep
-developing on `main`" collide, and dev churn can break the live monitor. Keep them apart:
+**The scheduler runs from a git *worktree* pinned at the release tag — one repo, two working dirs, never a
+second clone and never your dev tree on `main`.** A worktree shares the dev repo's `.git` (one history), so
+there is nothing to mistake for the dev clone; production is just a directory checked out at a frozen tag,
+immune to your churn on `main`. Set it up once (from the dev repo):
 
 ```sh
-# one-time: a production clone, pinned at the release tag
-git clone <repo-url> ~/prospector-prod
-cd ~/prospector-prod
-git checkout v1.0.0            # the runner deploys from the tag, not main HEAD
-# your DEV clone stays elsewhere (e.g. ~/Documents/coding/prospector on main) — untouched by the scheduler
+# one-time: production as a worktree pinned at the tag, + the store OUTSIDE any checkout
+mv ~/prospector-prod/store ~/prospector-store          # migrating from an earlier clone (skip if fresh)
+rm -rf ~/prospector-prod                               # remove any old clone sitting at this path
+git worktree add ~/prospector-prod v1.0.1              # one repo — `git worktree list` shows both dirs
+# then set machine-local config ONCE in ~/prospector-prod/config/prospector.yaml:
+#   store.root: ~/prospector-store        # the ONE canonical store, decoupled from the checkout
+#   backup.targets: [/Volumes/…, /Volumes/…]
+( cd ~/prospector-prod && uv sync )
 ```
 
-The plist's `WorkingDirectory` and `run.sh` path both point at `~/prospector-prod`. To ship a new release
-later: cut the new tag, `git fetch && git checkout <tag>` in `~/prospector-prod`, done — `main` never touches
-production. (`v1.0.0` is cut when v1 is build-complete — i.e. after this milestone is activated.)
+- **`store.root` points OUTSIDE the checkout** (`~/prospector-store`), so no worktree/tag operation can ever
+  touch the irreplaceable fossil record — and there is exactly ONE store (the dev clone's `./store` is deleted;
+  dev testing uses a throwaway).
+- The plist's `WorkingDirectory` and `run.sh` path point at the **worktree** (`~/prospector-prod`), **never**
+  the dev clone — that pointer *is* the isolation; get it wrong and prod runs your dev tree.
+- **Ship a later release with one command** (from the dev repo), so you never hand-navigate prod:
+  ```sh
+  ops/deploy.sh v1.0.2      # TAG-ONLY (refuses a branch/SHA); preserves your machine config; uv syncs
+  ```
+  `main` never touches production; the next scheduled run picks up the new code (no restart).
 
 ## Activation runbook (on the Mini)
 
-1. **Production checkout** at the tag (above). Everything below runs in `~/prospector-prod`.
+1. **Production worktree** at the tag + external store (above). Everything below runs in `~/prospector-prod`.
 2. **`.env`** in that directory — `TIINGO_API_TOKEN` and `PROSPECTOR_SMTP_PASSWORD` are required (the run
    fails fast without them); `edgar.user_agent` lives in `config/prospector.yaml`. `uv sync` once so the venv
    exists.
