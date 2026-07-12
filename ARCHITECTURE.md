@@ -61,7 +61,7 @@ path places, sizes, or recommends a trade.
 | `sensors/xcorr.py` | The excess-correlation pipeline (β-strip → departure z) + the stress gate; **`scan()`** — the runner's LIVE per-tick driver (state from the record §9f, stress gate, spawn/tick/revert) | `daily_returns`→`departure_z`, `stress_series`, `scan()` |
 | `sensors/dispersion.py` | Intra-basket fracture (§4b) — constituent corr → spectral bipartition → Q departure z; shadow-wired, generous payload | `dispersion_q_series`, `scan()` |
 | `sensors/launch.py` | Launch sensor — new-registration detection (MF-map diff), the consensus clock | `new_registrations()`, `scan()` |
-| `sensors/rebalance.py` | Rebalance accretion (§4d) — holdings-diff → `rebalance` onto live leads; forward-hash routing | `diff_holdings()`, `watching_leads()`, `scan()` |
+| `sensors/rebalance.py` | Rebalance accretion (§4d) — holdings-diff → `rebalance` onto live leads; forward-hash routing; **wired live** (`_run_rebalance`), shadow-inclusive active set | `diff_holdings()`, `watching_leads()`, `active_incl_shadow_lead_ids()`, `scan()` |
 | `sensors/mandate.py` | Mandate-diff accretion (§4d) — new prospectus → strategy-section diff → `mandate.changed` / `fault` | `scan()` |
 | `sensors/launch_corroboration.py` | Launch corroboration (§4c) — holdings→sectors → overlap → accrete + signed lag; shared routing tail | `sector_concentration()`, `corroborate()`, `route_corroboration()`, `cross_stream_lag()` |
 | `sensors/soi.py` | SOI corroboration (§4c resolver of `sectors_unresolved`) — SOI→sectors → threshold → shared route; fault-on-unreliable; deferred reach-back (T2 preserved) | `scan()` |
@@ -70,7 +70,7 @@ path places, sizes, or recommends a trade.
 | `backtest/report.py` | The acceptance-gate artifact (recall/precision/falsification/lag) | `build_report()`, `render_markdown()` |
 | `backtest/corroboration.py` | Cross-stream corroboration scoring (sector→keyword) | `score_all()` |
 | `backtest/beta_diagnostic.py` | **Read-only** crash-flags diagnostic (never wired to the sensor) | `scoped_beta_slice()`, `two_clock_read()` |
-| `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push. WIRED: §9a sector-prices panel ingest (`_build_sector_panel`, P1 guard), **§4a xcorr — the PRIMARY live spawner** (`_run_xcorr`; universe→series_id from the mf map, §9f state, LIVE/paging/ceiling-counting), launch-recording (§4c), the §9d deferred SOI-corroboration retry, the §4d mandate-diff (§9c frozen-prior), **§4b dispersion — the 2nd live spawner, in SHADOW** (`_run_dispersion`, §9e; membership from the live SPDR feed, shadow-gated push). SLOT: rebalance (§4d holdings-diff) | `run_tick()` |
+| `runner/runner.py` | The M5 **cadence driver** (§9) — CONTRACT run-order, config-honesty-first, soft-fault granularity, reactive snapshot + `state_changed`-pinned push. WIRED: §9a sector-prices panel ingest (`_build_sector_panel`, P1 guard), **§4a xcorr — the PRIMARY live spawner** (`_run_xcorr`; universe→series_id from the mf map, §9f state, LIVE/paging/ceiling-counting), launch-recording (§4c), the §9d deferred SOI-corroboration retry, the §4d mandate-diff (§9c frozen-prior), **§4b dispersion — the 2nd live spawner, in SHADOW** (`_run_dispersion`, §9e; membership from the live SPDR feed, shadow-gated push), and **§4d rebalance — holdings-diff accretion** (`_run_rebalance`; reuses the §9e frozen holdings, shadow-inclusive routing, seed-on-first-sight). The sensor phase is now WHOLE | `run_tick()` |
 | `runner/deps.py` / `runner/notify.py` / `runner/email_render.py` / `runner/runlog.py` | Injected seam bundle; the `Notifier` transport — **`NullNotifier`** (offline / un-configured runs) or **`SmtpNotifier`** (§10 email sender; app-password in a `_Secret` holder, env-only, injectable send seam); **`email_render`** — the pure §8a templating of folds → (subject, body), reusing `dashboard/views.*`; per-tick run-log (§9g, its own `runs` table, telemetry — never a lead event) | `RunnerDeps`, `NullNotifier`, `SmtpNotifier`, `email_render`, `RunLog`, `write_run_log()` |
 | `cli/main.py` | The `pros` CLI — read surfaces + verdict/identity/backtest + the `run` cadence entrypoint | `cli` |
 | `dashboard/views.py` / `dashboard/app.py` / `dashboard/export.py` | The §11 **read-only** Streamlit dashboard — pure, tested view-models (folds of the record) + a thin `st.*` render shell + a **pure §8b board-snapshot export** (one self-describing markdown of the whole board, tick-collapsed timelines; + sortable-panel CSV). No recompute/autorefresh/run-now; the export re-reads the same view-models, so it can't drift. Streamlit is an OPTIONAL extra (`uv sync --extra dashboard`); `views`/`export` are streamlit-free | `rank_active_leads()`, `dormant_pile()`, `board_snapshot_markdown()`, `main()` |
@@ -322,6 +322,20 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
     desktop live run. See `docs/decisions/2026-07-09-dispersion-vertical-9e.md`,
     `docs/decisions/2026-07-10-9e-constituent-symbol-resolution.md` (decision) +
     `docs/decisions/2026-07-10-9e-constituent-symbol-resolution-build.md` (build record).
+  - **§4d rebalance wired — the LAST M4 sensor into the runner** (`_run_rebalance`): the holdings-diff
+    **accretion** sibling of mandate. Reuses the §9e frozen holdings — diffs each resolvable SPDR basket's
+    holdings today vs the most-recent prior frozen pull, and on a material change (identified-security
+    add/drop, or a weight move ≥ `rebalance.weight_delta_threshold`) accretes a `rebalance` onto every live
+    lead whose baskets include the fund (forward-hash `watching_leads`), else onto `_system`. **Accretion
+    only** — never spawns, never pages (the fold folds `rebalance` as a silent corroboration). Two design
+    forks: (1) a **shadow-inclusive** active set (`active_incl_shadow_lead_ids`, sibling to the non-shadow
+    paging helper — one materialized-fold source, two filters) so it corroborates burn-in dispersion leads
+    (which are all shadow) — safe because accretion never pages; (2) **seed silently on first sight**, fault
+    only a broken/unparseable feed (a cold start is not a malfunction — the same first-sight baseline as
+    launch/mandate). A same-tick spawn+rebalance routes that first rebalance to `_system` and accretes from
+    the next tick on — the §4d materialized-fold CONTRACT's deliberate trade (re-folding to erase it is the
+    drift-risk §4d forbids). The runner's **sensor phase is now WHOLE** — no remaining §4 sensor SLOTs. See
+    `docs/decisions/2026-07-12-rebalance-runner-wiring.md`.
   - **launch-recording** (§4c, §9f frozen mf prior); the **§9d deferred SOI-corroboration retry**
     (`_run_soi_corroboration` — folds `sectors_unresolved` launches, `resolve_soi_target` fetches, and
     `soi.scan` reaches back preserving `detected_at`=T2, bounded by `retry_horizon_days`); the **§4d
@@ -392,8 +406,6 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - **M7 scheduling** — the email sender (§10) is **built** (above), but the heartbeat/dead-man's
   *silence=broken* guarantee only truly arms once the runner is **scheduled** (a dead-man on a manually-run
   `pros run` tells you nothing). SMTP is the v1 transport; **SES** stays deferred with M7's deploy target.
-- **Rebalance runner wiring** — the accretion sensor (`sensors/rebalance.py`) is built, but its per-tick
-  wiring is a SLOT; it can now reuse the **§9e holdings/constituent vertical** (built) for its holdings-diff.
 - **Milestone 3b** — dispersion **PIT backtest** + the **NPORT-P parser** + delisted-price coverage —
   data-availability-gated (survivorship-clean historical holdings + delisted-constituent prices, *worse*
   for the proto-cluster layer, where winners vanish from the survivor set exactly when their thesis was

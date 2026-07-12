@@ -46,10 +46,13 @@ rev14). One distinction governs the whole package: **`xcorr` is the primary live
   blob, never the registry accession field (an identity pass may advance it intra-run).
 - **`rebalance.py`** — §4d holdings-diff accretion: a material add/drop/weight-delta over identified
   securities → a `rebalance` fact. An **accretion sensor** — no Schmitt, no lead of its own, carries no
-  z. The **sensor is built but its runner wiring is a SLOT** (deferred, pending the holdings vertical).
-  Note its `watching_leads` (forward-hash routing) and `active_nonshadow_lead_ids` (reads the fold's
-  materialized snapshots, never a side cache) are the shared routing/enumeration helpers reused live by
-  `mandate.py`.
+  z. **BUILT and wired live** (`runner._run_rebalance`, 2026-07-12; reuses the §9e frozen holdings,
+  seed-on-first-sight). Its `watching_leads` (forward-hash routing) and `active_nonshadow_lead_ids` (reads
+  the fold's materialized snapshots, never a side cache) are the shared routing/enumeration helpers reused
+  live by `mandate.py`. `active_incl_shadow_lead_ids` is the sibling of the latter for the rebalance path
+  itself — same materialized-fold source, but KEEPS shadow leads, because rebalance accretes and never
+  pages (so unlike the paging paths it corroborates burn-in dispersion leads). See
+  `docs/decisions/2026-07-12-rebalance-runner-wiring.md`.
 - **`soi.py`** — §4c resolver of `sectors_unresolved`: when a fund's file carries no GICS sectors
   (every active thematic ETF), its first industry-grouped **Schedule of Investments** yields the
   sectors, routed through the SAME `route_corroboration` path — the deferred reach-back preserves

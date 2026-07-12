@@ -15,9 +15,9 @@ cold runs over the same store produce identical events.
 SCOPE — grown well past the thin spine. WIRED, in CONTRACT run order: config honesty (§9-1), the
 §9a mf-tickers + sector-prices ingest, §4a xcorr (the PRIMARY live lead-spawner), §4b dispersion
 (§9e shadow), §4c launch-recording, the §9d deferred SOI-corroboration retry, the §4d mandate-diff
-(§9c frozen-prior), and §10 the email sender (heartbeat/state-change/fault push, nuisance-suppressed).
-Remaining spec-cited SLOTS, each additive in its CONTRACT position:
-  §4d rebalance (holdings-diff)      — needs holdings ingest (the §9e vertical, now built — unblocked)
+(§9c frozen-prior), the §4d rebalance holdings-diff accretion (the LAST M4 sensor into the runner —
+reuses the §9e holdings vertical), and §10 the email sender (heartbeat/state-change/fault push,
+nuisance-suppressed). The runner's sensor phase is now WHOLE — no remaining spec-cited sensor SLOTs.
 
 THE FOUR SUBTLE BITS (spec §9, "comment the why") — each encodes a CONTRACT that is not obvious
 from the mechanics; they are marked inline where they live:
@@ -53,12 +53,14 @@ from prospector.runner.runlog import RunLog, recent_runs, write_run_log
 from prospector.sensors import dispersion as dispersion_sensor
 from prospector.sensors import launch as launch_sensor
 from prospector.sensors import mandate as mandate_sensor
+from prospector.sensors import rebalance as rebalance_sensor
 from prospector.sensors import soi as soi_sensor
 from prospector.sensors import xcorr as xcorr_sensor
 from prospector.sensors.dispersion import dispersion_lead_id
 from prospector.sensors.launch_corroboration import (lead_sectors, pending_soi_resolution,
                                                      series_id_sectors)
-from prospector.sensors.rebalance import watching_leads  # §10: on_live_lead routing for advisories
+from prospector.sensors.rebalance import (active_incl_shadow_lead_ids,  # §4d rebalance active set
+                                          watching_leads)  # §10: on_live_lead routing for advisories
 from prospector.store.envelope import SYSTEM_LEAD, parse_ts
 from prospector.store.fund_registry import FundRegistry
 
@@ -362,9 +364,10 @@ def run_tick(deps: RunnerDeps) -> RunLog:
 def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, runlog: RunLog) -> None:
     """Run-order steps 2-5 (§9). WIRED: mf-tickers + §9a prices ingest, launch recording (§4c), the §4a
     xcorr spawner, the §4b dispersion shadow spawner (§9e — its own holdings/constituent-price vertical),
-    the §4d mandate-diff accretion, and the §9d SOI-corroboration deferred pass. The CONTRACT run order
-    stays visible in code (a test pins it). One ResolutionMachine (with a real FundRegistry) serves both
-    launch and the retries, so a retry that resolves can complete its registry entry.
+    the §4d mandate-diff accretion, the §4d rebalance holdings-diff accretion (reusing the §9e vertical),
+    and the §9d SOI-corroboration deferred pass. The CONTRACT run order stays visible in code (a test
+    pins it). One ResolutionMachine (with a real FundRegistry) serves both launch and the retries, so a
+    retry that resolves can complete its registry entry.
 
     N6: the prologue must not run outside a fault boundary — a bad value here (e.g. a non-integer
     `identity.retry_days` typo) would otherwise escape to run_tick's single backstop as ONE fatal `runner`
@@ -457,6 +460,15 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
     except Exception as e:  # a batch-level failure is a soft fault, never a run-abort (§9g)
         runlog.sensors["mandate"] = "fault"
         _emit_fault(store, "mandate", e, now, faults)
+    #    §4d rebalance — WIRED (the holdings-diff ACCRETION sibling of mandate; the LAST M4 sensor into
+    #        the runner). Reuses the §9e holdings vertical: diffs each basket's frozen holdings today vs
+    #        the most-recent prior, accreting a `rebalance` onto the live leads it touches (INCLUDING
+    #        shadow — accretion never pages). First sight seeds silently; a broken feed faults the basket.
+    try:
+        _run_rebalance(deps, store, now, faults, runlog, current_mf)
+    except Exception as e:  # a batch-level failure is a soft fault, never a run-abort (§9g)
+        runlog.sensors["rebalance"] = "fault"
+        _emit_fault(store, "sensor.rebalance", e, now, faults)
 
     # 4. IDENTITY RETRIES (§9-run-order-4). Drain the retry-then-manual queue; nothing evaporates.
     try:
@@ -825,6 +837,86 @@ def _run_mandate(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog
         except Exception as e:  # one fund's failure never blinds the others (§9g)
             _emit_fault(store, "mandate", e, now, faults)
     runlog.sensors["mandate"] = "ran"
+
+
+def _run_rebalance(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog,
+                   current_mf: dict | None) -> None:
+    """§4d rebalance — holdings-diff ACCRETION, the LAST M4 sensor into the runner. For each resolvable
+    SPDR basket THIS tick, diff its frozen holdings today vs the most-recent prior frozen pull and, on a
+    MATERIAL change (an identified-security add/drop, or a weight move >= `rebalance.weight_delta_
+    threshold`), accrete a `rebalance` onto every live lead whose baskets include the fund (forward-hash
+    routing, CONTRACT §4d), else onto `_system` (kept, not surfaced). Accretion only: it NEVER spawns,
+    never pages (the fold folds `rebalance` as a silent corroboration).
+
+    ACTIVE SET — INCLUDING SHADOW (`active_incl_shadow_lead_ids`, not the non-shadow paging helper).
+    Rebalance accretes and never pages, so unlike the mandate/SOI paging paths it SHOULD corroborate
+    shadow (burn-in) dispersion leads — right now every dispersion lead is shadow, so the non-shadow
+    filter would sever rebalance from the whole dispersion side. Safe by construction (see the sensor
+    helper's docstring). The set is read from the MATERIALIZED fold (CONTRACT §4d) — a lead spawned THIS
+    tick is not yet snapshotted (step 6), so a basket that both spawns and rebalances on one tick routes
+    that first rebalance to `_system` and accretes from the next tick on (self-correcting; the record
+    still holds it). That one-tick lag on a rare co-occurrence is the CONTRACT's trade — re-folding here
+    to erase it is the drift-risk §4d forbids. Ratified: docs/decisions/2026-07-12-rebalance-runner-wiring.md.
+
+    CURRENT holdings come from today's FROZEN file (the §9e dispersion pass froze it earlier this tick),
+    with PULL-IF-ABSENT so rebalance is self-sufficient (never silently depends on dispersion having run).
+    Fault/seed boundary (build note, corrected):
+      - a broken/unparseable CURRENT feed -> a per-basket OPERATIONAL fault (§9g), continue (a real break
+        must surface — the fault path the seed case must not swallow);
+      - NO prior frozen pull (first sight) -> SEED SILENTLY: no event, no fault. A cold start is the
+        expected initial state of an append-only record, not a malfunction — the same first-sight
+        baseline launch (seeds) and mandate (baselines) already do; diffing begins next tick.
+    Idempotency (mirrors the N-series discipline): a re-run of THIS tick does not double-emit — a basket
+    whose (series_id, as_of=today) `rebalance` is already in the record is skipped.
+
+    `runlog.sensors['rebalance']` is 'ran' (>=1 basket drove the diff), 'seeded' (only first-sight
+    baselines this tick), or 'skipped' (no resolvable basket) — never a silent no-op."""
+    ticker_to_series_id = _universe_series_ids(deps.cfg, current_mf)
+    if not ticker_to_series_id:
+        runlog.sensors["rebalance"] = "skipped"  # no resolvable baskets this tick — honest
+        return
+    universe_ids = list(ticker_to_series_id.values())
+    active_ids = active_incl_shadow_lead_ids(deps.registry, deps.layout)  # INCL shadow (never pages)
+    date_ = now[:10]
+    source = "spdr"  # holdings ingest is SPDR-only (§4d keystone) — not the price-config'd source
+    # Same-tick idempotency: the (series_id, as_of) pairs already fossilized as `rebalance`, from the
+    # record (§9f — the same single-source enumeration the SOI pass uses; payload is canonical-JSON text).
+    emitted = {(p.get("series_id"), p.get("as_of"))
+               for lead in deps.registry.all_leads()
+               for r in deps.registry.events_for_lead(lead, "rebalance")
+               for p in (json.loads(r["payload"]),)}
+    scanned = seeded = False
+    for ticker, series_id in ticker_to_series_id.items():
+        if (series_id, date_) in emitted:
+            continue  # this basket's rebalance for today is already recorded — idempotent re-run
+        try:
+            # CURRENT = today's frozen holdings (the §9e pass froze it); pull-if-absent to stay
+            # self-sufficient. A broken/unparseable feed FAULTS this basket — never seeded away.
+            if deps.holdings_ingest.frozen_path(series_id, date_, ticker, source).exists():
+                current = deps.holdings_ingest.load_frozen(series_id, date_, ticker, source)
+            else:
+                current = deps.holdings_ingest.pull(series_id, ticker, source)  # freeze-before-parse (§3)
+        except Exception as e:  # broken/unparseable CURRENT feed -> per-basket OPERATIONAL fault (§9g)
+            # §10: message keeps detail; the suppression key is (ticker, status) so a persisting feed
+            # failure pages once then rides the heartbeat (mirrors the sector-panel / dispersion pulls).
+            _emit_fault(store, "sensor.rebalance", f"{ticker}: {e}", now, faults,
+                        key=f"{ticker}:{getattr(e, 'status', None)}")
+            continue
+        # PRIOR = the most-recent frozen date strictly before today. NONE -> SEED SILENTLY (first sight):
+        # a cold start is not a fault (build-note correction — reserve faults for a broken feed).
+        prior_dates = [d for d in deps.holdings_ingest.frozen_dates(series_id, source) if d < date_]
+        if not prior_dates:
+            seeded = True  # baselined this tick; nothing to diff yet — no event, no fault
+            continue
+        try:
+            prior = deps.holdings_ingest.load_frozen(series_id, prior_dates[-1], ticker, source)
+        except Exception as e:  # a prior we HAVE but cannot parse is genuinely broken -> fault, not seed
+            _emit_fault(store, "sensor.rebalance", f"{ticker} prior {prior_dates[-1]}: {e}", now, faults)
+            continue
+        rebalance_sensor.scan(series_id, ticker, prior, current, universe_ids, active_ids,
+                              deps.cfg, now, store.append, as_of=date_)
+        scanned = True
+    runlog.sensors["rebalance"] = "ran" if scanned else ("seeded" if seeded else "skipped")
 
 
 def _run_soi_corroboration(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog,
