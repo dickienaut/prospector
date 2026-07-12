@@ -1,0 +1,44 @@
+name: ci
+
+# Makes the offline test suite a mechanical merge gate. Runs on every PR into main and on
+# pushes to main. The push:main trigger is REQUIRED — it registers the `test` check on the
+# default branch so it becomes selectable as a required check in the main ruleset.
+# Spec: docs/notes/2026-07-11-ci-branch-protection-setup.md
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true    # supersede stale runs on the same ref; saves minutes
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv (with cache)
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      # --locked installs from the lockfile AND fails if it drifted from pyproject.toml.
+      # The default `dev` group (pytest, hypothesis, moto[s3]) + the `dashboard` extra (streamlit)
+      # are installed, so the FULL 554-test suite runs with ZERO skips: moto[s3] keeps the
+      # S3/store tests from a silent false-green, and --extra dashboard runs the 3 render-shell
+      # tests (incl. the dashboard read-only-property test) instead of skipping them. streamlit's
+      # tests are offline (streamlit.testing.v1, no server), so the hermetic guarantee holds.
+      - name: Sync dependencies (locked, incl. dev group + dashboard extra)
+        run: uv sync --locked --extra dashboard
+
+      # -ra surfaces skip/xfail/xpass reasons in the summary: the 2 xfails stay visible, and a
+      # missing-dependency skip (would-be false green) shows up loudly rather than silently.
+      - name: Run the suite (offline — the network guard is active, so no secrets are needed)
+        run: uv run pytest -ra
+
+      - name: CLI smoke test
+        run: uv run pros --help

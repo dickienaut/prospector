@@ -8,7 +8,7 @@ __pycache__/
 *.sqlite-wal
 *.sqlite-shm
 .DS_Store
-uv.lock
+# uv.lock IS committed (reproducible installs; CI runs `uv sync --locked`)
 .env
 *.pem
 credentials
