@@ -137,12 +137,19 @@ def watching_leads(series_id: str, universe_series_ids: Iterable[str],
     return sorted(candidates & active)
 
 
-def active_nonshadow_lead_ids(registry, layout) -> set[str]:
-    """The active, non-shadow lead-id set, read from the registry's MATERIALIZED fold — the latest
-    snapshot per lead (the snapshots the fold writes), never by re-folding and never via a separate
-    cache (CONTRACT §4d). The snapshot file is the state dict (plus a `reason` key); a lead with no
-    snapshot yet is skipped (in the live runner an active lead always has one — spawning is a state
-    change, which snapshots reactively). Excludes `_system` (infra, never a lead)."""
+def _active_lead_ids(registry, layout, *, include_shadow: bool) -> set[str]:
+    """The active lead-id set, read from the registry's MATERIALIZED fold — the latest snapshot per
+    lead (the snapshots the fold writes), never by re-folding and never via a separate cache (CONTRACT
+    §4d). The snapshot file is the state dict (plus a `reason` key); a lead with no snapshot yet is
+    skipped. In the live runner an active lead almost always has a snapshot (spawning is a state change,
+    which snapshots reactively) — the ONE exception is a lead spawned THIS tick, whose snapshot is not
+    written until run-order step 6 (AFTER the sensor phase). A basket that both spawns a lead and
+    rebalances on the SAME tick therefore routes that first rebalance to `_system` and accretes onto the
+    lead from the NEXT tick on (self-correcting, the record still holds the rebalance). That one-tick lag
+    on a rare co-occurrence is the CONTRACT's deliberate trade — the alternative, re-folding here, is the
+    exact drift-risk §4d forbids; see the runner's `_run_rebalance`. Excludes `_system` (infra, never a
+    lead). `include_shadow` is the ONE dimension the two public filters differ on — one source, two
+    filters (see the wrappers)."""
     out: set[str] = set()
     for lead in registry.all_leads():
         if lead == SYSTEM_LEAD:
@@ -151,9 +158,40 @@ def active_nonshadow_lead_ids(registry, layout) -> set[str]:
         if snap is None:
             continue
         state = json.loads((layout.root / snap["file_path"]).read_text(encoding="utf-8"))
-        if state.get("status") == "active" and not state.get("shadow", False):
-            out.add(lead)
+        if state.get("status") != "active":
+            continue
+        if not include_shadow and state.get("shadow", False):
+            continue
+        out.add(lead)
     return out
+
+
+def active_nonshadow_lead_ids(registry, layout) -> set[str]:
+    """The active, NON-SHADOW lead-id set from the materialized fold (CONTRACT §4d). This is the filter
+    for the PAGING paths (the mandate/SOI `on_live_lead` routing): a shadow lead in burn-in must be
+    excluded from anything that can page. Its sibling `active_incl_shadow_lead_ids` is for the
+    non-paging rebalance path — see there for why the two legitimately differ."""
+    return _active_lead_ids(registry, layout, include_shadow=False)
+
+
+def active_incl_shadow_lead_ids(registry, layout) -> set[str]:
+    """The active lead-id set INCLUDING shadow (burn-in) leads, from the materialized fold (CONTRACT
+    §4d). The sibling of `active_nonshadow_lead_ids`: the SAME single source (the materialized
+    snapshots), differing on the ONE filter — this KEEPS shadow leads.
+
+    Why that divergence is correct, NOT a smell to "fix" back to the non-shadow helper for consistency:
+    rebalance ACCRETES and NEVER pages (the fold treats `rebalance` as a silent corroboration — no
+    status/shadow/verdict change, so `_compute_push` can never fire on it). The whole reason shadow is
+    walled off in the mandate/SOI paths is the PAGING boundary — a burn-in lead must not trip the alarm.
+    Rebalance trips nothing; it appends corroborating context onto a lead's timeline. So — unlike those
+    paging paths — rebalance SHOULD corroborate shadow dispersion leads while they burn in: right now
+    EVERY dispersion lead is shadow, so the non-shadow filter would sever rebalance from the entire
+    dispersion side exactly when a second, independent "this basket really is restructuring" signal is
+    most wanted. Including shadow adds evidence to the burn-in record without ever paging — strictly more
+    information when you go to promote a lead, and safe by construction. DO NOT collapse this back to the
+    non-shadow helper: the two filters exist because their paths have different rules (one pages, one
+    doesn't). Ratified: docs/decisions/2026-07-12-rebalance-runner-wiring.md."""
+    return _active_lead_ids(registry, layout, include_shadow=True)
 
 
 def scan(series_id: str, ticker: str, prior: pd.DataFrame, current: pd.DataFrame,

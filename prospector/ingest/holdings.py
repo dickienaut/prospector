@@ -29,7 +29,7 @@ import csv
 import io
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -365,6 +365,29 @@ class HoldingsIngest:
         frozen bytes, so reruns are offline after one pull (§3)."""
         return _source(source).parse(
             self.frozen_path(series_id, date_, ticker, source).read_bytes(), ticker)
+
+    def frozen_dates(self, series_id: str, source: str = "spdr") -> list[str]:
+        """The ISO dates for which this basket has a FROZEN holdings pull, OLDEST-FIRST — the substrate
+        the §4d rebalance diff enumerates (today's pull vs the most-recent prior). Reads the dated
+        partition dirs under ingest/holdings/{series_id}/ directly (the frozen fossils ARE the state —
+        no side index), parsing each dir name as a date so a stray non-ISO dir is simply skipped, never
+        a crash (mirrors the runner's _load_prior_mf_snapshot date-parse-and-sort). The `source` arg is
+        accepted for signature symmetry but the layout partitions by series_id/date only (a fund's
+        frozen files live under one series dir regardless of source). Empty when the basket has never
+        been pulled — the rebalance first-sight SEED case (seed silently, never a fault)."""
+        series_dir = self.frozen_path(series_id, "_d_", "_n_", source).parent.parent  # .../{series_id}/
+        if not series_dir.is_dir():
+            return []
+        dates = []
+        for d in series_dir.iterdir():
+            if not d.is_dir():
+                continue
+            try:
+                date.fromisoformat(d.name)  # a non-ISO dir is not a dated pull — skip, never crash
+            except ValueError:
+                continue
+            dates.append(d.name)
+        return sorted(dates)
 
     def membership(self, series_id: str, ticker: str, date_: str, coverage: float = 0.90,
                    source: str = "spdr") -> MembershipSnapshot:
