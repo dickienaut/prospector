@@ -94,6 +94,28 @@ def test_second_backup_is_incremental(layout, registry, tmp_path):
     assert third.targets[0].files_copied == 1             # exactly the new event file
 
 
+def test_needs_copy_tolerates_coarse_mtime_destination(tmp_path):
+    """Regression (real-drive bug): external backup drives are usually exFAT/FAT, whose mtime is TRUNCATED
+    (~2 s) — `shutil.copy2` writes the src mtime, the drive rounds it DOWN, and an unchanged file then looks
+    'newer' every run, re-copying a 160 MB store in full each time. The same-FS temp-dir incremental test
+    above cannot reproduce that (green-on-synthetic); this drives `_needs_copy` against a truncated dst.
+    A same-size dst within the modify-window must SKIP; a genuinely-newer src (or a size change) still copies."""
+    import os
+    src = tmp_path / "src.json"; src.write_text("x" * 100)
+    dst = tmp_path / "dst.json"; dst.write_text("x" * 100)
+    m = src.stat().st_mtime
+
+    os.utime(dst, (m, m - 1.5))                               # exFAT-style truncation, within the 2s window
+    assert backup_module._needs_copy(src, dst) is False      # ...must SKIP (before the fix: re-copied)
+
+    os.utime(dst, (m, m - 3600))                             # a genuine same-day re-pull is hours newer
+    assert backup_module._needs_copy(src, dst) is True       # ...still copies
+
+    dst.write_text("x" * 101); os.utime(dst, (m, m))         # a size change always copies
+    assert backup_module._needs_copy(src, dst) is True
+    assert backup_module._needs_copy(src, tmp_path / "gone.json") is True   # missing dst copies
+
+
 def test_registry_goes_through_the_backup_api_not_a_raw_copy(layout, registry, tmp_path, monkeypatch):
     _seed(layout, registry)
     target = _bless(tmp_path / "hd1")

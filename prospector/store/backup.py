@@ -67,15 +67,26 @@ class BackupReport:
     failures: list = field(default_factory=list)  # (target, reason) per unmounted/unblessed target
 
 
+# rsync's `--modify-window`. External backup drives are usually exFAT/FAT, whose mtime resolution is coarse
+# (~2 s): `shutil.copy2` writes the source mtime and the drive TRUNCATES it, so on the next run the source
+# looks "newer" by a fraction of a second and an unchanged file re-copies forever (observed: a 160 MB store
+# re-copying in full every run, 1/1194 skipped). A 2 s window absorbs that truncation; a genuine same-day
+# `ingest/` re-pull is hours newer (or size-differs), so it still copies. (Was 1e-6 — far tighter than any
+# real filesystem's granularity.)
+_MTIME_WINDOW_S = 2.0
+
+
 def _needs_copy(src: Path, dst: Path) -> bool:
-    """rsync quick-check equivalent: copy when `dst` is missing, its size differs, or `src` is newer.
-    Append-only fossils never change (so they skip after the first copy), but `ingest/` files CAN be
-    overwritten by a same-day re-pull (`holdings.pull`) — a bare skip-if-exists would miss that updated
-    fossil, so the size/mtime check (not a bare existence check) keeps the mirror honest."""
+    """rsync quick-check equivalent: copy when `dst` is missing, its size differs, or `src` is newer than
+    `dst` by more than `_MTIME_WINDOW_S`. Append-only fossils never change (so they skip after the first
+    copy), but `ingest/` files CAN be overwritten by a same-day re-pull (`holdings.pull`) — a bare
+    skip-if-exists would miss that updated fossil, so the size/mtime check (not a bare existence check)
+    keeps the mirror honest. The window tolerates coarse-mtime destination filesystems (exFAT/FAT) whose
+    truncation would otherwise re-copy every unchanged file each run."""
     if not dst.exists():
         return True
     ss, ds = src.stat(), dst.stat()
-    return ss.st_size != ds.st_size or ss.st_mtime > ds.st_mtime + 1e-6
+    return ss.st_size != ds.st_size or ss.st_mtime > ds.st_mtime + _MTIME_WINDOW_S
 
 
 def _mirror_tree(src_root: Path, dst_root: Path) -> tuple[int, int, int]:
