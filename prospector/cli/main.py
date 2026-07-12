@@ -28,6 +28,8 @@ from prospector.ingest.edgar import EdgarClient
 from prospector.store.envelope import SYSTEM_LEAD
 from prospector.store.event_store import EventStore
 from prospector.store.fund_registry import FundRegistry, IdentityError
+from prospector.store.backup import (DEFAULT_MARKER, BackupError, backup_store,
+                                     verify_restore)
 from prospector.store.layout import StoreLayout
 from prospector.store.registry import Registry
 from prospector.store.reindex import rebuild_registry
@@ -119,6 +121,51 @@ def store_reindex(store_path):
     click.echo(f"events_indexed={counts['events_indexed']} "
                f"snapshots_indexed={counts['snapshots_indexed']} "
                f"skipped={counts['skipped']}")
+
+
+@store_group.command("verify-restore")
+@click.argument("backup_dir", type=click.Path(exists=True, file_okay=False))
+def store_verify_restore(backup_dir):
+    """Prove a backup RESTORES (a backup you've never restored from is a hope). Rebuilds a throwaway
+    store from the backup's fossils and prints the counts to spot-check against the live store. A read
+    of a backup dir — it writes nothing to the live store."""
+    counts = verify_restore(Path(backup_dir))
+    click.echo(f"restored from {backup_dir}: leads={counts['leads']} "
+               f"events={counts['events_indexed']} snapshots={counts['snapshots_indexed']} "
+               f"fund_objects={counts['fund_objects']} skipped={counts['skipped']}")
+    click.echo("spot-check: compare these to the live store (`pros lead list` / `pros store reindex`)")
+
+
+# -- backup (fossil-store durability — a READ of the store, never run-now) -----
+
+
+@cli.command("backup")
+@_store_option
+def backup_cmd(store_path):
+    """Mirror the append-only fossil store + a WAL-safe registry snapshot to the configured HDD
+    targets (backup.targets), incrementally. Fail-loud (non-zero exit) on an unmounted/unblessed
+    target. A READ of the store — never a write to it, never near execution (the firewall and the
+    read-only posture hold; like `store reindex`, it computes nothing new, so it is not run-now)."""
+    layout = _layout(store_path)
+    if not layout.root.is_dir():
+        raise click.ClickException(f"no store at {layout.root} — nothing to back up")
+    cfg, _ = load_config(_CONFIG_PATH)
+    bcfg = cfg.get("backup") or {}
+    try:
+        report = backup_store(layout, bcfg.get("targets") or [],
+                              marker=bcfg.get("marker") or DEFAULT_MARKER)
+    except BackupError as e:
+        raise click.ClickException(str(e))
+    for r in report.targets:
+        click.echo(f"{r.target}: copied={r.files_copied} skipped={r.files_skipped} "
+                   f"bytes={r.bytes_copied} registry={'ok' if r.registry_backed_up else 'absent'}")
+    for target, reason in report.failures:
+        click.echo(f"FAULT {target}: {reason}", err=True)
+    if report.failures:
+        total = len(report.failures) + len(report.targets)
+        raise click.ClickException(
+            f"{len(report.failures)} of {total} backup target(s) FAILED — "
+            "the record is NOT fully backed up")
 
 
 # -- run (the M5 cadence entrypoint — NOT a run-now surface, spec §9) --------------

@@ -384,3 +384,15 @@ schedule:                  # milestone 7 — keys reserved now
 
 s3:                        # milestone 7 — keys reserved now; sync is disabled when bucket is null
   bucket: null
+
+backup:
+  # Fossil-store durability (spec §7; build note docs/notes/2026-07-11-store-durability-backup.md).
+  # `pros backup` mirrors the append-only trees (events/ snapshots/ ingest/ baselines/ runs/ registry/)
+  # + a WAL-safe registry .backup snapshot to EACH target, incrementally (append-only -> only new/changed
+  # files copy). A target that is not mounted-and-blessed FAULTS (fail-loud — a silent skip of a missing
+  # drive is a backup that isn't happening); the healthy drive still gets the data. Bless each drive ONCE:
+  #   touch <target>/.prospector-backup-target
+  # Dual-local HDDs cover disk-death; offsite (S3/Backblaze) is deferred M7-hardening. Empty by default,
+  # so `pros backup` faults loudly until the Mini's drive paths are configured here.
+  targets: []                        # e.g. [/Volumes/ProspectorBackup1/prospector, /Volumes/ProspectorBackup2/prospector]
+  marker: .prospector-backup-target  # the blessing sentinel each target drive must carry (DEFAULT)
