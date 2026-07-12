@@ -139,6 +139,22 @@ def test_heartbeat_body_states_the_deadman_and_the_m7_caveat():
     assert "arms once the runner is scheduled (M7)" in body     # do not claim a live dead-man pre-M7
 
 
+def test_heartbeat_health_ok_when_clean_and_degraded_on_operational_fault():
+    """§8a/§10 summary-honesty: a received heartbeat says Health: OK only when nothing broke this cycle; an
+    operational fault flips it to DEGRADED (never a bare 'OK' beside a fault in the same body). A review-
+    advisory is a correct punt, not breakage, so it stays OK. Liveness (silence dead-man) is the separate axis."""
+    _, clean = email_render.render_heartbeat(_ctx(), PREFIX)
+    assert "Health: OK ·" in clean and "DEGRADED" not in clean
+
+    _, degraded = email_render.render_heartbeat(
+        _ctx(faults=[_f("ingest.prices", "XLK empty", "operational")]), PREFIX)
+    assert "Health: DEGRADED — 1 fault(s) this run" in degraded
+
+    _, punt = email_render.render_heartbeat(
+        _ctx(faults=[_f("mandate", "extraction unreliable — manual review", "review-advisory")]), PREFIX)
+    assert "Health: OK ·" in punt
+
+
 # === build_context over a real registry (gathers views.* folds — cannot drift from the screen) =====
 
 def test_build_context_gathers_the_view_model_folds(layout, registry):

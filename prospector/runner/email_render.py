@@ -155,8 +155,14 @@ def _body(ctx: dict) -> str:
         f"Scan {ctx['now']}: {h['active_live']} live · {h['active_shadow']} shadow · "
         f"{h['reverted']} reverted · {len(ctx['changed_leads'])} changed this run · "
         f"{len(op)} fault(s) · {len(adv)} for review this run.")
+    # Health at a glance (§8a/§10): DEGRADED the moment an operational fault fired this cycle. A received
+    # heartbeat must say "ran AND healthy" — never "OK" while faults sit in the same body (the §10
+    # count-honesty rule applied to the summary line: the summary must match what fired). Liveness
+    # (hb["ok"] — the silence dead-man) is the separate axis and rides alongside it.
+    health = "OK" if not op else f"DEGRADED — {len(op)} fault(s) this run"
     hb_state = "OK" if hb["ok"] else f"BROKEN — {hb['reason']}"
-    lines.append(f"Heartbeat: {hb_state} · last run {hb.get('last_run_date') or '—'}.")
+    lines.append(
+        f"Health: {health} · Heartbeat: {hb_state} · last run {hb.get('last_run_date') or '—'}.")
 
     # The over-ceiling banner rides EVERY email while breached (the §8a tripwire; the human recalibrates).
     if ctx["ceiling"]["over"]:

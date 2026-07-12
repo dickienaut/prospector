@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Prospector scheduled runner (§9/§10). TEMPLATE — ops/install.sh substitutes the __PLACEHOLDERS__ and
+  installs the result to ~/Library/LaunchAgents/com.prospector.run.plist. Fires ops/run.sh once daily.
+
+  LAUNCHD, NOT CRON: launchd runs a missed StartCalendarInterval job when the Mac wakes; cron would
+  silently skip it. For a Mini that may sleep, that's the difference between "ran late" and "silently
+  didn't, and the dead-man now has to catch it."
+
+  TIME IS LOCAL, NOT UTC: StartCalendarInterval fires in the machine's LOCAL timezone. config
+  schedule.daily_utc is 22:30 UTC (after US close + EOD settle); set __HOUR__/__MINUTE__ to the Mini's
+  LOCAL equivalent (ops/install.sh takes them as args).
+
+  WORKINGDIRECTORY IS THE PRODUCTION CHECKOUT: __PROSPECTOR_ROOT__ must be the clone pinned at the
+  v1.0.0 tag — never your dev clone on main — so dev churn can't touch what the scheduler runs. See
+  ops/README.md.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.prospector.run</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__PROSPECTOR_ROOT__/ops/run.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__PROSPECTOR_ROOT__</string>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>__HOUR__</integer>
+    <key>Minute</key>
+    <integer>__MINUTE__</integer>
+  </dict>
+
+  <!-- Only on the schedule — never on load (no run-now surface). -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- Catches the "didn't even start" failures (uv missing, .env gone) that never reach the app. -->
+  <key>StandardOutPath</key>
+  <string>__STDOUT__</string>
+  <key>StandardErrorPath</key>
+  <string>__STDERR__</string>
+</dict>
+</plist>
