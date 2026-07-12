@@ -235,6 +235,13 @@ leaves a `config.changed` fossil — never by a self-updating rule:
 - **Always work on a new branch.** Never commit directly to `main`. At the start of any change,
   branch off `main` (`git switch -c <descriptive-name>`) and do the work there; graduate it to `main`
   by pull request. If a session begins on `main` with work to do, create the branch first.
+- **Code never merges to `main` — it opens the PR and stops.** Code's job ends at *pushed branch → green CI →
+  open PR*; the **owner reviews and merges** (from the Mac or the GitHub mobile app). The `main` ruleset
+  requires CI-green but **0 approvals**, so Code *could* auto-merge a green PR — **it must not.** **CI-green is
+  not correctness:** green-on-synthetic, a test that passes for the wrong reason, a merge-introduced regression
+  all clear CI — and the human review is where that class is caught. The ruleset (active, no bypass) binds Code
+  the same as anyone wherever the merge is triggered; this rule is the **posture** on top of that mechanism.
+  Ratified: `docs/decisions/2026-07-12-code-does-not-merge-human-reviews.md`.
 - **Branch off a freshly-fetched `origin/main`, never off a sibling feature branch** —
   `git fetch origin && git switch -c <descriptive-name> origin/main`. When PRs merge quickly, a branch cut from
   a **stale local `main`** (or from another feature branch) carries a stale base, and a PR from it can
