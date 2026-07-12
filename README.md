@@ -70,14 +70,18 @@ backtest/   offline calibration + the acceptance gate — writes only under back
 
 ## Status
 
-**Live and firing.** Milestones 1–4, the verdict layer, the SOI resolver, and the **M5 runner** are
-built; a real `pros run` has fired live `xcorr` leads on the SPDR grid; 499 tests green (offline).
+**Live, self-running, and backed up.** Milestones 1–5 — the sensors, the verdict layer, the SOI resolver,
+the M5 cadence runner, and the §10 email sender — plus the §9e dispersion vertical, rebalance runner-wiring,
+the dual-HDD fossil-store backups (`pros backup`), and a CI merge-gate on `main` are all built; a real
+`pros run` has fired live `xcorr` leads on the SPDR grid. The **M7 autonomy core** — a launchd scheduled
+runner that runs `pros run && pros backup` on cadence, arming the §8a dead-man — is built and awaits a
+one-time on-Mini activation (`ops/README.md`), after which **v1 is build-complete.** **576 tests green,
+2 xfailed** (offline); every change lands only through a green-CI pull request.
 
 The honest caveat the docs keep front-and-center: **live ≠ validated.** The firing is n=1, the
 false-discovery rate is unmeasured, and the edge question is open. **Falsifiability is demonstrated;
-profitability is not.** The runner exists to convert existence-proofs into a *rate*, and that work has
-barely started. Next slices: dispersion's constituent-price vertical (§9e), then the real email sender
-(§10).
+profitability is not.** The runner exists to convert existence-proofs into a *rate* — and that long run is
+what remains once v1 is deployed. (M6 discourse capture is front-loaded to v2.)
 
 ## Quickstart
 
@@ -86,6 +90,7 @@ uv sync
 uv run pytest                              # offline — a network guard fails any test that opens a socket
 uv run pros --help                         # the read-only CLI (verdict, lead list/show, identity, reindex)
 uv run pros run                            # one cadence tick (not a recompute-on-demand button)
+uv run pros backup                         # mirror the fossil store to blessed external drives (cadence-driven)
 
 uv sync --extra dashboard                  # optional read-only dashboard (§11)
 PROSPECTOR_STORE=./store streamlit run prospector/dashboard/app.py
@@ -102,4 +107,6 @@ environment (never committed); tests need neither.
 - **[`docs/prospector-v1-spec-rev14-2026-07-08.md`](docs/prospector-v1-spec-rev14-2026-07-08.md)** —
   the canonical spec (rev14; earlier revs kept as history).
 - **`docs/decisions/`** — every load-bearing CONTRACT amendment, next to its `config.changed` fossil.
+- **[`ops/README.md`](ops/README.md)** — the M7 autonomy core: scheduling the runner on launchd + the
+  fossil-store backup, and the on-Mini activation runbook.
 - Each **`prospector/<folder>/README.md`** — a per-package orientation.
