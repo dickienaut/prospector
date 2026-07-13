@@ -4,8 +4,8 @@ On every run the config is hashed; if it changed, a `config.changed` event with 
 appended BEFORE any sensor runs — folds stay interpretable across threshold changes. The hash
 is over `envelope.canonical_json`, so it is stable under YAML key reordering and formatting.
 
-An optional untracked `config/prospector.local.yaml` overlay carries MACHINE-LOCAL values —
-store.root, backup.targets, the EDGAR contact — that must never enter the shared repo (the config
+An optional untracked `config/prospector.local.yaml` overlay carries MACHINE-LOCAL values — the
+per-machine paths store.root and backup.targets — that must never enter the shared repo (the config
 analog of the git-ignored `.env` secrets). It is deep-merged OVER the tracked config in `load_config`,
 and the hash is over the EFFECTIVE MERGED config, so `config.changed` fossils exactly the config the
 run used — config honesty holds across the overlay. (Non-secret machine config is *recorded* here;

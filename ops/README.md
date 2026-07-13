@@ -30,10 +30,9 @@ immune to your churn on `main`. Set it up once (from the dev repo):
 git worktree add ~/prospector/prod v1.0.1             # one repo — `git worktree list` shows both dirs
 # then put machine-local config ONCE in an UNTRACKED overlay — gitignored, deep-merged over the tracked
 # config; NEVER hand-edit the tracked config/prospector.yaml on a machine (a checkout would fight it):
-#   ~/prospector/prod/config/prospector.local.yaml
+#   ~/prospector/prod/config/prospector.local.yaml   (per-machine PATHS only)
 #     store:  {root: ~/prospector/store}                      # the ONE canonical store, sibling of the checkouts
 #     backup: {targets: [/Volumes/…, /Volumes/…]}
-#     edgar:  {user_agent: "Prospector/1.0 (you@example.com)"}   # your SEC contact
 ( cd ~/prospector/prod && uv sync )
 ```
 
@@ -59,8 +58,9 @@ result) — `docs/decisions/2026-07-12-local-config-overlay.md`.*
 
 1. **Production worktree** at the tag + external store (above). Everything below runs in `~/prospector/prod`.
 2. **`.env`** in that directory — `TIINGO_API_TOKEN` and `PROSPECTOR_SMTP_PASSWORD` are required (the run
-   fails fast without them); `edgar.user_agent` lives in the untracked `config/prospector.local.yaml` overlay
-   (secrets stay in `.env`, never in config). `uv sync` once so the venv exists.
+   fails fast without them). Machine-local *paths* (`store.root`, `backup.targets`) live in the untracked
+   `config/prospector.local.yaml` overlay; `edgar.user_agent` is a tracked default (deployment identity, not
+   per-machine). Secrets stay in `.env`, never in config. `uv sync` once so the venv exists.
 3. **Backups first** — attach + bless the two HDDs and set `backup.targets` per
    `docs/notes/2026-07-12-mac-backup-activation-checklist.md`. Until then `pros backup` (and so `run.sh`)
    **faults loudly** — by design, never a silent no-op.

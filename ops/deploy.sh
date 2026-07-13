@@ -9,9 +9,9 @@
 # It enforces deploy-from-tag by MECHANISM, not memory:
 #   - it REFUSES any ref that isn't a tag (a bare branch or SHA is rejected up front), so production can
 #     never be silently pinned to a moving ref.
-# Machine-local config (store.root, backup.targets, EDGAR contact) lives in the untracked, gitignored
-# overlay config/prospector.local.yaml — a checkout never touches an untracked+ignored file, so it
-# survives every deploy with no stash/pop. The tracked config/prospector.yaml carries only defaults.
+# Machine-local config (the per-machine paths store.root and backup.targets) lives in the untracked,
+# gitignored overlay config/prospector.local.yaml — a checkout never touches an untracked+ignored file,
+# so it survives every deploy with no stash/pop. The tracked config/prospector.yaml carries only defaults.
 #
 # The next scheduled run picks up the new code automatically (run.sh runs `uv run` fresh each fire — no
 # restart). Override the worktree path with PROSPECTOR_PROD=… if it isn't ~/prospector/prod.
@@ -46,9 +46,9 @@ fi
 #        checkout abort, so STOP with guidance (this also catches a not-yet-migrated prod worktree).
 if ! git -C "$PROD" diff --quiet -- config/prospector.yaml; then
   echo "STOP: ${PROD}/config/prospector.yaml has local edits, but machine-local config now lives in the" >&2
-  echo "      UNTRACKED overlay config/prospector.local.yaml. Move store.root / backup.targets /" >&2
-  echo "      edgar.user_agent into that overlay, then \`git -C ${PROD} checkout -- config/prospector.yaml\`" >&2
-  echo "      to reset the tracked file. See docs/decisions/2026-07-12-local-config-overlay.md." >&2
+  echo "      UNTRACKED overlay config/prospector.local.yaml. Move store.root / backup.targets into that" >&2
+  echo "      overlay, then \`git -C ${PROD} checkout -- config/prospector.yaml\` to reset the tracked file." >&2
+  echo "      See docs/decisions/2026-07-12-local-config-overlay.md." >&2
   exit 3
 fi
 git -C "$PROD" checkout --quiet --detach "$TAG"

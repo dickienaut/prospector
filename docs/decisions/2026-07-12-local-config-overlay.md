@@ -8,13 +8,13 @@ config-honesty CONTRACT"). Amends the config-honesty CONTRACT (spec §5) — the
 
 ## The problem it fixes
 
-Machine-local values — this Mac's absolute `store.root`, its HDD `backup.targets`, the deployment's EDGAR
-contact — lived as a **working-tree override in the *tracked* `config/prospector.yaml`**, and `deploy.sh`
-preserved them across each tag checkout with a `git stash`/`pop` dance. One-machine specifics have no more
-business in the shared repo than the SMTP password does (which correctly lives only in `.env`). The seam
-showed its cost concretely: the same edit, left uncommitted in the dev clone, put HDD paths into the tracked
-file and **broke a test** (`test_pros_backup_faults_nonzero_when_no_targets_configured`, which asserts the
-shipped `backup.targets: []`).
+Machine-local **paths** — this Mac's absolute `store.root` and its HDD `backup.targets` — lived as a
+**working-tree override in the *tracked* `config/prospector.yaml`** (as did the deployment's EDGAR contact),
+and `deploy.sh` preserved them across each tag checkout with a `git stash`/`pop` dance. One-machine specifics
+have no more business in the shared repo than the SMTP password does (which correctly lives only in `.env`).
+The seam showed its cost concretely: the same edit, left uncommitted in the dev clone, put HDD paths into the
+tracked file and **broke a test** (`test_pros_backup_faults_nonzero_when_no_targets_configured`, which asserts
+the shipped `backup.targets: []`).
 
 ## The decision
 
@@ -46,9 +46,12 @@ tracked config at load.** The config analog of `.env`: gitignored, never committ
 The overlay is populated with the machine's *current effective* values and the tracked file is reset to its
 defaults, so the **effective merged config is byte-identical** and the hash does not move — the first run
 after migration emits nothing. (`test_overlay_migration_preserves_hash_when_effective_config_is_identical`
-pins this.) On this machine the overlay must capture all three current overrides — `store.root`,
-`backup.targets`, **and `edgar.user_agent`** — or the one it omits would flip back to the tracked default and
-trip a `config.changed`.
+pins this.) The overlay captures the two **per-machine paths** — `store.root` and `backup.targets`. The third
+override, `edgar.user_agent`, is **not** machine-specific (it is the deployment's SEC contact, invariant across
+the owner's machines), so it is set as the **tracked default** (`lyle@alphalabsengineering.com`) rather than
+overlaid — same effective value, so the migration still moves no hash. The rule that falls out: the overlay is
+for values that genuinely differ *per machine* (paths); deployment identity belongs in the tracked config;
+secrets belong in `.env`.
 
 ## Scope / what this is not
 
