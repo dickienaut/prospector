@@ -10,6 +10,9 @@ __pycache__/
 .DS_Store
 # uv.lock IS committed (reproducible installs; CI runs `uv sync --locked`)
 .env
+# Machine-local config overlay — store.root, backup.targets, the EDGAR contact. Deep-merged over the
+# tracked config in load_config (hash covers the merged result); never committed, like .env above.
+config/prospector.local.yaml
 *.pem
 credentials
 .aws/

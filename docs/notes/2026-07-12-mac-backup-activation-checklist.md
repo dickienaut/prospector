@@ -42,18 +42,21 @@ touch "/Volumes/HD2/prospector/.prospector-backup-target"
 
 ## 3. Point the config at the targets
 
-Edit `config/prospector.yaml`, the `backup:` block, and set both target paths:
+Set both target paths in the **untracked** machine-local overlay `config/prospector.local.yaml` (gitignored,
+deep-merged over the tracked config — never hand-edit the tracked `config/prospector.yaml` on a machine, or a
+tag checkout would fight the edit). Create or extend the `backup:` block there:
 
 ```yaml
+# config/prospector.local.yaml  (untracked — machine-local values only)
 backup:
   targets:
     - /Volumes/HD1/prospector
     - /Volumes/HD2/prospector
-  marker: .prospector-backup-target
 ```
 
-> Changing config is honest by design: the next `pros run` will emit a `config.changed` fossil with the diff
-> before any sensor runs. That's expected — it's the record noting you configured backups.
+> Changing config is honest by design: the next `pros run` emits a `config.changed` fossil with the diff before
+> any sensor runs — the hash covers the effective *merged* config, so an overlay change fossils too. That's
+> expected — it's the record noting you configured backups.
 
 ## 4. First backup — and read the output
 
@@ -121,7 +124,7 @@ two ways:
 
 ## 7. Done when
 
-- [ ] Both drives blessed; `config/prospector.yaml` `backup.targets` set to both.
+- [ ] Both drives blessed; `backup.targets` set to both in the untracked `config/prospector.local.yaml` overlay.
 - [ ] `pros backup` writes to both (`registry=ok`, no `FAULT`); a second run is fully incremental.
 - [ ] Ejecting a drive makes `pros backup` fault loudly (non-zero) while the other drive still gets the data.
 - [ ] `pros store verify-restore` counts match the live store, `skipped=0`.
