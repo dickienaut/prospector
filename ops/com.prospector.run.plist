@@ -12,9 +12,9 @@
   schedule.daily_utc is 22:30 UTC (after US close + EOD settle); set __HOUR__/__MINUTE__ to the Mini's
   LOCAL equivalent (ops/install.sh takes them as args).
 
-  WORKINGDIRECTORY IS THE PRODUCTION CHECKOUT: __PROSPECTOR_ROOT__ must be the clone pinned at the
-  v1.0.0 tag — never your dev clone on main — so dev churn can't touch what the scheduler runs. See
-  ops/README.md.
+  WORKINGDIRECTORY IS THE PRODUCTION CHECKOUT: __PROSPECTOR_ROOT__ must be the production WORKTREE
+  (~/prospector/prod) pinned at the release tag — never your dev checkout on main — so dev churn can't
+  touch what the scheduler runs. See ops/README.md.
 -->
 <plist version="1.0">
 <dict>

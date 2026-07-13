@@ -2,8 +2,8 @@
 #
 # Install the Prospector scheduled runner as a macOS LaunchAgent from com.prospector.run.plist.
 #
-# Run this FROM the PRODUCTION checkout — the clone pinned at the v1.0.0 tag (see ops/README.md) — so the
-# installed plist's paths point at production, never your dev clone on main.
+# Run this FROM the PRODUCTION checkout — the worktree (~/prospector/prod) pinned at the release tag (see
+# ops/README.md) — so the installed plist's paths point at production, never your dev checkout on main.
 #
 #   ./ops/install.sh <LOCAL_HOUR 0-23> <LOCAL_MINUTE 0-59>
 #
