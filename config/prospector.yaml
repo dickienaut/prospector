@@ -362,7 +362,7 @@ prices:
                             # tripping the 50/hr cap. Throttle + 429/403 backoff mirror EdgarClient.
 
 edgar:
-  user_agent: "Prospector/1.0 (lyle.e.dickie@gmail.com)"
+  user_agent: "Prospector/1.0 (lyle@alphalabsengineering.com)"
   max_requests_per_sec: 8  # safety margin under SEC's 10/s
 
 email:                     # §8a/§10 — the email sender (DEFAULT-class; transport = SMTP app-password,

@@ -8,9 +8,10 @@
 #
 # It enforces deploy-from-tag by MECHANISM, not memory:
 #   - it REFUSES any ref that isn't a tag (a bare branch or SHA is rejected up front), so production can
-#     never be silently pinned to a moving ref;
-#   - it PRESERVES the worktree's machine-local config (store.root, backup.targets in config/prospector.yaml)
-#     across the checkout, and STOPS loudly if a release changed that file upstream — never a silent wipe.
+#     never be silently pinned to a moving ref.
+# Machine-local config (the per-machine paths store.root and backup.targets) lives in the untracked,
+# gitignored overlay config/prospector.local.yaml — a checkout never touches an untracked+ignored file,
+# so it survives every deploy with no stash/pop. The tracked config/prospector.yaml carries only defaults.
 #
 # The next scheduled run picks up the new code automatically (run.sh runs `uv run` fresh each fire — no
 # restart). Override the worktree path with PROSPECTOR_PROD=… if it isn't ~/prospector/prod.
@@ -18,7 +19,6 @@ set -euo pipefail
 
 TAG="${1:?usage: ops/deploy.sh <tag>   (a release TAG, e.g. v1.0.1 — never a branch or SHA)}"
 PROD="${PROSPECTOR_PROD:-$HOME/prospector/prod}"
-CFG="config/prospector.yaml"
 
 # The dev repo this script lives in (fetch here; it shares .git with the worktree, so tags reach both).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -40,23 +40,18 @@ if [ ! -d "$PROD" ] || ! git -C "$PROD" rev-parse --is-inside-work-tree >/dev/nu
   exit 2
 fi
 
-# --- 3. preserve the worktree's machine-local config across the checkout. A bare checkout would clobber
-#        store.root / backup.targets; stash → checkout → pop. If the tag CHANGED config upstream, the pop
-#        conflicts and we stop loudly (reconcile deliberately — never a silent machine-config wipe).
-stashed=0
-if ! git -C "$PROD" diff --quiet -- "$CFG"; then
-  git -C "$PROD" stash push --quiet -- "$CFG"
-  stashed=1
-fi
-
-git -C "$PROD" checkout --quiet --detach "$TAG"
-
-if [ "$stashed" -eq 1 ] && ! git -C "$PROD" stash pop --quiet 2>/dev/null; then
-  echo "STOP: '${TAG}' changed ${CFG} upstream and it conflicts with this machine's local config." >&2
-  echo "      Your machine config is safe in the stash — reconcile ${CFG} in ${PROD} by hand (keep" >&2
-  echo "      store.root / backup.targets), then \`git -C ${PROD} stash drop\`. Not deploying blindly." >&2
+# --- 3. move the worktree to the tag. Machine-local config is in the untracked, gitignored overlay
+#        config/prospector.local.yaml, which a checkout leaves untouched — so it survives with no
+#        stash/pop. The tracked config must stay CLEAN (defaults only); local edits to it would make the
+#        checkout abort, so STOP with guidance (this also catches a not-yet-migrated prod worktree).
+if ! git -C "$PROD" diff --quiet -- config/prospector.yaml; then
+  echo "STOP: ${PROD}/config/prospector.yaml has local edits, but machine-local config now lives in the" >&2
+  echo "      UNTRACKED overlay config/prospector.local.yaml. Move store.root / backup.targets into that" >&2
+  echo "      overlay, then \`git -C ${PROD} checkout -- config/prospector.yaml\` to reset the tracked file." >&2
+  echo "      See docs/decisions/2026-07-12-local-config-overlay.md." >&2
   exit 3
 fi
+git -C "$PROD" checkout --quiet --detach "$TAG"
 
 # --- 4. sync deps from the tag's lockfile, and report.
 ( cd "$PROD" && uv sync --locked )

@@ -3,6 +3,14 @@
 On every run the config is hashed; if it changed, a `config.changed` event with the diff is
 appended BEFORE any sensor runs — folds stay interpretable across threshold changes. The hash
 is over `envelope.canonical_json`, so it is stable under YAML key reordering and formatting.
+
+An optional untracked `config/prospector.local.yaml` overlay carries MACHINE-LOCAL values — the
+per-machine paths store.root and backup.targets — that must never enter the shared repo (the config
+analog of the git-ignored `.env` secrets). It is deep-merged OVER the tracked config in `load_config`,
+and the hash is over the EFFECTIVE MERGED config, so `config.changed` fossils exactly the config the
+run used — config honesty holds across the overlay. (Non-secret machine config is *recorded* here;
+true secrets stay in `.env` and never touch config.) See
+docs/decisions/2026-07-12-local-config-overlay.md.
 """
 
 from __future__ import annotations
@@ -22,10 +30,43 @@ META_JSON_KEY = "last_config_json"
 
 
 def load_config(path) -> tuple[dict, str]:
-    """Load YAML config and return (cfg, sha256 of its canonical JSON)."""
-    with open(Path(path), encoding="utf-8") as f:
+    """Load YAML config — deep-merged with an optional untracked local overlay — and return
+    (cfg, sha256 of its canonical JSON over the EFFECTIVE MERGED config).
+
+    A sibling `prospector.local.yaml` (untracked, gitignored — machine-local values, see the module
+    docstring) is deep-merged over the tracked config when present. The overlay is resolved as a
+    SIBLING of the *passed* path — never a fixed cwd-relative path — so loading a throwaway/tmp config
+    (dev tests, backtests) never picks up an unrelated repo overlay. Absent overlay → the base config
+    unchanged. The hash is computed AFTER the merge, so it (and `config.changed`) cover the config the
+    run actually used."""
+    path = Path(path)
+    with open(path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
+    local = path.with_name("prospector.local.yaml")
+    if local.is_file():
+        with open(local, encoding="utf-8") as f:
+            overlay = yaml.safe_load(f) or {}
+        if not isinstance(overlay, dict):
+            raise ValueError(
+                f"{local} must be a YAML mapping (got {type(overlay).__name__}) — the local overlay "
+                "carries machine-local config keys like store.root / backup.targets, so its root is a map.")
+        cfg = _deep_merge(cfg, overlay)
     return cfg, hashlib.sha256(canonical_json(cfg).encode("utf-8")).hexdigest()
+
+
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge `overlay` onto `base` (overlay wins); returns a new top-level dict without
+    mutating either input. Nested dicts merge key-by-key; every other value — scalars AND lists —
+    REPLACES wholesale, so an overlay `backup.targets: [...]` overrides the tracked list rather than
+    appending. (Nested overlay containers are shared into the result, not deep-copied — safe here because
+    the overlay is a transient re-parsed from disk on every `load_config` call and then discarded.)"""
+    merged = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def flatten(cfg, prefix: str = "") -> dict:

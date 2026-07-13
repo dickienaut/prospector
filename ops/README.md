@@ -28,9 +28,11 @@ immune to your churn on `main`. Set it up once (from the dev repo):
 # Consolidated layout — ~/prospector/{dev,prod,store}: dev clone, prod worktree, store side by side
 # (2026-07-12-consolidated-prospector-layout.md). Run from the dev clone (~/prospector/dev):
 git worktree add ~/prospector/prod v1.0.1             # one repo — `git worktree list` shows both dirs
-# then set machine-local config ONCE in ~/prospector/prod/config/prospector.yaml:
-#   store.root: ~/prospector/store        # the ONE canonical store, sibling of the checkouts
-#   backup.targets: [/Volumes/…, /Volumes/…]
+# then put machine-local config ONCE in an UNTRACKED overlay — gitignored, deep-merged over the tracked
+# config; NEVER hand-edit the tracked config/prospector.yaml on a machine (a checkout would fight it):
+#   ~/prospector/prod/config/prospector.local.yaml   (per-machine PATHS only)
+#     store:  {root: ~/prospector/store}                      # the ONE canonical store, sibling of the checkouts
+#     backup: {targets: [/Volumes/…, /Volumes/…]}
 ( cd ~/prospector/prod && uv sync )
 ```
 
@@ -41,19 +43,24 @@ git worktree add ~/prospector/prod v1.0.1             # one repo — `git worktr
   the dev clone — that pointer *is* the isolation; get it wrong and prod runs your dev tree.
 - **Ship a later release with one command** (from the dev repo), so you never hand-navigate prod:
   ```sh
-  ops/deploy.sh v1.0.2      # TAG-ONLY (refuses a branch/SHA); preserves your machine config; uv syncs
+  ops/deploy.sh v1.0.2      # TAG-ONLY (refuses a branch/SHA); the untracked overlay survives the checkout; uv syncs
   ```
-  `main` never touches production; the next scheduled run picks up the new code (no restart).
+  `main` never touches production; the next scheduled run picks up the new code (no restart). Machine-local
+  config lives in the untracked `config/prospector.local.yaml` overlay, so a tag checkout never touches it —
+  no stash/pop, nothing to reconcile.
 
-*Changelog: paths consolidated to `~/prospector/{dev,prod,store}` (was the scattered `~/prospector-prod` /
-`~/prospector-store` example paths) — `docs/decisions/2026-07-12-consolidated-prospector-layout.md`.*
+*Changelog: (1) paths consolidated to `~/prospector/{dev,prod,store}` —
+`docs/decisions/2026-07-12-consolidated-prospector-layout.md`; (2) machine-local config moved from the tracked
+config into an untracked `config/prospector.local.yaml` overlay (deep-merged; the config hash covers the merged
+result) — `docs/decisions/2026-07-12-local-config-overlay.md`.*
 
 ## Activation runbook (on the Mini)
 
 1. **Production worktree** at the tag + external store (above). Everything below runs in `~/prospector/prod`.
 2. **`.env`** in that directory — `TIINGO_API_TOKEN` and `PROSPECTOR_SMTP_PASSWORD` are required (the run
-   fails fast without them); `edgar.user_agent` lives in `config/prospector.yaml`. `uv sync` once so the venv
-   exists.
+   fails fast without them). Machine-local *paths* (`store.root`, `backup.targets`) live in the untracked
+   `config/prospector.local.yaml` overlay; `edgar.user_agent` is a tracked default (deployment identity, not
+   per-machine). Secrets stay in `.env`, never in config. `uv sync` once so the venv exists.
 3. **Backups first** — attach + bless the two HDDs and set `backup.targets` per
    `docs/notes/2026-07-12-mac-backup-activation-checklist.md`. Until then `pros backup` (and so `run.sh`)
    **faults loudly** — by design, never a silent no-op.
