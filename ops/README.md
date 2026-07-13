@@ -24,20 +24,20 @@ there is nothing to mistake for the dev clone; production is just a directory ch
 immune to your churn on `main`. Set it up once (from the dev repo):
 
 ```sh
-# one-time: production as a worktree pinned at the tag, + the store OUTSIDE any checkout
-mv ~/prospector-prod/store ~/prospector-store          # migrating from an earlier clone (skip if fresh)
-rm -rf ~/prospector-prod                               # remove any old clone sitting at this path
-git worktree add ~/prospector-prod v1.0.1              # one repo — `git worktree list` shows both dirs
-# then set machine-local config ONCE in ~/prospector-prod/config/prospector.yaml:
-#   store.root: ~/prospector-store        # the ONE canonical store, decoupled from the checkout
+# one-time: production as a worktree pinned at the tag, + the store OUTSIDE any checkout.
+# Consolidated layout — ~/prospector/{dev,prod,store}: dev clone, prod worktree, store side by side
+# (2026-07-12-consolidated-prospector-layout.md). Run from the dev clone (~/prospector/dev):
+git worktree add ~/prospector/prod v1.0.1             # one repo — `git worktree list` shows both dirs
+# then set machine-local config ONCE in ~/prospector/prod/config/prospector.yaml:
+#   store.root: ~/prospector/store        # the ONE canonical store, sibling of the checkouts
 #   backup.targets: [/Volumes/…, /Volumes/…]
-( cd ~/prospector-prod && uv sync )
+( cd ~/prospector/prod && uv sync )
 ```
 
-- **`store.root` points OUTSIDE the checkout** (`~/prospector-store`), so no worktree/tag operation can ever
-  touch the irreplaceable fossil record — and there is exactly ONE store (the dev clone's `./store` is deleted;
-  dev testing uses a throwaway).
-- The plist's `WorkingDirectory` and `run.sh` path point at the **worktree** (`~/prospector-prod`), **never**
+- **`store.root` points OUTSIDE the checkout** (`~/prospector/store`, a sibling of both checkouts), so no
+  worktree/tag operation can ever touch the irreplaceable fossil record — and there is exactly ONE store (dev
+  testing uses the dev clone's throwaway `./store`).
+- The plist's `WorkingDirectory` and `run.sh` path point at the **worktree** (`~/prospector/prod`), **never**
   the dev clone — that pointer *is* the isolation; get it wrong and prod runs your dev tree.
 - **Ship a later release with one command** (from the dev repo), so you never hand-navigate prod:
   ```sh
@@ -45,9 +45,12 @@ git worktree add ~/prospector-prod v1.0.1              # one repo — `git workt
   ```
   `main` never touches production; the next scheduled run picks up the new code (no restart).
 
+*Changelog: paths consolidated to `~/prospector/{dev,prod,store}` (was the scattered `~/prospector-prod` /
+`~/prospector-store` example paths) — `docs/decisions/2026-07-12-consolidated-prospector-layout.md`.*
+
 ## Activation runbook (on the Mini)
 
-1. **Production worktree** at the tag + external store (above). Everything below runs in `~/prospector-prod`.
+1. **Production worktree** at the tag + external store (above). Everything below runs in `~/prospector/prod`.
 2. **`.env`** in that directory — `TIINGO_API_TOKEN` and `PROSPECTOR_SMTP_PASSWORD` are required (the run
    fails fast without them); `edgar.user_agent` lives in `config/prospector.yaml`. `uv sync` once so the venv
    exists.

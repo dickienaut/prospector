@@ -2,7 +2,7 @@
 #
 # ops/deploy.sh <tag> — ship a release to the production WORKTREE. Run from the dev repo.
 #
-# Production is a git worktree (~/prospector-prod) pinned at a release TAG — one repo, two working dirs,
+# Production is a git worktree (~/prospector/prod) pinned at a release TAG — one repo, two working dirs,
 # not a second clone (see docs/decisions/2026-07-12-production-worktree-and-deploy.md). This is the ONE
 # command that moves production to a new release, so you almost never touch the prod dir by hand.
 #
@@ -13,11 +13,11 @@
 #     across the checkout, and STOPS loudly if a release changed that file upstream — never a silent wipe.
 #
 # The next scheduled run picks up the new code automatically (run.sh runs `uv run` fresh each fire — no
-# restart). Override the worktree path with PROSPECTOR_PROD=… if it isn't ~/prospector-prod.
+# restart). Override the worktree path with PROSPECTOR_PROD=… if it isn't ~/prospector/prod.
 set -euo pipefail
 
 TAG="${1:?usage: ops/deploy.sh <tag>   (a release TAG, e.g. v1.0.1 — never a branch or SHA)}"
-PROD="${PROSPECTOR_PROD:-$HOME/prospector-prod}"
+PROD="${PROSPECTOR_PROD:-$HOME/prospector/prod}"
 CFG="config/prospector.yaml"
 
 # The dev repo this script lives in (fetch here; it shares .git with the worktree, so tags reach both).
