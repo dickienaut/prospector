@@ -1,7 +1,7 @@
 # rebalance-prior-parse-volatile-message — the E1 volatile-message alarm, re-appearing on a sibling path
 
-*Bug record, 2026-07-14. Status: **fixed** (reference patch drafted, pending land). Class: §1.7
-nuisance-alarm/GPWS. Branch `m6-discourse-capture` @ `4739b528bc`. The direct recurrence of E1
+*Bug record, 2026-07-14. Status: **fixed** — landed via #55 (`8d940b7`). Class: §1.7
+nuisance-alarm/GPWS. Found on branch `m6-discourse-capture` @ `4739b528bc`. The direct recurrence of E1
 (2026-07-10) on a path the E1 fix did not touch.*
 
 - **Symptom.** When a rebalance basket has a frozen **prior** holdings pull that cannot be parsed (a genuinely

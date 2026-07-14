@@ -1,8 +1,8 @@
 # snapshot-divergence-accumulator-bypass — a data-integrity alarm that is counted 0 and never pages
 
-*Bug record, 2026-07-14. Status: **fixed** (reference patch drafted, pending land). Class: §1.7
+*Bug record, 2026-07-14. Status: **fixed** — landed via #55 (`8d940b7`). Class: §1.7
 nuisance-alarm/GPWS · §1.3 invariant-stated-in-prose-not-mechanism · §1.4 test-passes-for-wrong-reason ·
-§1.8 fails-silently. Branch `m6-discourse-capture` @ `4739b528bc`.*
+§1.8 fails-silently. Found on branch `m6-discourse-capture` @ `4739b528bc`.*
 
 - **Symptom.** A snapshot **divergence** — an existing `(lead, ts)` snapshot whose state differs from the
   freshly-folded state (ignoring `reason`), i.e. a backdated event or a non-deterministic fold: a genuine
