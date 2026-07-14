@@ -49,6 +49,20 @@ FOSSIL_TREES = ("events", "snapshots", "ingest", "baselines", "runs", "registry"
 DEFAULT_MARKER = ".prospector-backup-target"
 REGISTRY_NAME = "registry.sqlite"
 
+# Trees whose files are APPEND-ONLY or first-write-wins — content is FIXED once written, so the cheap
+# size+mtime quick-check can never alias a change (there is no in-place rewrite to hide). events/ is
+# append-only by constitution; runs/ writes one runlog per tick; captures/ is write-once; snapshots/ is
+# first-write-wins (a rewrite is the SNAP-01 divergence FAULT, not normal operation). Every OTHER tree is
+# REWRITTEN in place — ingest/ (a same-day holdings re-pull / same-accession SOI re-freeze OVERWRITES;
+# both writers say "ingest/ is dated substrate, not the append-only record") and registry/ (fund-identity
+# objects rewritten on an identity change) — where a same-size content change landing inside the
+# _MTIME_WINDOW_S window aliases to "unchanged" and leaves a PERMANENTLY stale copy (BK-2). Those trees
+# get a content tiebreak (see `_needs_copy(verify_content=…)`). The default is FAIL-SAFE: this lists the
+# proven-immutable trees, so a NEW tree is content-verified (correct, at worst a small extra read) unless
+# it is DELIBERATELY added here. events/ + snapshots/ are the bulk of the store, so cheap-skipping them
+# keeps the per-run content-verify cost bounded to the small rewritten-in-place subset.
+_APPEND_ONLY_TREES = frozenset({"events", "snapshots", "runs", "captures"})
+
 
 class BackupError(Exception):
     """A backup that cannot proceed AT ALL — no targets configured. A per-target mount failure is NOT
@@ -80,23 +94,54 @@ class BackupReport:
 _MTIME_WINDOW_S = 2.0
 
 
-def _needs_copy(src: Path, dst: Path) -> bool:
+def _same_bytes(a: Path, b: Path, *, chunk: int = 65536) -> bool:
+    """Byte-compare two files of KNOWN-equal size (the caller has already checked st_size). Early-exits on
+    the first differing chunk, so identical files still read fully but a real change is caught immediately.
+    Used ONLY as the size-equal-within-window tiebreak for rewritten-in-place trees, so it reads at most
+    the small mutable subset of the store per run — never the append-only bulk (events/ + snapshots/)."""
+    with a.open("rb") as fa, b.open("rb") as fb:
+        while True:
+            ca, cb = fa.read(chunk), fb.read(chunk)
+            if ca != cb:
+                return False
+            if not ca:
+                return True
+
+
+def _needs_copy(src: Path, dst: Path, *, verify_content: bool = False) -> bool:
     """rsync quick-check equivalent: copy when `dst` is missing, its size differs, or `src` is newer than
     `dst` by more than `_MTIME_WINDOW_S`. Append-only fossils never change (so they skip after the first
     copy), but `ingest/` files CAN be overwritten by a same-day re-pull (`holdings.pull`) — a bare
     skip-if-exists would miss that updated fossil, so the size/mtime check (not a bare existence check)
     keeps the mirror honest. The window tolerates coarse-mtime destination filesystems (exFAT/FAT) whose
-    truncation would otherwise re-copy every unchanged file each run."""
+    truncation would otherwise re-copy every unchanged file each run.
+
+    BK-2: that same window can ALIAS a real change — a same-size in-place rewrite (ingest re-pull /
+    registry identity update) landing within the window reads as 'unchanged' and leaves a PERMANENTLY
+    stale copy (the source mtime never advances past dst+window again). `verify_content` (set by
+    `backup_store` for the rewritten-in-place trees only — see `_APPEND_ONLY_TREES`) breaks that tie by
+    CONTENT: when size is equal and the mtime is inside the window, compare the bytes and copy iff they
+    differ. Append-only trees pass `verify_content=False` and keep the cheap size+mtime skip."""
     if not dst.exists():
         return True
     ss, ds = src.stat(), dst.stat()
-    return ss.st_size != ds.st_size or ss.st_mtime > ds.st_mtime + _MTIME_WINDOW_S
+    if ss.st_size != ds.st_size:
+        return True
+    if ss.st_mtime > ds.st_mtime + _MTIME_WINDOW_S:
+        return True
+    # size-equal and within the mtime window: the quick-check says "skip" — correct for an append-only
+    # file (never rewritten), but for a rewritten-in-place tree this is the BK-2 aliasing case. Break the
+    # tie by content so a same-size same-window rewrite is not silently left stale on the HDD.
+    if verify_content:
+        return not _same_bytes(src, dst)
+    return False
 
 
-def _mirror_tree(src_root: Path, dst_root: Path) -> tuple[int, int, int]:
+def _mirror_tree(src_root: Path, dst_root: Path, *, verify_content: bool = False) -> tuple[int, int, int]:
     """Incrementally mirror one fossil tree; returns (copied, skipped, bytes_copied). `shutil.copy2`
     preserves mtime (so `_needs_copy` stays stable across runs). `*.tmp` atomic-writer leftovers are
-    skipped, exactly as `reindex._scan` ignores them (they are not fossils)."""
+    skipped, exactly as `reindex._scan` ignores them (they are not fossils). `verify_content` is passed
+    through to `_needs_copy` — True only for rewritten-in-place trees (BK-2 aliasing tiebreak)."""
     copied = skipped = nbytes = 0
     if not src_root.is_dir():
         return 0, 0, 0
@@ -104,7 +149,7 @@ def _mirror_tree(src_root: Path, dst_root: Path) -> tuple[int, int, int]:
         if not src.is_file() or src.name.endswith(".tmp"):
             continue
         dst = dst_root / src.relative_to(src_root)
-        if _needs_copy(src, dst):
+        if _needs_copy(src, dst, verify_content=verify_content):
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
             copied += 1
@@ -156,7 +201,10 @@ def backup_store(layout: StoreLayout, targets, *, marker: str = DEFAULT_MARKER,
         try:
             r = TargetReport(target=str(t))
             for tree in FOSSIL_TREES:
-                c, s, b = _mirror_tree(layout.root / tree, t / tree)
+                # rewritten-in-place trees (not append-only) get the BK-2 content tiebreak; the
+                # append-only bulk keeps the cheap size+mtime skip.
+                c, s, b = _mirror_tree(layout.root / tree, t / tree,
+                                       verify_content=tree not in _APPEND_ONLY_TREES)
                 r.files_copied += c
                 r.files_skipped += s
                 r.bytes_copied += b

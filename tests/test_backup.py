@@ -116,6 +116,37 @@ def test_needs_copy_tolerates_coarse_mtime_destination(tmp_path):
     assert backup_module._needs_copy(src, tmp_path / "gone.json") is True   # missing dst copies
 
 
+def test_a_same_size_ingest_re_pull_within_the_mtime_window_still_re_copies(layout, registry, tmp_path):
+    """BK-2 (deep-review finding): the `_MTIME_WINDOW_S` window that absorbs exFAT mtime truncation can
+    ALIAS a real change. A same-day re-pull that OVERWRITES an `ingest/` file with DIFFERENT content of
+    the EXACT SAME size, landing within the window, reads as 'unchanged' by the size+mtime quick-check and
+    is silently skipped — leaving a STALE copy on the HDD that never self-corrects (the source mtime never
+    advances past dst+window again). `ingest/` is the documented overwrite-in-place tree (holdings
+    same-day re-pull / SOI same-accession re-freeze); append-only trees can't alias (never rewritten). The
+    same-FS incremental test above cannot catch it — this forces the aliasing condition deterministically.
+    RED on branch: the stale copy persists. GREEN: the rewritten-in-place tree is content-verified."""
+    import os
+    _seed(layout, registry)
+    target = _bless(tmp_path / "hd1")
+    ing = layout.root / "ingest" / "holdings" / "S000001" / "2026-07-01" / "XLK.csv"
+    ing.parent.mkdir(parents=True, exist_ok=True)
+    ing.write_bytes(b"weight,cusip\n0.50,AAA\n")             # content C1
+
+    backup_store(layout, [target])                            # first backup -> dst has C1
+    dst = target / "ingest" / "holdings" / "S000001" / "2026-07-01" / "XLK.csv"
+    assert dst.read_bytes() == b"weight,cusip\n0.50,AAA\n"
+
+    # a same-day re-pull overwrites the ingest file with DIFFERENT bytes of the EXACT same length...
+    ing.write_bytes(b"weight,cusip\n0.90,AAA\n")             # content C2, one digit changed, same size
+    assert ing.stat().st_size == dst.stat().st_size          # size identical -> the quick-check is blind
+    m = dst.stat().st_mtime
+    os.utime(ing, (m, m))                                    # ...and landing within the window (delta 0)
+
+    backup_store(layout, [target])                            # second backup
+
+    assert dst.read_bytes() == b"weight,cusip\n0.90,AAA\n"    # RED: still C1 (stale); GREEN: refreshed to C2
+
+
 def test_registry_goes_through_the_backup_api_not_a_raw_copy(layout, registry, tmp_path, monkeypatch):
     _seed(layout, registry)
     target = _bless(tmp_path / "hd1")
