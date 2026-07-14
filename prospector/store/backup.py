@@ -142,15 +142,32 @@ def backup_store(layout: StoreLayout, targets, *, marker: str = DEFAULT_MARKER,
             report.failures.append(
                 (str(t), f"not mounted-and-blessed (no {marker!r} marker) — refusing to write"))
             continue
-        r = TargetReport(target=str(t))
-        for tree in FOSSIL_TREES:
-            c, s, b = _mirror_tree(layout.root / tree, t / tree)
-            r.files_copied += c
-            r.files_skipped += s
-            r.bytes_copied += b
-        if reg.is_file():
-            backup_sqlite(reg, t / REGISTRY_NAME)   # WAL-safe .backup, never a raw copy of a live db
-            r.registry_backed_up = True
+        # A blessed target can still fail PARTWAY through the copy — the drive fills (ENOSPC), is
+        # unplugged mid-mirror, or `.backup` errors. Without this guard that OSError propagates out of
+        # backup_store, and because targets are a serial for-loop it (a) skips every LATER target — the
+        # healthy second drive gets NOTHING — and (b) records no failure, so the CLI (which catches only
+        # BackupError) prints a raw traceback instead of the designed FAULT line. That inverts
+        # best-effort-but-loud exactly when a drive degrades. Record the per-target failure (the CLI
+        # turns report.failures into a non-zero exit + a named FAULT line) and press on to the next
+        # drive. The torn partial mirror left on the degraded drive is reconciled by the next run's
+        # incremental _needs_copy pass. Broad `except Exception` is deliberate here: for a durability
+        # mirror ANY per-target fault must fall through to the other drive, never abort the whole backup
+        # — and it is still loud (recorded + non-zero exit), never a silent skip.
+        try:
+            r = TargetReport(target=str(t))
+            for tree in FOSSIL_TREES:
+                c, s, b = _mirror_tree(layout.root / tree, t / tree)
+                r.files_copied += c
+                r.files_skipped += s
+                r.bytes_copied += b
+            if reg.is_file():
+                backup_sqlite(reg, t / REGISTRY_NAME)   # WAL-safe .backup, never a raw copy of a live db
+                r.registry_backed_up = True
+        except Exception as e:   # noqa: BLE001 — best-effort-but-loud: record and continue to the next drive
+            report.failures.append(
+                (str(t), f"copy failed mid-backup ({type(e).__name__}: {e}) — the record is NOT fully "
+                         "backed up to this target; retry once the drive is healthy"))
+            continue
         report.targets.append(r)
     return report
 

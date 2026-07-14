@@ -147,6 +147,39 @@ def test_unblessed_target_faults_but_a_blessed_target_still_gets_the_data(layout
     assert not (bad / "events").exists()                          # nothing written to the faulted drive
 
 
+def test_a_blessed_target_failing_mid_copy_records_a_failure_and_still_backs_up_the_healthy_drive(
+        layout, registry, tmp_path, monkeypatch):
+    """BK-1 (deep-review finding): the fail-loud tests above cover only the UNBLESSED case — a target that
+    fails the blessing check BEFORE any copy. A BLESSED target can still fail PARTWAY through the copy: the
+    drive fills (ENOSPC), is unplugged mid-mirror, or `.backup` errors. Before the fix that OSError
+    propagated straight out of backup_store, so (a) every LATER target was skipped — the healthy second
+    drive got NOTHING — and (b) no failure was recorded, so the CLI raised a raw traceback instead of the
+    designed FAULT line. 'best-effort-but-loud' was violated exactly when a drive degrades. Synthetic
+    temp-dir targets never fill up on their own, so this INJECTS the mid-copy failure to reproduce the
+    'both HDDs present, one degrades' scenario the design promises to survive."""
+    _seed(layout, registry)
+    degrading = _bless(tmp_path / "hd_fills_up")   # processed first; fails partway through the copy
+    healthy = _bless(tmp_path / "hd_ok")           # processed second; MUST still receive the full backup
+
+    real_copy2 = backup_module.shutil.copy2
+    def flaky_copy2(src, dst, *a, **k):
+        if str(dst).startswith(str(degrading)):
+            raise OSError(28, "No space left on device")   # ENOSPC partway into the degrading drive
+        return real_copy2(src, dst, *a, **k)
+    monkeypatch.setattr(backup_module.shutil, "copy2", flaky_copy2)
+
+    report = backup_store(layout, [degrading, healthy])   # must NOT propagate the OSError
+
+    # the degrading drive is recorded as a loud, NAMED failure (the CLI turns report.failures into a
+    # non-zero exit + a FAULT line) — never a silent skip and never a raw traceback
+    assert len(report.failures) == 1 and report.failures[0][0] == str(degrading)
+    # and the healthy drive still got the WHOLE backup — a degrading sibling never skips it
+    assert [t.target for t in report.targets] == [str(healthy)]
+    assert report.targets[0].files_copied > 0 and report.targets[0].registry_backed_up
+    assert any((healthy / "events" / LEAD).glob("*.json"))
+    assert (healthy / "registry.sqlite").is_file()
+
+
 def test_unmounted_target_is_never_created(layout, registry, tmp_path):
     # The footgun this guards: if the drive is unplugged its path is ABSENT; we must fault, never
     # mkdir it (that would write the "backup" onto the internal disk and silently succeed).
