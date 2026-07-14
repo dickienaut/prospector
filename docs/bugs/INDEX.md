@@ -110,7 +110,7 @@ alarm-layer cluster: three of the five HIGH items sit on the fault/alarm layer, 
 
 | ID | Symptom (one line) | Subsystem | Shape | Status | Class | Guarding test / fix site |
 |----|--------------------|-----------|-------|--------|-------|--------------------------|
-| **CAP-DRIFT** | `capture.query_drift` compares the provider-issued query byte-exact; any benign normalization (trim / smart-quote / case) fires it on **every** capture — cry-wolf on the determinism guard | capture·runner | spurious-fire · green-on-synthetic | 🟡 ratified byte-exact; live-arming verify is the gate (stacked, PR pending QA) | 1,7 | **byte-exact by ruling — NOT normalized** ([decision](../decisions/2026-07-14-query-drift-byte-exact.md)); `test_build_queries_deterministic_and_ordered` + `test_query_drift_is_byte_exact_a_cosmetic_normalization_still_faults`; verify one armed byte-compare **before** arming |
+| **CAP-DRIFT** | `capture.query_drift` compares the provider-issued query byte-exact; any benign normalization (trim / smart-quote / case) fires it on **every** capture — cry-wolf on the determinism guard | capture·runner | spurious-fire · green-on-synthetic | 🟡 ratified byte-exact; live-arming verify is the gate (stacked, PR pending QA) | 1,7 | **ordered by ruling** ([decision](../decisions/2026-07-14-query-drift-byte-exact.md)): observe first — one armed byte-compare **before arming** → byte-exact stands if the echo is clean → only a *demonstrated* transform earns a *minimal, observed-scoped* normalization (trims → `strip` only; documented finding), never a pre-emptive `strip()`; tests `test_build_queries_deterministic_and_ordered` + `test_query_drift_is_byte_exact_a_cosmetic_normalization_still_faults` |
 | **CAP-USD** | monthly-USD cap silently stops enforcing if `unit_price_usd` is unset/0 — only the weekly count cap then guards spend | capture | fail-silent | ✅ (stacked, PR pending QA) | 8 | loud `capture.budget:usd_unpriced` fault when armed + unpriced · `test_capture.py::test_usd_cap_unenforceable_when_unpriced_faults_loud` |
 
 ---
@@ -126,11 +126,13 @@ alarm-layer cluster: three of the five HIGH items sit on the fault/alarm layer, 
   the cadence via a folded `heartbeat.sent`, catching up a slept-through cycle. **M7-02 is the next build, and
   the dogfood of this archive: the first bug authored under the doctrine here** (QA logs the Problem row, build
   adds the Fix on merge).
-- 🟡 **CAP-DRIFT** — **SETTLED (decision 2026-07-14): byte-exact, NOT normalized.** Our-side templating is
-  proven deterministic; the guard stays byte-exact (normalizing would discard the evidence it exists to
-  catch); the residual — does a LIVE model echo our query verbatim — is verified by **one armed byte-compare
-  before capture is armed** (it ships disabled), and only a *real, defensible, named* source would ever earn
-  a minimal normalization, as a documented finding. ✅ **CAP-USD** rides along — a loud
+- 🟡 **CAP-DRIFT** — **SETTLED (decision 2026-07-14): observe first, then decide — not either/or.** The
+  ORDERED gate, not a menu: (1) one armed byte-compare **before capture is armed** (it ships disabled) to
+  see what the provider actually echoes; (2) the byte-exact guard **stands if the echo is clean**; (3)
+  **only** a *demonstrated* transform earns a **minimal normalization scoped to that transform** (trims →
+  `strip` and only strip; smart-quotes → that mapping), recorded as a finding — never a pre-emptive `strip()`
+  against imagined behavior (pre-softening the guard is green-on-synthetic aimed at our own determinism
+  guard). Our-side templating is already proven byte-deterministic. ✅ **CAP-USD** rides along — a loud
   `capture.budget:usd_unpriced` fault when armed-but-unpriced. (Both stacked, PR pending QA.)
 - ⭕ **Concurrency judgments** — **M7-04** (deploy vs in-flight tick, no lock) and **M7-06** (no single-instance
   lock / `busy_timeout`) — design-judgment, currently resting on launchd serialization; open for a ratified
