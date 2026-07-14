@@ -1,0 +1,72 @@
+--- a/prospector/sensors/rebalance.py
++++ b/prospector/sensors/rebalance.py
+@@ -69,15 +69,30 @@
+     return round(wf, nd)
+ 
+ 
++def _is_cash_or_derivative(row) -> bool:
++    """A cash / money-market / derivative / currency line, NOT a real security position. SSGA stamps
++    these with the `-` TICKER sentinel: a real file's money-market and currency lines DO carry a
++    populated CUSIP-like `identifier` (924QSGII3, 999EURZ94), so keying the exclusion on an EMPTY
++    identifier excludes nothing on live data — the ticker sentinel is the primary-source signal.
++    `MONEY MARKET` in the name is defense-in-depth. This is the CASH/DERIVATIVE test ONLY — NOT the
++    price-universe gate `holdings.priceable_members`, which ALSO drops FOREIGN equities whose genuine
++    add/drop/reweight IS a rebalance signal; the diff keeps foreign constituents, drops only non-security
++    lines."""
++    ticker = str(row.get("ticker", "")).strip()
++    if ticker == "-":                       # the SSGA cash/derivative sentinel (explicit dash only —
++        return True                          # a MISSING/blank ticker column is "unknown", NOT cash:
++    return "MONEY MARKET" in str(row.get("name", "")).upper()   # synthetic frames omit ticker entirely
++
++
+ def _identified(frame: pd.DataFrame) -> dict[str, dict]:
+-    """Map identifier -> {name, weight} over the frame's IDENTIFIED securities (a non-empty
+-    CUSIP/ISIN). Cash/derivative rows carry an empty identifier (parse_spdr_holdings keeps them,
+-    §3) and are excluded here so their daily wiggle never reads as a rebalance. On a duplicate
+-    identifier the heavier row wins (defensive; SPDR files are one row per lot)."""
++    """Map identifier -> {name, weight} over the frame's REAL SECURITY positions (a non-empty
++    CUSIP/ISIN, excluding cash/derivative/currency lines — `_is_cash_or_derivative`). Their daily wiggle
++    must never read as a rebalance. On a duplicate identifier the heavier row wins (defensive; SPDR files
++    are one row per lot)."""
+     out: dict[str, dict] = {}
+     for _, row in frame.iterrows():
+         ident = str(row.get("identifier", "")).strip()
+-        if not ident:
++        if not ident or _is_cash_or_derivative(row):
+             continue
+         w = row.get("weight")
+         prev = out.get(ident)
+--- a/prospector/runner/runner.py
++++ b/prospector/runner/runner.py
+@@ -922,7 +922,12 @@
+         try:
+             prior = deps.holdings_ingest.load_frozen(series_id, prior_dates[-1], ticker, source)
+         except Exception as e:  # a prior we HAVE but cannot parse is genuinely broken -> fault, not seed
+-            _emit_fault(store, "sensor.rebalance", f"{ticker} prior {prior_dates[-1]}: {e}", now, faults)
++            # §10: the message keeps the moving prior date for forensics, but the suppression key is
++            # the STABLE (ticker, status) — a persisting unparseable prior pages once then rides the
++            # heartbeat (mirrors the current-feed fault 11 lines above; without key= the moving date
++            # made _fault_signature differ every tick and paged daily).
++            _emit_fault(store, "sensor.rebalance", f"{ticker} prior {prior_dates[-1]}: {e}", now, faults,
++                        key=f"{ticker}:prior:{getattr(e, 'status', None)}")
+             continue
+         rebalance_sensor.scan(series_id, ticker, prior, current, universe_ids, active_ids,
+                               deps.cfg, now, store.append, as_of=date_)
+@@ -1164,8 +1169,16 @@
+                     page_worthy[lead] = changed
+             decision = should_snapshot(new_state, last_ts, changed, now_dt, snap_cfg)
+             if decision.save:
++                # §10: a snapshot divergence is a data-integrity break that MUST count + page. Route the
++                # sink through _emit_fault so it lands in the `faults` accumulator (which the scan-line
++                # count, _compute_push, and the next tick's comparand all read) — NOT a raw store.append,
++                # the split-path bug that showed "0 faults this run" beside faults that fired. _emit_fault
++                # also writes the store event, so the body's fault_log is unchanged.
++                def _snapshot_fault_sink(event, _lead=lead):
++                    _emit_fault(store, event["payload"]["subsystem"], event["payload"]["message"],
++                                now, faults, lead=_lead)
+                 write_snapshot(deps.layout, deps.registry, lead, new_state, decision.reason, now,
+-                               fault_sink=store.append)
++                               fault_sink=_snapshot_fault_sink)
+         except Exception as e:  # one lead's failure never blinds the others (§9g)
+             _emit_fault(store, "snapshot", e, now, faults, lead=lead)
+     return changed_leads, page_worthy
