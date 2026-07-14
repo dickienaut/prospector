@@ -58,6 +58,7 @@ path places, sizes, or recommends a trade.
 | `ingest/holdings.py` | Holdings ingest (§4d keystone) — SPDR daily file (**xlsx**, real SSGA format) → 90%-weight membership, frozen | `HoldingsIngest`, `weight_covering_members()`, `parse_spdr_holdings()`, `parse_nport_holdings()` (labeled §3b stub), `MembershipSnapshot` |
 | `ingest/prospectus.py` | Prospectus fetch/freeze + mandate extraction (§4d) — bs4 → text, strategy section, diff | `ProspectusIngest`, `extract_mandate()`, `diff_mandate()` |
 | `ingest/soi.py` | SOI fetch-freeze (read side) + GICS-industry-grouped sector derivation (§4c resolver) — fund-block isolation → `INDUSTRY — N.N%` parse → industry→sector rollup (+ `gics_industry_alias` rendering variants) → reconcile-or-fault | `SoiIngest`, `extract_soi_sectors()`, `dominant_sectors()` |
+| `ingest/capture.py` | §6 discourse capture (M6) — Anthropic `web_search` provider (forces OUR verbatim query, drops the model's prose — the wall), OUR httpx fetch of the top-M result URLs (`html_to_text`), deterministic query templating, and a persisted weekly/monthly budget counter. Write-only substrate: nothing in v1 reads a capture (never-read wall, tested) | `CaptureProvider`, `CaptureBudget`, `build_queries()`, `top_urls()`, `write_query_blob()`, `capture_prefix()`, `period_keys()` |
 | `identity/resolution.py` | Retry-then-manual resolution machine; two-phase-launch intake + completion | `ResolutionMachine`, `register_launch()`, `launch_lag()` |
 | `sensors/xcorr.py` | The excess-correlation pipeline (β-strip → departure z) + the stress gate; **`scan()`** — the runner's LIVE per-tick driver (state from the record §9f, stress gate, spawn/tick/revert) | `daily_returns`→`departure_z`, `stress_series`, `scan()` |
 | `sensors/dispersion.py` | Intra-basket fracture (§4b) — constituent corr → spectral bipartition → Q departure z; shadow-wired, generous payload | `dispersion_q_series`, `scan()` |
@@ -118,6 +119,7 @@ events/{lead}/{ts}_{type}_{uuid}.json      append-only fossil record — live ob
 snapshots/{lead}/{ts}.json                 materialized folds (reactive cadence)
 ingest/prices|edgar|holdings/...           frozen raw substrate (pull-once-freeze)
 ingest/prospectus/{series_id}/{accession}/ frozen prospectus HTML — blob per filing (mandate-diff)
+captures/{lead}/{ts}/query_{n}.json        frozen discourse — raw web_search blocks + fetched text (§6, write-only)
 registry/funds/{series_id}.json            versioned fund registry objects
 registry.sqlite                            the WAL index — uploaded only via .backup snapshot
 backtest/run_{stamp}/...                   synthetic history — NEVER under events/ (structural guard)
@@ -291,8 +293,8 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   clears {Financials, Industrials, IT, Utilities}); Jan-2026 stays dormant (Utilities 6.4% < floor,
   threshold frozen — anti-fitting). See `docs/decisions/2026-07-04-soi-derived-sector-concentration.md`.
 - **The M5 runner — built and live** (`prospector/runner/`, `pros run`) — the §9 cadence driver in the
-  CONTRACT run order (config-honesty-first → ingest → sensors → identity retries → capture no-op →
-  reactive snapshots → `state_changed`-pinned push), **no intelligence**, stateless between ticks (§9f
+  CONTRACT run order (config-honesty-first → ingest → sensors → identity retries → §6 capture (armed by
+  config+env) → reactive snapshots → `state_changed`-pinned push), **no intelligence**, stateless between ticks (§9f
   state recovered from the fossil record — no side cache), soft-fault-vs-fatal exception granularity, and
   a dead-man that still pushes on a fatal (snapshots + push run in `finally`). Wired onto it, in order:
   - **§9a sector-prices panel** (`_build_sector_panel`) + the **P1 guard** (`guard_live_source` fails a
@@ -418,13 +420,24 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   the SOI path already resolves the active-fund sector case, so this turns the live cross-stream lag from
   an *existence proof* into a *representative rate* rather than unblocking it. Intake was deliberately not
   widened inside the corroboration slice.
-- **Milestone 6** — discourse capture + budget guard. **Milestone 7** — infra-as-code + **scheduled**
+- **Milestone 6 — discourse capture + budget guard — BUILT (`ingest/capture.py`, the runner's phase 5),
+  ships DISABLED.** At each active non-shadow lead due for capture (per-lead weekly gate: never captured,
+  or ≥7 days stale), K deterministic-templated queries → Anthropic `web_search` (forces OUR verbatim
+  query; the model's prose is never persisted — the wall, enforced by test) → OUR httpx fetch of the top-M
+  result URLs → frozen under `captures/{lead}/{ts}/` (added to `FOSSIL_TREES` — the one *un-backfillable*
+  tree). A HARD budget cap (`capture.max_searches_per_week` + `capture.monthly_budget_usd`, a persisted
+  counter) pauses + faults on breach (§10, never a silent overrun). Write-only: nothing in v1 reads a
+  capture. The owner arms it by setting `capture.monthly_budget_usd` + `ANTHROPIC_API_KEY` in the prod
+  `.env`; live on-Mini verification (first scheduled run) + the spec rev15 fold are the remaining v1 items.
+  Provider (Anthropic web_search) + $10/mo budget ratified this session (build note
+  `docs/notes/2026-07-13-m6-discourse-capture-build-note.md`).
+- **Milestone 7** — infra-as-code + **scheduled**
   deploy (where `pros run` stops being a manual invocation); M7 also owns the SOI-corroboration **cadence
   gate** (0 cost today — the dormant pile is empty) and the read-only-media **WAL-checkpoint**.
 - **Store durability (`pros backup`) — CODE BUILT, physical activation pending** (`store/backup.py`,
   `pros backup` + `pros store verify-restore`, 10 offline tests). Mirrors the append-only fossils (incl.
-  `registry/`) + a WAL-safe registry `.backup` to the configured HDD targets, fail-loud on an
-  unmounted/unblessed drive. The one-time dual-HDD activation + restore test is a Mac session
+  `registry/` and `captures/` — the un-backfillable M6 discourse tree) + a WAL-safe registry `.backup` to
+  the configured HDD targets, fail-loud on an unmounted/unblessed drive. The one-time dual-HDD activation + restore test is a Mac session
   (`docs/notes/2026-07-12-mac-backup-activation-checklist.md`); the post-`pros run` cadence pairs with the
   M7 scheduler. Named follow-ups: reindex-rebuilds-funds, offsite (S3/Backblaze), bit-rot checksums. See
   `docs/decisions/2026-07-12-store-durability-backup.md`.
