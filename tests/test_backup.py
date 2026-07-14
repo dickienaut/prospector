@@ -116,6 +116,37 @@ def test_needs_copy_tolerates_coarse_mtime_destination(tmp_path):
     assert backup_module._needs_copy(src, tmp_path / "gone.json") is True   # missing dst copies
 
 
+def test_a_same_size_ingest_re_pull_within_the_mtime_window_still_re_copies(layout, registry, tmp_path):
+    """BK-2 (deep-review finding): the `_MTIME_WINDOW_S` window that absorbs exFAT mtime truncation can
+    ALIAS a real change. A same-day re-pull that OVERWRITES an `ingest/` file with DIFFERENT content of
+    the EXACT SAME size, landing within the window, reads as 'unchanged' by the size+mtime quick-check and
+    is silently skipped — leaving a STALE copy on the HDD that never self-corrects (the source mtime never
+    advances past dst+window again). `ingest/` is the documented overwrite-in-place tree (holdings
+    same-day re-pull / SOI same-accession re-freeze); append-only trees can't alias (never rewritten). The
+    same-FS incremental test above cannot catch it — this forces the aliasing condition deterministically.
+    RED on branch: the stale copy persists. GREEN: the rewritten-in-place tree is content-verified."""
+    import os
+    _seed(layout, registry)
+    target = _bless(tmp_path / "hd1")
+    ing = layout.root / "ingest" / "holdings" / "S000001" / "2026-07-01" / "XLK.csv"
+    ing.parent.mkdir(parents=True, exist_ok=True)
+    ing.write_bytes(b"weight,cusip\n0.50,AAA\n")             # content C1
+
+    backup_store(layout, [target])                            # first backup -> dst has C1
+    dst = target / "ingest" / "holdings" / "S000001" / "2026-07-01" / "XLK.csv"
+    assert dst.read_bytes() == b"weight,cusip\n0.50,AAA\n"
+
+    # a same-day re-pull overwrites the ingest file with DIFFERENT bytes of the EXACT same length...
+    ing.write_bytes(b"weight,cusip\n0.90,AAA\n")             # content C2, one digit changed, same size
+    assert ing.stat().st_size == dst.stat().st_size          # size identical -> the quick-check is blind
+    m = dst.stat().st_mtime
+    os.utime(ing, (m, m))                                    # ...and landing within the window (delta 0)
+
+    backup_store(layout, [target])                            # second backup
+
+    assert dst.read_bytes() == b"weight,cusip\n0.90,AAA\n"    # RED: still C1 (stale); GREEN: refreshed to C2
+
+
 def test_registry_goes_through_the_backup_api_not_a_raw_copy(layout, registry, tmp_path, monkeypatch):
     _seed(layout, registry)
     target = _bless(tmp_path / "hd1")
@@ -145,6 +176,39 @@ def test_unblessed_target_faults_but_a_blessed_target_still_gets_the_data(layout
     assert (good / "registry.sqlite").is_file()
     assert len(report.failures) == 1 and report.failures[0][0] == str(bad)
     assert not (bad / "events").exists()                          # nothing written to the faulted drive
+
+
+def test_a_blessed_target_failing_mid_copy_records_a_failure_and_still_backs_up_the_healthy_drive(
+        layout, registry, tmp_path, monkeypatch):
+    """BK-1 (deep-review finding): the fail-loud tests above cover only the UNBLESSED case — a target that
+    fails the blessing check BEFORE any copy. A BLESSED target can still fail PARTWAY through the copy: the
+    drive fills (ENOSPC), is unplugged mid-mirror, or `.backup` errors. Before the fix that OSError
+    propagated straight out of backup_store, so (a) every LATER target was skipped — the healthy second
+    drive got NOTHING — and (b) no failure was recorded, so the CLI raised a raw traceback instead of the
+    designed FAULT line. 'best-effort-but-loud' was violated exactly when a drive degrades. Synthetic
+    temp-dir targets never fill up on their own, so this INJECTS the mid-copy failure to reproduce the
+    'both HDDs present, one degrades' scenario the design promises to survive."""
+    _seed(layout, registry)
+    degrading = _bless(tmp_path / "hd_fills_up")   # processed first; fails partway through the copy
+    healthy = _bless(tmp_path / "hd_ok")           # processed second; MUST still receive the full backup
+
+    real_copy2 = backup_module.shutil.copy2
+    def flaky_copy2(src, dst, *a, **k):
+        if str(dst).startswith(str(degrading)):
+            raise OSError(28, "No space left on device")   # ENOSPC partway into the degrading drive
+        return real_copy2(src, dst, *a, **k)
+    monkeypatch.setattr(backup_module.shutil, "copy2", flaky_copy2)
+
+    report = backup_store(layout, [degrading, healthy])   # must NOT propagate the OSError
+
+    # the degrading drive is recorded as a loud, NAMED failure (the CLI turns report.failures into a
+    # non-zero exit + a FAULT line) — never a silent skip and never a raw traceback
+    assert len(report.failures) == 1 and report.failures[0][0] == str(degrading)
+    # and the healthy drive still got the WHOLE backup — a degrading sibling never skips it
+    assert [t.target for t in report.targets] == [str(healthy)]
+    assert report.targets[0].files_copied > 0 and report.targets[0].registry_backed_up
+    assert any((healthy / "events" / LEAD).glob("*.json"))
+    assert (healthy / "registry.sqlite").is_file()
 
 
 def test_unmounted_target_is_never_created(layout, registry, tmp_path):

@@ -99,6 +99,9 @@ whole series is the change-history.*
 
 ### The decision trail — `decisions/`
 *Dated fossils, chronological, never rewritten. The full trail is the directory; the recent / load-bearing:*
+- `2026-07-14-backup-health-one-fault-channel.md` — backup health surfaces through **one** fault channel
+  (fold → heartbeat), two triggers (didn't-run / ran-but-bad); the checksum build is **deferred** with a lean
+  toward scheduled `verify-restore`. Settles the M7-02/BK-3 fork; builds nothing (M7 heartbeat cluster wires it).
 - `2026-07-11-docs-reorganization.md` — **this reorg**: the folder taxonomy + the certified content-preserving
   moves + the pointer amendments.
 - `2026-07-11-canonical-docs-amended-not-regenerated.md` — canonical docs are **amended, never regenerated**
