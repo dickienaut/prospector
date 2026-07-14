@@ -85,6 +85,12 @@ def _deps(layout, registry, provider, cfg):
 # --- pure functions ------------------------------------------------------------------------------
 
 def test_build_queries_deterministic_and_ordered():
+    """CAP-DRIFT / §6 determinism CONTRACT (OUR side): identical lead metadata -> BYTE-IDENTICAL query
+    bytes. Asserted RAW — no sort/strip/case normalization — because byte-exactness IS the contract (it is
+    what makes the archive trustworthy + thaw-backward-able), and a normalized-then-equal test would MASK a
+    real ordering leak (a dict/set iteration change, a timestamp leaking in). This is the "prove
+    byte-exactness first" half of the query_drift ruling (docs/decisions/2026-07-14-query-drift-byte-exact.md);
+    the model-echo half stays byte-exact and is verified by an armed byte-compare before capture is armed."""
     meta = {"display": "XLK x XLU", "industries": ["Semiconductors"],
             "constituents": ["NVDA", "AAPL", "NVDA", "MSFT"]}
     q1 = build_queries(meta, 5, 5)
@@ -196,6 +202,42 @@ def test_budget_usd_cap_pauses(tmp_path):
                  store, NOW, faults, runlog)
     assert runlog.sensors["capture"] == "paused"
     assert any(f.get("key") == "capture.budget:usd" for f in faults)
+
+
+def test_usd_cap_unenforceable_when_unpriced_faults_loud(tmp_path):
+    """CAP-USD: ARMED (monthly_budget_usd set) but unit_price_usd unset/0 -> the month's estimated spend is
+    always $0, so the USD cap can NEVER fire and the dollar ceiling silently stops enforcing (only
+    max_searches_per_week then guards spend). The degradation must be LOUD, not silent: one stable-key
+    fault. Capture still RUNS (the count cap guards) — this warns, it does not disable capture. RED before
+    the guard (no such fault); GREEN after."""
+    layout, registry, store = _store(tmp_path)
+    _seed_lead(layout, registry, store, "disp-xlk")
+    runlog = RunLog(run_id="r", ts=NOW, date=NOW[:10])
+    faults: list = []
+    _run_capture(_deps(layout, registry, _provider(), _cfg(unit_price_usd=0)), store, NOW, faults, runlog)
+    assert any(f.get("key") == "capture.budget:usd_unpriced" for f in faults)   # loud, not silent
+    assert runlog.sensors["capture"] == "ran"                                    # NOT disabled/paused
+
+
+def test_query_drift_is_byte_exact_a_cosmetic_normalization_still_faults(tmp_path):
+    """CAP-DRIFT (byte-exact by ruling): the query_drift guard compares the provider-issued query to OUR
+    templated one BYTE-FOR-BYTE — a benign cosmetic normalization (here a trailing space, as a live model
+    might trim/case/quote-fold) STILL diverges and STILL faults. This LOCKS the guard against a future
+    silent `.strip()`: it goes RED the moment someone normalizes the comparison, forcing any softening to
+    be a deliberate, documented finding (docs/decisions/2026-07-14-query-drift-byte-exact.md). Our-side
+    determinism is separately proven by test_build_queries_deterministic_and_ordered."""
+    layout, registry, store = _store(tmp_path)
+    _seed_lead(layout, registry, store, "disp-xlk")
+
+    def _normalizing_call(body: dict) -> dict:
+        res = _fake_call(body)                                # echoes our query verbatim, then:
+        res["content"][0]["input"]["query"] += " "           # a live model cosmetically normalizes it
+        return res
+
+    runlog = RunLog(run_id="r", ts=NOW, date=NOW[:10])
+    faults: list = []
+    _run_capture(_deps(layout, registry, _provider(call=_normalizing_call), _cfg()), store, NOW, faults, runlog)
+    assert any(f.get("key") == "capture.query_drift" for f in faults)   # byte-exact: cosmetic ≠ verbatim
 
 
 def test_shadow_leads_never_capture(tmp_path):
