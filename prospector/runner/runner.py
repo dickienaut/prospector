@@ -922,7 +922,12 @@ def _run_rebalance(deps: RunnerDeps, store, now: str, faults: list, runlog: RunL
         try:
             prior = deps.holdings_ingest.load_frozen(series_id, prior_dates[-1], ticker, source)
         except Exception as e:  # a prior we HAVE but cannot parse is genuinely broken -> fault, not seed
-            _emit_fault(store, "sensor.rebalance", f"{ticker} prior {prior_dates[-1]}: {e}", now, faults)
+            # §10: the message keeps the moving prior date for forensics, but the suppression key is
+            # the STABLE (ticker, status) — a persisting unparseable prior pages once then rides the
+            # heartbeat (mirrors the current-feed fault 11 lines above; without key= the moving date
+            # made _fault_signature differ every tick and paged daily).
+            _emit_fault(store, "sensor.rebalance", f"{ticker} prior {prior_dates[-1]}: {e}", now, faults,
+                        key=f"{ticker}:prior:{getattr(e, 'status', None)}")
             continue
         rebalance_sensor.scan(series_id, ticker, prior, current, universe_ids, active_ids,
                               deps.cfg, now, store.append, as_of=date_)
@@ -1164,8 +1169,16 @@ def _materialize_snapshots(deps: RunnerDeps, store, now: str, faults: list) -> t
                     page_worthy[lead] = changed
             decision = should_snapshot(new_state, last_ts, changed, now_dt, snap_cfg)
             if decision.save:
+                # §10: a snapshot divergence is a data-integrity break that MUST count + page. Route the
+                # sink through _emit_fault so it lands in the `faults` accumulator (which the scan-line
+                # count, _compute_push, and the next tick's comparand all read) — NOT a raw store.append,
+                # the split-path bug that showed "0 faults this run" beside faults that fired. _emit_fault
+                # also writes the store event, so the body's fault_log is unchanged.
+                def _snapshot_fault_sink(event, _lead=lead):
+                    _emit_fault(store, event["payload"]["subsystem"], event["payload"]["message"],
+                                now, faults, lead=_lead)
                 write_snapshot(deps.layout, deps.registry, lead, new_state, decision.reason, now,
-                               fault_sink=store.append)
+                               fault_sink=_snapshot_fault_sink)
         except Exception as e:  # one lead's failure never blinds the others (§9g)
             _emit_fault(store, "snapshot", e, now, faults, lead=lead)
     return changed_leads, page_worthy
