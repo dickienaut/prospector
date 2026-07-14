@@ -1,8 +1,8 @@
 # rebalance-cash-line-cusip — a benign cash sweep fires a spurious "restructuring" rebalance
 
-*Bug record, 2026-07-14. Status: **fixed** (reference patch drafted, pending land). Class: §1.1
+*Bug record, 2026-07-14. Status: **fixed** — landed via #55 (`8d940b7`). Class: §1.1
 green-on-synthetic/broken-on-real · §1.5 never-anchor-on-a-ticker (one grain deeper) · §1.8 fails-silently.
-Branch `m6-discourse-capture` @ `4739b528bc`.*
+Found on branch `m6-discourse-capture` @ `4739b528bc`.*
 
 - **Symptom.** The §4d rebalance sensor treats a **money-market / cash line's** day-over-day balance wiggle as
   a material holdings change and accretes a `rebalance` ("this basket is restructuring") onto every live lead
