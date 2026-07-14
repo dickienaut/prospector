@@ -55,7 +55,8 @@ Code reads correctly, passes its tests, and breaks on the **real** substrate —
 time this pattern surfaced… the first on the alarm layer itself."*
 - **Instances:** H1 (÷100 scale, scale-invariant tests stay green) · H4 · P1 (2-row fixture can't exercise a
   split) · S1 (property test masks it) · 9e-ENR (bare-ticker pull returns a real *wrong* series only vs the
-  real TEKX file) · E1 ("same shape as the H1/H4 misses").
+  real TEKX file) · E1 ("same shape as the H1/H4 misses") · R1 (rebalance cash exclusion keyed on empty
+  identifier; real SSGA cash lines carry CUSIPs — every fixture used cash-free equity baskets).
 - **Rule born:** the **fixture-provenance discipline** — every fixture is *recorded-real* (source-URL +
   retrieval-date) or *declared-synthetic in-band*; and the QA seat **runs** the code against real
   config/fixtures, never just reads it. → [`CLAUDE.md` §Fixture provenance](../../CLAUDE.md#fixture-provenance) (validate slices against real/moving substrate).
@@ -64,7 +65,9 @@ time this pattern surfaced… the first on the alarm layer itself."*
 The code *says* an invariant in a docstring/comment but nothing makes it un-violatable; the test exercises the
 *easy* version of the invariant, so the gap is invisible. The "governing frame" of the whole N-series fix plan.
 - **Instances:** N1 (§11 read-only firewall — a `# read-only` comment that wrote to the store) · N2 ("two cold
-  runs identical") · N3 (§3 no-fabrication) · N8 ("ambiguous → surface") · B3 (docstring "excludes the market").
+  runs identical") · N3 (§3 no-fabrication) · N8 ("ambiguous → surface") · B3 (docstring "excludes the market")
+  · SNAP-01 (the "never a raw `store.append` fault" rule stated in the `_emit_fault` docstring but not
+  un-violatable — the snapshot sink re-introduced the bypass).
 - **Rule born:** **(a)** convert the invariant from prose to **mechanism** (make it un-violatable — e.g. open
   the store `mode=ro`); **(b)** land a regression test that **attempts the violation**, not the easy case (the
   "fires-not-called" discipline). → [the `fires-not-called` discipline](../decisions/2026-07-06-soi-corroboration-retry-9d.md).
@@ -73,7 +76,9 @@ The code *says* an invariant in a docstring/comment but nothing makes it un-viol
 The suite is green, but *because of* the bug, or by an accident of the harness — so it certifies the defect.
 - **Instances:** N1 (`test_dashboard_app` smoke passes only because the broken read-write dashboard creates the
   table on the fly) · N2 (two separate fresh stores dodge the same-store path) · N5 (relative config path
-  resolves only because pytest runs from repo root) · E1 (synthetic `"boom"` message).
+  resolves only because pytest runs from repo root) · E1 (synthetic `"boom"` message) · SNAP-01 (the existing
+  divergence test passes `fault_sink=faults.append` — a list standing in for the accumulator — so it certifies
+  "the sink fires", not that production's `store.append` sink reaches the accumulator).
 - **Rule born:** **runner-faithful seeds** (test against the real store/path/message the runtime uses) + the
   violation-test rule (3b). Tightly coupled to classes 1 & 3.
 
@@ -82,7 +87,8 @@ A ticker is treated as a stable identity; it isn't (reuse, dual-class, foreign c
 finer grains as new layers land.
 - **Instances:** I1 (launch series identity discarded, re-derived by ticker) · B1 (prospectus at trust level,
   not series) · 9e-ENR (constituent `ENR` = Siemens Energy *and* NYSE Energizer → wrong returns, silently) ·
-  9e-membermap · smell-edgar-matches0.
+  9e-membermap · smell-edgar-matches0 · R1 (the `identifier` field trusted to mean "real security position";
+  a populated CUSIP on a cash/money-market line breaks that — the ticker-identity lesson one field over).
 - **Rule born:** the **identity layer** (series-ID `S######` is the key; a bare ticker is rejected at the write
   path) + series-scoped `resolve_series` + the **§9e PRIMARY-SOURCE GATE**. → `docs/decisions/2026-07-06-identity-integrity.md`,
   `2026-07-10-9e-constituent-symbol-resolution.md`.
@@ -91,7 +97,10 @@ finer grains as new layers land.
 The smoke-detector brief's §2.4 failure, imported into our alert layer: a fault that pages every tick trains the
 operator to ignore it.
 - **Instances:** C.1 (every-tick fault push) · E1 (volatile message defeats suppression → pages daily) · E2
-  (flapping fault) · the fault-taxonomy count-lie ("0 faults" beside nine that fired).
+  (flapping fault) · the fault-taxonomy count-lie ("0 faults" beside nine that fired) · SNAP-01 (snapshot
+  divergence counted 0 / never pages — the raw-`store.append` bypass re-opened on the snapshot layer) · R4
+  (E1's volatile-message alarm re-appearing on the rebalance prior-parse path — a new `_emit_fault` site
+  with no `key=`, proving the convention is not yet enforced in mechanism).
 - **Rule born:** the **§8a alarm-posture CONTRACT** — push once on a *new/changed* fault, then fall silent to
   the weekly heartbeat; the `_emit_fault(key=…)` **stable-key** convention (key ≠ display message); operational
   faults page, manual-review advisories are counted+surfaced but don't page (except on a live-lead fund). →
@@ -195,12 +204,23 @@ the linked `notes/` doc; the rule/decision each spawned is the lineage.*
 | **E2** | flapping fault (present→clears→returns) pages on every return | 💤 by design | 7 | `::test_flapping_fault_does_not_page_on_every_recurrence` **xfail** |
 | fault-taxonomy | heartbeat read "0 faults" beside nine that fired (advisories bypassed the alarm path) | ✅ | 8,9 | `test_runner_fault_taxonomy.py` · §8a CONTRACT |
 
+### M6 deep review — 2026-07-14 (`notes/m6_deep_review_findings_qa.md`, `notes/PROSPECTOR_M6_REVIEW_TESTS_README_QA.md`)
+| ID | Symptom (one line) | Status | Class | Guarding test |
+|----|--------------------|--------|-------|---------------|
+| **SNAP-01** | snapshot divergence (backdated event / non-det fold) counted 0 and never pages — `fault_sink=store.append` bypasses the `faults` accumulator | ✅ patch drafted | 3,4,7,8 | `test_snapshot_divergence_accumulator.py` · [record](2026-07-14-snapshot-divergence-accumulator-bypass.md) |
+| **R1** | real SSGA cash lines carry CUSIPs → a benign money-market sweep fires a spurious "restructuring" rebalance onto shadow leads | ✅ patch drafted | 1,5,8 | `test_runner_rebalance_cash_and_prior.py::test_pure_cash_sweep_does_not_accrete_a_rebalance` · [record](2026-07-14-rebalance-cash-line-cusip.md) |
+| **R4** | rebalance prior-parse fault has no `key=` → moving prior date pages daily (E1 recurrence on a sibling path) | ✅ patch drafted | 7 | `::test_unparseable_prior_fault_signature_is_stable_across_ticks` · [record](2026-07-14-rebalance-prior-parse-volatile-message.md) |
+| **M7-01** | missed-Sunday heartbeat (launchd sleep-coalesce runs without `--heartbeat`) never caught up → false dead-man | 💤 decision-dependent (xfail) | 7 | `test_runner_heartbeat_catchup.py` **xfail** |
+
 ---
 
 ## §3 · Open / deferred — the live tail (refer-back while fixing)
 
 - 💤 **N9** (SOI cadence gate → M7) and **E2** (flapping-fault window) — both pinned by `xfail(strict=True)`
   tests that flip to a loud XPASS the moment the fix lands. Zero cost today.
+- 💤 **M7-01** (missed-heartbeat catch-up) — decision-dependent: needs a design choice (where catch-up logic
+  lives — runner vs `run.sh`; what records "last heartbeat sent") before a fix. Pinned by
+  `test_runner_heartbeat_catchup.py` `xfail(strict=True)` — flips to XPASS when the mechanism lands.
 - 🟡 **B1 / B2** — ratified with an **honest residual**: `prospectus_accession` stays registrant-level
   (flagged in the docstring); following `filings.files[]` pagination is the named deferral.
 - ⭕ **Doc debt** — DRIFT-1, DRIFT-2, C.2 (regenerate "what's built" from the wired set; §5 as single source).
