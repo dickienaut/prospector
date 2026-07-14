@@ -46,7 +46,7 @@ path places, sizes, or recommends a trade.
 | `store/layout.py` | The §7 path tree; structural backtest/live separation | `StoreLayout`, `backtest_run_root()` |
 | `store/snapshots.py`→`fold/snapshots.py` | Reactive snapshot policy + writer (fail-loud on divergence) | `should_snapshot()`, `write_snapshot()` |
 | `store/s3_sync.py` | Fire-and-forget S3 mirror; `.backup`-only registry upload | `S3Sync.sync()` |
-| `store/backup.py` | Local dual-HDD fossil backup (§7) — incremental tree mirror + WAL-safe registry `.backup`; fail-loud blessing marker; restore-verify | `backup_store()`, `verify_restore()` |
+| `store/backup.py` | Local dual-HDD fossil backup (§7) — incremental tree mirror + WAL-safe registry `.backup`; fail-loud blessing marker; restore-verify; **M7-02 last-success marker** the runner reads to fold `backup.stale` into the §8a heartbeat's health | `backup_store()`, `last_backup_ts()`, `verify_restore()` |
 | `store/reindex.py` | Rebuild the registry from the `events/`+`snapshots/` trees | `rebuild_registry()` |
 | `store/fund_registry.py` | Series-ID-keyed fund entries; the HECO rule enforced at the write path | `FundRegistry.upsert()` |
 | `primitives/atomic.py` | tmp→fsync→rename atomic write + SHA-256 (vendored, hardened) | `write_atomic()`, `write_json_atomic()` |
@@ -435,12 +435,16 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   deploy (where `pros run` stops being a manual invocation); M7 also owns the SOI-corroboration **cadence
   gate** (0 cost today — the dormant pile is empty) and the read-only-media **WAL-checkpoint**.
 - **Store durability (`pros backup`) — CODE BUILT, physical activation pending** (`store/backup.py`,
-  `pros backup` + `pros store verify-restore`, 10 offline tests). Mirrors the append-only fossils (incl.
+  `pros backup` + `pros store verify-restore`, 16 offline tests). Mirrors the append-only fossils (incl.
   `registry/` and `captures/` — the un-backfillable M6 discourse tree) + a WAL-safe registry `.backup` to
   the configured HDD targets, fail-loud on an unmounted/unblessed drive. The one-time dual-HDD activation + restore test is a Mac session
   (`docs/notes/2026-07-12-mac-backup-activation-checklist.md`); the post-`pros run` cadence pairs with the
-  M7 scheduler. Named follow-ups: reindex-rebuilds-funds, offsite (S3/Backblaze), bit-rot checksums. See
-  `docs/decisions/2026-07-12-store-durability-backup.md`.
+  M7 scheduler. **Backup health is now legible (M7-02, #60):** each verified backup stamps a last-success
+  marker on the target and the runner folds `backup.stale` (missing / older than `backup.max_age_days`) into
+  the §8a heartbeat's ONE health channel — so a failing backup reaches the weekly email, not just the launchd
+  log (decision `docs/decisions/2026-07-14-backup-health-one-fault-channel.md`). Named follow-ups:
+  reindex-rebuilds-funds, offsite (S3/Backblaze); bit-rot **checksums are decision-deferred** (BK-3, lean:
+  scheduled `verify-restore`). See `docs/decisions/2026-07-12-store-durability-backup.md`.
 - **v2 (banked, not built)** — the **proto-cluster / pseudo-ETF** layer (spec Appendix B): price-only,
   observation-only new-category detection below the corpus (the canary is a *cluster*, never a single
   name, and never the trade — its substrate already accrues via the generous dispersion payload, so v1's
