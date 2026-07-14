@@ -13,7 +13,9 @@ def _ctx() -> dict:
     `email_render._body` reads."""
     return {"now": "2026-07-10T00:00:00Z", "trigger": "run", "active": [], "shadow": [],
             "ceiling": {"count": 1, "ceiling": 8, "over": False, "banner": None},
-            "heartbeat": {"ok": True, "reason": None, "last_run_date": "2026-07-10"}, "queue": [],
+            "heartbeat": {"ok": True, "ever_sent": True, "last_sent_ts": "2026-07-03T00:00:00Z",
+                          "silence_days": 7, "floor_days": 7, "catch_up": False, "reason": None,
+                          "last_run_ts": "2026-07-10T00:00:00Z", "last_run_date": "2026-07-10"}, "queue": [],
             "faults": [{"subsystem": "ingest.prices", "message": "XLK empty"}], "recent_faults": [],
             "changed_leads": {}, "health": {"total": 1, "active_live": 1, "active_shadow": 0,
                                             "reverted": 0, "verdicts": {}}}

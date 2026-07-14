@@ -69,15 +69,30 @@ def _round(w, nd: int = 8):
     return round(wf, nd)
 
 
+def _is_cash_or_derivative(row) -> bool:
+    """A cash / money-market / derivative / currency line, NOT a real security position. SSGA stamps
+    these with the `-` TICKER sentinel: a real file's money-market and currency lines DO carry a
+    populated CUSIP-like `identifier` (924QSGII3, 999EURZ94), so keying the exclusion on an EMPTY
+    identifier excludes nothing on live data — the ticker sentinel is the primary-source signal.
+    `MONEY MARKET` in the name is defense-in-depth. This is the CASH/DERIVATIVE test ONLY — NOT the
+    price-universe gate `holdings.priceable_members`, which ALSO drops FOREIGN equities whose genuine
+    add/drop/reweight IS a rebalance signal; the diff keeps foreign constituents, drops only non-security
+    lines."""
+    ticker = str(row.get("ticker", "")).strip()
+    if ticker == "-":                       # the SSGA cash/derivative sentinel (explicit dash only —
+        return True                          # a MISSING/blank ticker column is "unknown", NOT cash:
+    return "MONEY MARKET" in str(row.get("name", "")).upper()   # synthetic frames omit ticker entirely
+
+
 def _identified(frame: pd.DataFrame) -> dict[str, dict]:
-    """Map identifier -> {name, weight} over the frame's IDENTIFIED securities (a non-empty
-    CUSIP/ISIN). Cash/derivative rows carry an empty identifier (parse_spdr_holdings keeps them,
-    §3) and are excluded here so their daily wiggle never reads as a rebalance. On a duplicate
-    identifier the heavier row wins (defensive; SPDR files are one row per lot)."""
+    """Map identifier -> {name, weight} over the frame's REAL SECURITY positions (a non-empty
+    CUSIP/ISIN, excluding cash/derivative/currency lines — `_is_cash_or_derivative`). Their daily wiggle
+    must never read as a rebalance. On a duplicate identifier the heavier row wins (defensive; SPDR files
+    are one row per lot)."""
     out: dict[str, dict] = {}
     for _, row in frame.iterrows():
         ident = str(row.get("identifier", "")).strip()
-        if not ident:
+        if not ident or _is_cash_or_derivative(row):
             continue
         w = row.get("weight")
         prev = out.get(ident)

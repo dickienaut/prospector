@@ -54,7 +54,9 @@ def build_context(registry, states: Iterable[dict], runs, machine, cfg: dict, no
                "age_days": views._days_between(s.get("spawned_at"), now)} for s in ranked]
     shadow = views.shadow_panel(states, now, shadow_days)
     cs = views.ceiling_status(states, ceiling)
-    hb = views.heartbeat(runs, now)
+    last_sent = views.last_heartbeat_sent(registry)      # M7-01: the last HEARTBEAT sent (not the last run)
+    cadence = int((cfg.get("schedule") or {}).get("heartbeat_cadence_days", 7))
+    hb = views.heartbeat(runs, now, last_sent, floor_days=cadence)  # PRIOR send — the tick records after
     queue = views.manual_queue(machine) if machine is not None else []
     health = views.registry_health(states)
 
@@ -160,7 +162,18 @@ def _body(ctx: dict) -> str:
     # count-honesty rule applied to the summary line: the summary must match what fired). Liveness
     # (hb["ok"] — the silence dead-man) is the separate axis and rides alongside it.
     health = "OK" if not op else f"DEGRADED — {len(op)} fault(s) this run"
-    hb_state = "OK" if hb["ok"] else f"BROKEN — {hb['reason']}"
+    # M7-03: this line rides a SENT heartbeat email — a heartbeat is being sent right now, so a bare
+    # "OK/BROKEN" liveness read is a tautology (the old code keyed it on the last RUN, so its BROKEN
+    # branch was dead code in any sent email). Say the informative thing instead: is this send the first
+    # ever, on cadence, or a CATCH-UP bridging an outage the record shows. (OK/BROKEN liveness still drives
+    # the DASHBOARD — where the email isn't being sent — via hb["ok"], now keyed on the last heartbeat.)
+    if not hb["ever_sent"]:
+        hb_state = "first heartbeat"
+    elif hb["catch_up"]:
+        hb_state = (f"CATCH-UP — prior heartbeat {hb['silence_days']}d ago "
+                    f"(> {hb['floor_days']}d cadence; an outage was bridged)")
+    else:
+        hb_state = f"on cadence — prior heartbeat {hb['silence_days']}d ago"
     lines.append(
         f"Health: {health} · Heartbeat: {hb_state} · last run {hb.get('last_run_date') or '—'}.")
 
@@ -233,9 +246,11 @@ def render_push(ctx: dict, prefix: str) -> tuple[str, str]:
 
 def render_heartbeat(ctx: dict, prefix: str) -> tuple[str, str]:
     """The weekly heartbeat / dead-man (§8a) as (subject, body). Fires regardless of activity — the arriving
-    email IS the liveness proof; its subject encodes state so silence past the floor means broken. (The
-    *cadence* that makes silence meaningful arms at M7, when the runner is scheduled — build note fork 2.)"""
+    email IS the liveness proof; its subject encodes state so silence past the floor means broken. The
+    runner owns the cadence (M7-01): it sends on schedule and catches up a cycle it slept through, so a
+    MISSING heartbeat is now an unambiguous dead-man — never a benign sleep-across-Sunday false alarm."""
     body = _body(ctx)
     note = ("\n\nWeekly heartbeat — silence beyond the 7-day floor means broken (§8a dead-man). "
-            "Cadence arms once the runner is scheduled (M7).")
+            "The runner owns the cadence: it sends on schedule and catches up a cycle it slept "
+            "through (M7-01).")
     return heartbeat_subject(ctx, prefix), body + note

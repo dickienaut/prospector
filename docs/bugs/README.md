@@ -1,33 +1,56 @@
-# Bug & fix archive — the bugs, and the rules born from them
+# Bug archive — doctrine: the classes, the boundary, the record format
 
-*Living index (stable-named, amended in place). **Rules are born from bugs.** A defect surfaces → we
-root-cause it → fix it → guard it with a regression test → and when it reveals a *pattern*, a rule or CONTRACT
-is born to stop the whole class recurring. This archive tracks both: the individual defects **and** the
-meta-bugs that keep biting, with the lineage from each to the rule it spawned. **Refer back here before
-shipping a slice** — the classes below are where this project's bugs actually come from.*
+*Stable-named, amended in place. **This file is the doctrine half of the archive; the searchable register is
+[`INDEX.md`](INDEX.md).*** Two files, two lifetimes: this one holds the meta-bug **classes** (§1), the
+**boundary** rules, the record **template** (§4), the tag **vocabulary** (§5), and the **how-to** (§6) — the
+parts that change only when the *system* changes. [`INDEX.md`](INDEX.md) holds the row-per-bug register you
+grep, and churns every slice.*
+
+***Rules are born from bugs.** A defect surfaces → we root-cause it → fix it → guard it with a regression test
+→ and when it reveals a *pattern*, a rule or CONTRACT is born to stop the whole class recurring. **Refer to
+[`INDEX.md`](INDEX.md) before shipping a slice** — grep the subsystem you're about to touch; a miss there means
+new territory. The §1 classes below are where this project's bugs actually come from.*
 
 ---
 
 ## How this works
 
 - **Meta-bug classes** (§1) — the recurring patterns, each with its instances and the **rule/discipline it
-  birthed.** This is the load-bearing register: repeat offenders are where rules come from, so a new bug's
+  birthed.** This is the load-bearing doctrine: repeat offenders are where rules come from, so a new bug's
   first question is *"which class is this?"* — which resolves to one of the **§1a taggable failure-classes**
   (1, 3, 4, 5, 7, 9) or `one-off`. The **§1b frame** (2, 6, 8) is never a tag: it is the lens you *read* to
   understand a bug — its root (2), the countermeasure (6), the severity axis (8).
-- **The bug index** (§2) — every logged defect, compact: symptom · status · class · guarding test · the rule
-  or decision it spawned · where the full detail lives.
-- **Per-bug records** (`YYYY-MM-DD-<slug>.md`) — born dated (per the naming rule), for bugs found **going
-  forward**; template in §4. Historical bugs keep their detail in their original QA docs under `notes/`
-  (**never moved** — indexed here, not duplicated).
+- **The register** ([`INDEX.md`](INDEX.md), what was §2–§3) — every **distilled** defect, one row: symptom ·
+  the two search axes (subsystem · shape) · status · class · guarding test · where the full detail lives. The
+  file you grep; a miss = novelty. Kept out of *this* file on purpose — logging a bug must not edit the
+  doctrine (that would be class-9 drift aimed at the archive's own governance).
+- **Per-bug records** (`qa/YYYY-MM-DD-<slug>.md`) — born dated (per the naming rule), authored in `bugs/qa/`
+  when a finding is **root-caused** (§6); template in §4. The **raw** review a record was distilled from stays
+  in `notes/` (**never moved**), and the record links back to it.
 
 ## Boundary (so this doesn't fragment)
 
-- **`bugs/` = the defect lifecycle** — broke → root cause → fix → regression test → **rule born.**
+*Where does a finding live? — the question that keeps the archive from sprawling. The rule is a one-way
+pipeline: `notes/` (staging) → distill → `bugs/INDEX.md` (register) [→ `bugs/qa/` record if it earns one].*
+
+- **`notes/` = staging — the raw QA findings & reviews** (the H/S/B/I/P review, the N-series follow-up, the
+  §9e / §10 / M6 findings). A multi-finding review lives here **whole and is never moved** — its findings
+  close asynchronously, so relocating it would tear a live document. This is where a finding *starts*.
+- **`bugs/` = the distilled defect lifecycle** — broke → root cause → fix → regression test → **rule born.** A
+  finding **graduates** from a `notes/` review into `bugs/` by being **distilled** (root-caused, classed,
+  tagged) into an [`INDEX.md`](INDEX.md) row — and, if the fix mints or re-proves a rule, a `qa/` record —
+  **not by being relocated.** The record links back to the review; the review is never edited to point forward.
+- **Distilled, not resolved — status is a column, not a gate.** The register holds *every* distilled bug
+  whatever its status: `⭕ open`, `💤 deferred`, and `🟡 partial` rows **stay**, because a known-unfixed bug in
+  the subsystem you're touching is the highest-value hit there is. "In the register" means root-caused, not
+  fixed. (This is why a *miss* can be trusted to mean novelty — the register is not a fixed-bugs list.)
+- **A raw finding is not yet a register bug.** A `notes/` review may hold a "looks off, unverified"
+  observation; it becomes a register **row only once it's root-caused** — a named cause at `file:line`, a
+  class, a reproduction. Until then it stays in the review, not the register. That threshold is exactly what
+  makes a register miss meaningful. *(So: yes, QA findings dropped in `notes/` belong there — and their
+  root-caused defects belong, distilled, in the register. The review stays; the bug graduates.)*
 - **`decisions/` = design / contract choices.** A bug that forces a CONTRACT change gets its own decision
   record; the bug entry **links** to it (the lineage), it doesn't restate it.
-- **`notes/` = the raw QA findings & reviews** (the primary detail: the H/S/B/I/P review, the N-series
-  follow-up, the §9e and §10 findings). This archive **indexes** them; it never moves or rewrites them.
 
 ---
 
@@ -149,101 +172,94 @@ are the few that fail *silently* — this is the axis that ranks every class abo
 
 ---
 
-## §2 · The bug index
+## §2–§3 · The register — moved to [`INDEX.md`](INDEX.md)
 
-*Status: ✅ fixed · 🟡 partial/ratified-residual · ⭕ open · 💤 deferred (xfail). "Class" → §1. Detail lives in
-the linked `notes/` doc; the rule/decision each spawned is the lineage.*
+*The bug index (was §2) and the open/deferred live tail (was §3) now live in **[`INDEX.md`](INDEX.md)** — the
+searchable register, one row per **distilled** bug, with the two grep axes (subsystem · shape), a status
+column, and a class reference. **The §-numbers are stable IDs** (like the class numbers): they were relocated
+byte-preserved, not renumbered, so any "§2"/"§3" reference in a fossil still resolves — to `INDEX.md` now. New
+bugs are appended there, never here; this file stays doctrine, and its §-count is deliberately gappy so the
+old numbers keep pointing at the same content.*
 
-### Full-review pass — 2026-07-05 (`notes/prospector_full_review_claude_science.md`)
-| ID | Symptom (one line) | Status | Class | Guarding test / fix site |
-|----|--------------------|--------|-------|--------------------------|
-| **H1** | holdings weights already-fractional → silently ÷100 too small → every fund `dormant` | ✅ | 1,2,8 | per-file weight-sum sanity guard, `holdings.py:171` |
-| **H2** | real xlsx frozen to disk mislabeled `.csv` | ⭕ | 2 | `ext="xlsx"` (Tier-4) |
-| **H3** | `"Weight (%)"` header variant → `no holdings header` | ⭕ | 2 | prefix/contains match (Tier-4) |
-| **H4** | plain `REAL ESTATE INVESTMENT TRUSTS` header → `fault` not Real-Estate rollup | ⭕ (re-scoped synthetic-only) | 1 | plain-REIT alias in `gics_industry_alias` |
-| **S1** | same-`ts` no-`event_id` fold not order-invariant | ✅ | 1 | fold requires/handles `event_id` |
-| **S2** | two sub-second snapshots collide → `SnapshotDivergenceError` | ✅ | — | sub-second `ts_compact` |
-| **S3** | `^…$` regex admits trailing `\n` | ⭕ | — | `\Z`/`fullmatch` (Tier-4) |
-| **S5** | pandas NaN sector → `"nan"` passes guards → phantom sector weight | ⭕ | 1,2 | `pd.isna` guard |
-| **I1** | ticker-reuse: detected series dropped, `matches[0]` may mis-pick | ✅ | 5 | `2026-07-06-identity-integrity.md` |
-| **B1** | prospectus attached at trust level, not series | 🟡 | 5,6 | series-scoped `resolve_series`; accession residual flagged |
-| **B2** | old-filing registrant → wrong `no_prospectus` → manual queue | 🟡 | — | `older_filings_unread` reason; pagination deferred |
-| **B3** | `SPY` in seed → market corrupts the 55-pair grid | ✅ | 3 | explicit `!= market` guard |
-| **P1** | unadjusted Stooq Close → every cross-action return wrong | ✅ | 1,6 | `guard_live_source` + Tiingo adjClose vs NVDA-split |
-| report.py | `acute_crises: []` empty list → `IndexError` | ⭕ | — | `... or [{}]` (Tier-4) |
-| smells ×6 | lag-lexical-sort, eigengap, token-substring, sql-assert, edgar-`matches[0]`, ledger-datesort | ⭕ | mixed | low-severity sweep |
-| **DRIFT-1/2** | state-doc self-contradiction; aging-monitor "pinned" 8 revs | ⭕ | 9 | doc pass owed |
-
-### Going-live pass — 2026-07-07 (`notes/prospector_followup_review_2026-07-07.md`, `2026-07-07-live-cadence-qa-fixes.md`, `PROSPECTOR_REGRESSION_TESTS*_README.md`)
-| ID | Symptom (one line) | Status | Class | Guarding test |
-|----|--------------------|--------|-------|---------------|
-| **N1** | rendering the "read-only" dashboard flips store to WAL + DDL + write-lock (breaks §11) | ✅ | 3,4 | `test_dashboard_readonly.py` · `2026-07-07-dashboard-11.md` |
-| **N2** | second same-day `pros run` double-writes launch/resolution fossils | ✅ | 3,4 | `test_runner_idempotency.py` |
-| **N3** | dup-date rows → outer join fabricates a cross-observation (breaks §3) | ✅ | 3 | `test_prices_panel_dedup.py` |
-| **N4** | Tiingo 429 backoff sized per-second can't reopen an hourly cap; 403 retried | ✅ | — | `test_prices_retry_tiingo_cap.py` · `2026-07-07-prices-throttle-backoff.md` |
-| **N5** | missing/relocated config → raw `FileNotFoundError` off repo-root | ✅ | 4 | `test_dashboard_config_path.py` |
-| **N6** | bad `retry_days` in prologue blinds the *entire* sensor phase | ✅ | fault-isolation | `test_runner_prologue_faults.py` |
-| **N7** | transient 5xx/timeout hits final `raise` on attempt 1, drops the column | ✅ | — | `test_prices_retry_transient.py` |
-| **N8** | bare `except→None` collapses ambiguous-SOI fault into silent not-yet | ✅ | 3,8 | `test_soi_ambiguous_fault.py` · `2026-07-06-soi-*.md` |
-| **N9** | SOI corroboration re-fetches every tick for 180d — no cadence gate | 💤 M7 | — | `test_soi_corroboration_cadence.py` **xfail** |
-| **N10** | inert `off-thesis-real` lead still shows in "Active leads" panel as a signal | ✅ | state-as-signal | `test_dashboard_offthesis_rank.py` |
-| **C.1** | `_compute_push` pages every tick on a persistent fault (no dedup) | ✅→E1/E2 | 7 | folded into §10 sender |
-| **C.2** | runner docstrings + ARCHITECTURE "what's built" stale by a milestone | ⭕ | 9 | doc pass owed |
-
-### §9e dispersion — 2026-07-09 (`notes/dispersion_foreign_ticker_findings.md`)
-| ID | Symptom (one line) | Status | Class | Guarding test |
-|----|--------------------|--------|-------|---------------|
-| **9e-ENR** | constituent `ENR` pulled by bare ticker → NYSE Energizer's returns relabeled as Siemens Energy's CUSIP (silent wrong substrate) | ✅ | 1,5,6,8 | `test_dispersion_foreign_and_cash_tickers.py::test_foreign_listing_is_not_pulled_by_a_colliding_us_ticker` · `2026-07-10-9e-constituent-symbol-resolution.md` |
-| **9e-coverage** | cash/placeholder lines 404 silently; `coverage_actual` computed pre-drop → overstated | ✅ | 6 | `::test_coverage_actual_reflects_the_priced_set` |
-| **9e-membermap** | two `-`-ticker lines collapse to one dict key, dropping a CUSIP (latent) | ✅ | 5 | `::test_member_map_does_not_collapse_duplicate_tickers` |
-
-### §10 email sender — 2026-07-10 (`notes/email_nuisance_suppression_findings.md`, `notes/PROSPECTOR_FAULT_SUPPRESSION_README.md`)
-| ID | Symptom (one line) | Status | Class | Guarding test |
-|----|--------------------|--------|-------|---------------|
-| **E1** | volatile fault message (moving URL dates) defeats suppression → **pages every day** on the live price path | ✅ | 1,4,7,8 | `test_runner_fault_suppression_volatile_message.py` (4 tests) · [worked record](2026-07-10-email-volatile-fault-suppression.md) |
-| **E2** | flapping fault (present→clears→returns) pages on every return | 💤 by design | 7 | `::test_flapping_fault_does_not_page_on_every_recurrence` **xfail** |
-| fault-taxonomy | heartbeat read "0 faults" beside nine that fired (advisories bypassed the alarm path) | ✅ | 8,9 | `test_runner_fault_taxonomy.py` · §8a CONTRACT |
-
-### M6 deep review — 2026-07-14 (`notes/m6_deep_review_findings_qa.md`, `notes/PROSPECTOR_M6_REVIEW_TESTS_README_QA.md`)
-| ID | Symptom (one line) | Status | Class | Guarding test |
-|----|--------------------|--------|-------|---------------|
-| **SNAP-01** | snapshot divergence (backdated event / non-det fold) counted 0 and never pages — `fault_sink=store.append` bypasses the `faults` accumulator | ✅ patch drafted | 3,4,7,8 | `test_snapshot_divergence_accumulator.py` · [record](2026-07-14-snapshot-divergence-accumulator-bypass.md) |
-| **R1** | real SSGA cash lines carry CUSIPs → a benign money-market sweep fires a spurious "restructuring" rebalance onto shadow leads | ✅ patch drafted | 1,5,8 | `test_runner_rebalance_cash_and_prior.py::test_pure_cash_sweep_does_not_accrete_a_rebalance` · [record](2026-07-14-rebalance-cash-line-cusip.md) |
-| **R4** | rebalance prior-parse fault has no `key=` → moving prior date pages daily (E1 recurrence on a sibling path) | ✅ patch drafted | 7 | `::test_unparseable_prior_fault_signature_is_stable_across_ticks` · [record](2026-07-14-rebalance-prior-parse-volatile-message.md) |
-| **M7-01** | missed-Sunday heartbeat (launchd sleep-coalesce runs without `--heartbeat`) never caught up → false dead-man | 💤 decision-dependent (xfail) | 7 | `test_runner_heartbeat_catchup.py` **xfail** |
-
----
-
-## §3 · Open / deferred — the live tail (refer-back while fixing)
-
-- 💤 **N9** (SOI cadence gate → M7) and **E2** (flapping-fault window) — both pinned by `xfail(strict=True)`
-  tests that flip to a loud XPASS the moment the fix lands. Zero cost today.
-- 💤 **M7-01** (missed-heartbeat catch-up) — decision-dependent: needs a design choice (where catch-up logic
-  lives — runner vs `run.sh`; what records "last heartbeat sent") before a fix. Pinned by
-  `test_runner_heartbeat_catchup.py` `xfail(strict=True)` — flips to XPASS when the mechanism lands.
-- 🟡 **B1 / B2** — ratified with an **honest residual**: `prospectus_accession` stays registrant-level
-  (flagged in the docstring); following `filings.files[]` pagination is the named deferral.
-- ⭕ **Doc debt** — DRIFT-1, DRIFT-2, C.2 (regenerate "what's built" from the wired set; §5 as single source).
-- ⭕ **Tier-4 low-severity sweep** — H2, H3, H4-alias, S3, S5, `report.py` empty-list, and the six smells.
+- **Grep the register**, don't read it top-to-bottom: `grep -i "<subsystem>" INDEX.md` (e.g. `backup`,
+  `rebalance`, `heartbeat`) or `grep -i "<shape>" INDEX.md` (e.g. `spurious-fire`, `fail-silent`). A miss =
+  new territory (see the boundary rules above and §5's controlled vocabulary).
 
 ---
 
 ## §4 · Per-bug record template (new bugs, going forward)
 
-Copy this block into `docs/bugs/YYYY-MM-DD-<slug>.md` (born dated, per the naming rule):
+Copy this block into `docs/bugs/qa/YYYY-MM-DD-<slug>.md` (born dated, per the naming rule; authored in
+`bugs/qa/`). A record is the *distilled* long form of a bug — write one when the fix mints or re-proves a rule,
+or the bug is load-bearing enough to want its own page. Every distilled bug also gets an [`INDEX.md`](INDEX.md)
+row (§6); the record is what that row links to.
 
 ```
 # <slug> — <one-line symptom>
-*Bug record, YYYY-MM-DD. Status: fixed | partial | open | deferred(xfail). Class: <§1 class, or one-off>.*
+*Bug record, YYYY-MM-DD. Status: fixed | partial | open | deferred(xfail). Class: <§1 class, or one-off>.
+Tags: <subsystem> · <shape> — the §5 controlled vocabulary, the same terms as the INDEX row.*
 
 - **Symptom** — what was observed (the failing behaviour; who/what saw it).
-- **Root cause** — the real why, not the surface. (Name the file:line.)
+- **Root cause** — the real why, not the surface. (Name the `file:line`.)
 - **Fix** — what changed + the commit/PR.
 - **Regression test** — `tests/<file>::<test>` — and how it goes RED without the fix (attempt the violation).
 - **Rule born** — the rule/CONTRACT/decision this bug spawned, if any (link the `decisions/` record or the
   `CLAUDE.md` clause). ← the lineage this archive exists to keep.
-- **References** — the QA finding it came from, the spec §, related bugs by ID.
+- **References** — the `notes/` review it was **distilled from** (link it; the record points back, the review
+  is never moved), the spec §, related bugs by ID.
 ```
 
-*Rule of use: log a bug here the moment it's root-caused, not after it's fixed — the point is the trail, and a
-bug whose fix births a rule is the most valuable entry in the repo.*
+*Rule of use: log a bug — the INDEX row, plus a record if it earns one — the moment it's root-caused, not after
+it's fixed. The point is the trail, and a bug whose fix births a rule is the most valuable entry in the repo.*
+
+---
+
+## §5 · Tag vocabulary (controlled)
+
+*Two axes, a fixed word-list each, so the [`INDEX.md`](INDEX.md) grep is reliable — a new row **reuses** these
+terms, it never coins a synonym (a synonym is a silent miss). Extend the list deliberately, here, when a
+genuinely new subsystem or shape appears — the same discipline as the class numbers.*
+
+**Subsystem — *where it bit*** (one or more, `·`-joined):
+`backup` · `rebalance` · `heartbeat` · `snapshot` · `dispersion` · `xcorr` · `identity` · `config` ·
+`dashboard` · `email` · `runner` · `store` · `fold` · `capture` · `backtest` · `deploy` · `ops` · `docs` ·
+`ingest` (qualify the source: `ingest·holdings` / `·prices` / `·edgar` / `·soi` / `·prospectus`).
+
+**Shape — *how it failed*** (one or more; the recurring cross-cutting patterns — a genuinely singular shape
+gets `—`):
+`fail-silent` · `spurious-fire` · `identity-anchor` · `green-on-synthetic` · `invariant-in-prose` ·
+`test-passes-wrong-reason` · `convergent-prior` · `doc-drift` · `split-path` · `count-lie`.
+*Also on older rows (finer-grained, doubling as their class): `fault-isolation` (N6, BK-1), `state-as-signal`
+(N10).*
+
+The **Shape axis is the §1a taggable classes made searchable** — `green-on-synthetic` is class 1,
+`invariant-in-prose` is class 3, `test-passes-wrong-reason` is class 4, `identity-anchor` is class 5,
+`spurious-fire` is the class-7 nuisance-alarm surface, `doc-drift` is class 9. Grep a shape to find every
+instance of a class across every subsystem; that cross-cut is the point.
+
+---
+
+## §6 · How to log a bug — the two-author handoff (bake this in)
+
+*The archive is written by two seats. **QA authors the Problem; build authors the Fix.** No step is optional,
+and none needs a judgment call about *whether* — only *which class / which tags*. Follow it verbatim.*
+
+**QA — when a finding is root-caused (a named cause at `file:line`, a class, a reproduction):**
+1. **Append an [`INDEX.md`](INDEX.md) row** under the right pass-heading: ID · one-line symptom · **Subsystem**
+   and **Shape** from §5 · **Status `⭕ open`** (it isn't fixed yet) · **Class** (§1) · the fix-site or the
+   `notes/` review it came from. *(A "looks off, unverified" observation is **not** a row yet — it stays in the
+   `notes/` review until it's root-caused. That threshold is what keeps a register miss meaningful.)*
+2. **If it's load-bearing, or its fix will mint / re-prove a rule, also write a `qa/` record** (§4 template).
+   Otherwise the row is enough.
+3. **Leave the `notes/` review in place** — link to it from the row/record; never move or rewrite it.
+4. **Open the PR** (the row + any record + the RED-first regression test). QA does not merge.
+
+**Build — when implementing the fix:**
+5. **Land the fix + its guarding test, then flip the row's Status to `✅ #<PR>`** (and the record's status line)
+   **in the same change.** Add the **Rule born** link if the fix spawned a decision / CONTRACT.
+6. **A fix is not done until its `INDEX.md` row is current** — the same gate as "a fix needs a guarding test."
+   A merged fix with a stale row is the class-9 drift this archive exists to stop (the drift #55's
+   "patch drafted" statuses actually showed — the reason this discipline is written down).
+
+**The invariant:** every distilled bug is a row; every row's status matches reality; the raw review it came
+from never moves. Keep those three true and a register *miss* means exactly one thing — **novelty.**

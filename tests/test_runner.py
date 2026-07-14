@@ -344,3 +344,56 @@ def test_runner_firewall_never_reads_portfolio():
 
 def test_runs_path_shape(layout):
     assert layout.runs_path("2026-07-02", "abc123") == layout.root / "runs" / "2026-07-02_abc123.json"
+
+
+# -- M7-01: the runner owns the heartbeat cadence (catch-up on a slept-through cycle) ---------
+
+class _RaisingHeartbeatNotifier(NullNotifier):
+    """A notifier whose heartbeat send RAISES — proves a failed send does NOT advance the clock."""
+
+    def heartbeat(self, payload):
+        raise RuntimeError("smtp down")
+
+
+def _seed_heartbeat(layout, registry, ts):
+    from prospector.runner.runner import record_heartbeat_sent
+    record_heartbeat_sent(EventStore(layout, registry), ts)
+
+
+def test_heartbeat_catch_up_sends_one_and_records_the_fact(layout, registry):
+    # A heartbeat 8 days before NOW -> a quiet daily tick (no --heartbeat) still sends ONE catch-up and
+    # fossilizes exactly one new heartbeat.sent at now: the cycle the Mac slept through is made up, once.
+    _seed_prior_mf(layout, [XLK_ROW])
+    _seed_heartbeat(layout, registry, "2026-06-24T22:30:00Z")     # 8 days before NOW (2026-07-02)
+    notifier = NullNotifier()
+    runlog = run_tick(_deps(layout, registry, _fetch_mf_only([XLK_ROW]), notifier=notifier))
+
+    assert len(notifier.heartbeats) == 1                          # exactly one catch-up heartbeat sent
+    sent = registry.events_for_lead(SYSTEM_LEAD, "heartbeat.sent")
+    assert len(sent) == 2 and sent[-1]["ts"] == NOW               # seed + one new, dated `now`
+    assert json.loads(sent[-1]["payload"])["trigger"] == "cadence"
+    assert runlog.event_counts.get("heartbeat.sent") == 1        # counted this tick (only the new one)
+
+
+def test_within_cadence_tick_does_not_resend_the_heartbeat(layout, registry):
+    _seed_prior_mf(layout, [XLK_ROW])
+    _seed_heartbeat(layout, registry, "2026-07-01T22:30:00Z")     # 1 day before NOW -> within cadence
+    notifier = NullNotifier()
+    run_tick(_deps(layout, registry, _fetch_mf_only([XLK_ROW]), notifier=notifier))
+
+    assert notifier.heartbeats == []                              # no catch-up (no double-paging)
+    assert len(registry.events_for_lead(SYSTEM_LEAD, "heartbeat.sent")) == 1   # still just the seed
+
+
+def test_failed_heartbeat_send_does_not_advance_the_clock(layout, registry):
+    # THE CRITICAL edge (M7-01): a raising send must NOT record heartbeat.sent — else the dead-man goes
+    # quiet believing it spoke. The failure surfaces as a notify.heartbeat fault, and the tick stays due.
+    from prospector.runner.runner import heartbeat_is_due
+    _seed_prior_mf(layout, [XLK_ROW])
+    _seed_heartbeat(layout, registry, "2026-06-24T22:30:00Z")     # 8 days before NOW -> due
+    runlog = run_tick(_deps(layout, registry, _fetch_mf_only([XLK_ROW]),
+                            notifier=_RaisingHeartbeatNotifier()))
+
+    assert len(registry.events_for_lead(SYSTEM_LEAD, "heartbeat.sent")) == 1   # NO new record — clock held
+    assert any(f["subsystem"] == "notify.heartbeat" for f in runlog.faults)    # the failure is loud
+    assert heartbeat_is_due(registry, NOW, {"schedule": {"heartbeat_cadence_days": 7}}) is True  # still due

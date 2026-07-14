@@ -39,7 +39,7 @@ docs/
   prospector-v1-spec-rev14-2026-07-08.md         ← CURRENT build spec
   project-prospector-state-of-project-rev7-2026-07-11.md   ← CURRENT status rollup
   decisions/   dated fossils — every load-bearing decision, chronological, never rewritten
-  bugs/        defects + their regression tests + the rules born from them (meta-bug classes)
+  bugs/        the bug archive — README.md (doctrine: classes + how-to), INDEX.md (searchable register), qa/ (records)
   history/     superseded revs of the build spec + the state-of-project doc
   notes/       QA findings, reviews, build-notes, slice-specs, guidance, handoffs (freely authored)
   origins/     founding-era + sibling-project archive (provenance), incl. the PDFs
@@ -99,6 +99,13 @@ whole series is the change-history.*
 
 ### The decision trail — `decisions/`
 *Dated fossils, chronological, never rewritten. The full trail is the directory; the recent / load-bearing:*
+- `2026-07-14-bug-archive-retrieval-system.md` — the bug archive becomes a **searchable retrieval system**:
+  doctrine (`bugs/README.md`) split from the register (`bugs/INDEX.md`), two grep axes (subsystem · shape),
+  status-as-column (open/deferred rows stay), distill-not-relocate, records under `bugs/qa/`. Extends the
+  2026-07-11 archive decision.
+- `2026-07-14-backup-health-one-fault-channel.md` — backup health surfaces through **one** fault channel
+  (fold → heartbeat), two triggers (didn't-run / ran-but-bad); the checksum build is **deferred** with a lean
+  toward scheduled `verify-restore`. Settles the M7-02/BK-3 fork; builds nothing (M7 heartbeat cluster wires it).
 - `2026-07-11-docs-reorganization.md` — **this reorg**: the folder taxonomy + the certified content-preserving
   moves + the pointer amendments.
 - `2026-07-11-canonical-docs-amended-not-regenerated.md` — canonical docs are **amended, never regenerated**
@@ -114,12 +121,19 @@ whole series is the change-history.*
   concentration, identity-integrity, remote-doc-consolidation + reindex.)*
 
 ### Bug & fix archive — `bugs/`
-*The defect lifecycle, and the rules it births. `bugs/README.md` is the index: the **meta-bug classes** — the
-recurring patterns that keep biting (green-on-synthetic/broken-on-real, convergent-priors,
-invariant-in-prose-not-mechanism, never-anchor-on-a-ticker, go-to-the-source, nuisance-alarm, doc-drift), each
-**traced to the rule it spawned** — plus a complete bug index (H/S/B/I/P, N1–N10, §9e, E1/E2) linking each to
-its detail doc + regression test, and a per-bug record template. New bugs get a dated `YYYY-MM-DD-<slug>.md`
-record; historical detail stays in the `notes/` QA findings (indexed, never moved).*
+*The defect lifecycle, and the rules it births — a **searchable retrieval system** whose first job is to be the
+first stop for every bug hunt (a miss = new territory). Two files, two lifetimes
+(`2026-07-14-bug-archive-retrieval-system.md`):*
+- **`bugs/README.md` = doctrine** (stable): the **meta-bug classes** — the recurring patterns that keep biting
+  (green-on-synthetic/broken-on-real, convergent-priors, invariant-in-prose-not-mechanism,
+  never-anchor-on-a-ticker, go-to-the-source, nuisance-alarm, doc-drift), each **traced to the rule it
+  spawned** — plus the record template, the controlled tag vocabulary, and the two-author how-to.
+- **`bugs/INDEX.md` = the register** (volatile — grep this): one row per **distilled** bug — symptom, two
+  search axes (**subsystem · shape**), status, class, guarding test — H/S/B/I/P, N1–N10, §9e, E1/E2, the M6
+  deep-review set (SNAP / R / BK / M7), CAP. A miss means novelty; open/deferred rows stay (status is a column,
+  not a gate).
+- **`bugs/qa/` = the per-bug records** (dated fossils, QA-authored). The raw review a bug was distilled from
+  stays in the `notes/` QA findings (indexed & linked, **never moved**).
 *A freely-authored kind (per the CLAUDE.md amend-rule scope — not bound, not fossilized). The load-bearing:*
 - **QA findings & reviews** — `prospector_full_review_claude_science.md` (fresh-eyes package review),
   `prospector_followup_review_2026-07-07.md` (live-cadence pass), `2026-07-07-live-cadence-qa-fixes.md`
