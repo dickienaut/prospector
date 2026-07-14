@@ -44,7 +44,6 @@ def _divergence_faults(faults):
     return [f for f in faults if f.get("subsystem") == "snapshot" and "diverged" in str(f.get("message", ""))]
 
 
-@pytest.mark.xfail(strict=True, reason="SNAP-01 RED-first: reproduces the divergence-fault accumulator bypass on the m6 branch. xfail(strict) for the QA->implementer handoff (option 2) — it keeps the findings PR GREEN in the gate, and flips to a loud XPASS the moment docs/notes/m6_review_fixes.diff is applied; the implementer removes THIS marker in the patch-application PR so the test becomes a real green guard.")
 def test_snapshot_divergence_reaches_the_faults_accumulator_and_pages(layout, registry):
     store = EventStore(layout, registry, clock=lambda: NOW)
     lead = "disp-abcdef0123"                       # a SHADOW dispersion lead (never page-worthy itself)

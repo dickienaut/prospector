@@ -129,7 +129,6 @@ def _all_rebalance_leads(registry):
 
 # ============================ R1 ============================
 
-@pytest.mark.xfail(strict=True, reason="R1 RED-first: reproduces the cash-line CUSIP spurious rebalance on the m6 branch. xfail(strict) handoff — GREEN in the gate now, flips to XPASS when m6_review_fixes.diff lands; implementer removes this marker then.")
 def test_pure_cash_sweep_does_not_accrete_a_rebalance(layout, registry):
     """R1 — RED on m6: the money-market line carries a CUSIP so `_identified` keeps it, and its +1%
     day-over-day sweep fires a material weight_delta -> a spurious `rebalance` accretes onto the live
@@ -158,7 +157,6 @@ def test_pure_cash_sweep_does_not_accrete_a_rebalance(layout, registry):
 
 # ============================ R4 ============================
 
-@pytest.mark.xfail(strict=True, reason="R4 RED-first: reproduces the prior-parse volatile-message daily re-page on the m6 branch. xfail(strict) handoff — GREEN in the gate now, flips to XPASS when m6_review_fixes.diff lands; implementer removes this marker then.")
 def test_unparseable_prior_fault_signature_is_stable_across_ticks(layout, registry):
     """R4 — RED on m6: the prior-parse fault (runner.py ~925) passes no key=, so its signature is the
     message, which embeds the moving `prior_dates[-1]`. Two ticks a day apart -> two signatures -> it
