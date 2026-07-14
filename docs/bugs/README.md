@@ -210,7 +210,8 @@ the linked `notes/` doc; the rule/decision each spawned is the lineage.*
 | **SNAP-01** | snapshot divergence (backdated event / non-det fold) counted 0 and never pages — `fault_sink=store.append` bypasses the `faults` accumulator | ✅ patch drafted | 3,4,7,8 | `test_snapshot_divergence_accumulator.py` · [record](2026-07-14-snapshot-divergence-accumulator-bypass.md) |
 | **R1** | real SSGA cash lines carry CUSIPs → a benign money-market sweep fires a spurious "restructuring" rebalance onto shadow leads | ✅ patch drafted | 1,5,8 | `test_runner_rebalance_cash_and_prior.py::test_pure_cash_sweep_does_not_accrete_a_rebalance` · [record](2026-07-14-rebalance-cash-line-cusip.md) |
 | **R4** | rebalance prior-parse fault has no `key=` → moving prior date pages daily (E1 recurrence on a sibling path) | ✅ patch drafted | 7 | `::test_unparseable_prior_fault_signature_is_stable_across_ticks` · [record](2026-07-14-rebalance-prior-parse-volatile-message.md) |
-| **M7-01** | missed-Sunday heartbeat (launchd sleep-coalesce runs without `--heartbeat`) never caught up → false dead-man | 💤 decision-dependent (xfail) | 7 | `test_runner_heartbeat_catchup.py` **xfail** |
+| **M7-01** | missed-Sunday heartbeat (launchd sleep-coalesce runs without `--heartbeat`) never caught up → false dead-man | ✅ | 7 | `test_runner_heartbeat_catchup.py` + run_tick catch-up/failed-send (`test_runner.py`) · [build note](../notes/2026-07-14-m7-heartbeat-cluster-build-note.md) |
+| **M7-03** | in-email "Heartbeat: OK/BROKEN" line structurally always OK — its BROKEN branch is dead code in any sent email (keyed on the last RUN, not the last heartbeat) | ✅ | 7 | `test_email_render.py::test_heartbeat_body_reports_cadence_state_not_a_tautological_ok` · `test_dashboard_views.py` |
 
 ---
 
@@ -218,9 +219,10 @@ the linked `notes/` doc; the rule/decision each spawned is the lineage.*
 
 - 💤 **N9** (SOI cadence gate → M7) and **E2** (flapping-fault window) — both pinned by `xfail(strict=True)`
   tests that flip to a loud XPASS the moment the fix lands. Zero cost today.
-- 💤 **M7-01** (missed-heartbeat catch-up) — decision-dependent: needs a design choice (where catch-up logic
-  lives — runner vs `run.sh`; what records "last heartbeat sent") before a fix. Pinned by
-  `test_runner_heartbeat_catchup.py` `xfail(strict=True)` — flips to XPASS when the mechanism lands.
+- 💤 **M7-02** (backup-health → the weekly email) — the immediate follow-up to the heartbeat cluster: a
+  `backup.stale` last-success marker the runner reads and folds into a fault (decision ratified in PR #57).
+  The heartbeat cluster (**M7-01** catch-up + **M7-03** in-email honesty) has LANDED — the runner owns the
+  cadence via a folded `heartbeat.sent`, catching up a slept-through cycle.
 - 🟡 **B1 / B2** — ratified with an **honest residual**: `prospectus_accession` stays registrant-level
   (flagged in the docstring); following `filings.files[]` pagination is the named deferral.
 - ⭕ **Doc debt** — DRIFT-1, DRIFT-2, C.2 (regenerate "what's built" from the wired set; §5 as single source).

@@ -19,7 +19,9 @@ def _ctx(**over) -> dict:
         "active": [],
         "shadow": [],
         "ceiling": {"count": 0, "ceiling": 8, "over": False, "banner": None},
-        "heartbeat": {"ok": True, "reason": None, "last_run_date": "2026-07-10"},
+        "heartbeat": {"ok": True, "ever_sent": True, "last_sent_ts": "2026-07-03T00:00:00Z",
+                      "silence_days": 7, "floor_days": 7, "catch_up": False, "reason": None,
+                      "last_run_ts": "2026-07-10T00:00:00Z", "last_run_date": "2026-07-10"},
         "queue": [],
         "faults": [],
         "recent_faults": [],
@@ -132,11 +134,11 @@ def test_render_is_deterministic_same_context_same_bytes():
     assert email_render.render_heartbeat(ctx, PREFIX) == email_render.render_heartbeat(ctx, PREFIX)
 
 
-def test_heartbeat_body_states_the_deadman_and_the_m7_caveat():
+def test_heartbeat_body_states_the_deadman_and_the_cadence():
     subj, body = email_render.render_heartbeat(_ctx(), PREFIX)
     assert subj.startswith("[PROS] heartbeat —")
     assert "silence beyond the 7-day floor means broken" in body
-    assert "arms once the runner is scheduled (M7)" in body     # do not claim a live dead-man pre-M7
+    assert "catches up a cycle it slept through (M7-01)" in body  # the runner now owns the cadence (M7-01)
 
 
 def test_heartbeat_health_ok_when_clean_and_degraded_on_operational_fault():
@@ -153,6 +155,23 @@ def test_heartbeat_health_ok_when_clean_and_degraded_on_operational_fault():
     _, punt = email_render.render_heartbeat(
         _ctx(faults=[_f("mandate", "extraction unreliable — manual review", "review-advisory")]), PREFIX)
     assert "Health: OK ·" in punt
+
+
+def test_heartbeat_body_reports_cadence_state_not_a_tautological_ok():
+    """M7-03: the in-email Heartbeat line reports the SEND's cadence state, not a bare OK/BROKEN liveness
+    read — a heartbeat is being sent right now, so the old OK/BROKEN (keyed on the last RUN) was a
+    tautology whose BROKEN branch was dead code. States: first heartbeat / on cadence / CATCH-UP."""
+    _, on = email_render.render_heartbeat(_ctx(), PREFIX)            # silence 7 == floor 7 -> on cadence
+    assert "Heartbeat: on cadence — prior heartbeat 7d ago" in on
+    assert "Heartbeat: OK" not in on and "Heartbeat: BROKEN" not in on  # the tautological line is gone
+
+    catch_up = dict(_ctx()["heartbeat"], silence_days=12, catch_up=True, ok=False)
+    _, cu = email_render.render_heartbeat(_ctx(heartbeat=catch_up), PREFIX)
+    assert "Heartbeat: CATCH-UP — prior heartbeat 12d ago (> 7d cadence; an outage was bridged)" in cu
+
+    first = dict(_ctx()["heartbeat"], ever_sent=False, last_sent_ts=None, silence_days=None)
+    _, fb = email_render.render_heartbeat(_ctx(heartbeat=first), PREFIX)
+    assert "Heartbeat: first heartbeat" in fb
 
 
 # === build_context over a real registry (gathers views.* folds — cannot drift from the screen) =====
