@@ -78,7 +78,7 @@ def main() -> None:
         faults = views.fault_log(registry)
 
         # --- the dead-man + the ceiling, up top (the alert posture) -------------------------------
-        hb = views.heartbeat(runs, now, floor_days=7)
+        hb = views.heartbeat(runs, now, views.last_heartbeat_sent(registry), floor_days=7)  # M7-03
         cs = views.ceiling_status(states, ceiling)
         c1, c2, c3 = st.columns(3)
         c1.metric("Heartbeat", "OK" if hb["ok"] else "BROKEN",

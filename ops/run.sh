@@ -24,14 +24,12 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 echo "=== prospector run $(date -u '+%Y-%m-%dT%H:%M:%SZ') · cwd=$REPO_ROOT ==="
 
-# The weekly heartbeat rides an actual run so a received email proves the whole pipeline ran (§8a/§10).
-# Which day is heartbeat day is decided HERE (external to the runner's --heartbeat flag) — Sunday.
-# keep in sync with config `schedule.weekly_day` (SUN); `date +%u` gives 1=Mon … 7=Sun.
-if [ "$(date +%u)" -eq 7 ]; then
-  uv run pros run --heartbeat
-else
-  uv run pros run
-fi
+# The RUNNER owns the heartbeat cadence now (M7-01/M7-05): each daily tick checks whether the last
+# `heartbeat.sent` is older than `schedule.heartbeat_cadence_days` and sends the weekly heartbeat if so.
+# This is a UTC gap-check on the append-only record, so a tick the Mac SLEPT THROUGH catches up on wake —
+# the old `date +%u -eq 7` local-weekday gate silently dropped a sleep-across-Sunday heartbeat (a false
+# dead-man). `--heartbeat` remains a manual force-send affordance; the scheduler no longer passes it.
+uv run pros run
 
 # Back up the fossil store after the run — the backup cadence deliberately lives here, not inside `pros run`
 # (store-durability decision). `set -e` above means a failed run exits before this: the run's own dead-man

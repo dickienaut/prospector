@@ -29,7 +29,7 @@ V1_TYPES = frozenset({
     "launch.unverified", "launch", "rebalance", "mandate.changed",
     "capture.stored", "verdict",
     "registry.updated", "identity.resolved", "resolution.failed",
-    "baseline.frozen", "config.changed", "fault",
+    "baseline.frozen", "config.changed", "fault", "heartbeat.sent",
 })
 
 _CORROBORATION_TYPES = frozenset({"launch", "rebalance", "mandate.changed"})

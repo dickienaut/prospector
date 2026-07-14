@@ -177,13 +177,27 @@ def test_fault_log_carries_the_category_and_live_lead_flag(layout, registry):
 
 # === the weekly dead-man ============================================================================
 
-def test_heartbeat_ok_within_the_floor_broken_beyond_it():
-    fresh = [{"ts": "2026-07-05T00:00:00Z", "date": "2026-07-05"}]
-    assert views.heartbeat(fresh, NOW, floor_days=7)["ok"] is True    # 2 days < 7
-    stale = [{"ts": "2026-06-01T00:00:00Z", "date": "2026-06-01"}]
-    hb = views.heartbeat(stale, NOW, floor_days=7)
-    assert hb["ok"] is False and "broken" in hb["reason"]
-    assert views.heartbeat([], NOW)["ok"] is False                    # nothing ever ran -> broken
+def test_heartbeat_keys_on_last_heartbeat_sent_not_last_run():
+    """M7-03: liveness keys on the last HEARTBEAT SENT, not the last run — the run that renders the email
+    is a tautology (a run always just happened), so keying on `runs[0].ts` always read OK. `runs` now
+    supplies only the informational last-run line."""
+    runs = [{"ts": "2026-07-06T00:00:00Z", "date": "2026-07-06"}]     # a fresh run — must NOT alone read OK
+    assert views.heartbeat(runs, NOW, last_heartbeat_sent=None)["ok"] is False    # never sent -> broken
+    assert views.heartbeat(runs, NOW, "2026-07-05T00:00:00Z", floor_days=7)["ok"] is True   # 2d ago -> ok
+    stale = views.heartbeat(runs, NOW, "2026-06-01T00:00:00Z", floor_days=7)      # > a month -> broken
+    assert stale["ok"] is False and stale["catch_up"] is True and "broken" in stale["reason"]
+    hb8 = views.heartbeat(runs, NOW, "2026-06-29T00:00:00Z", floor_days=7)        # NOW = 07-07 -> 8d ago
+    assert hb8["ok"] is False and hb8["catch_up"] is True and hb8["silence_days"] == 8
+    assert stale["last_run_date"] == "2026-07-06"                                 # last-run line from runs
+
+
+def test_last_heartbeat_sent_newest_wins(layout, registry):
+    store = EventStore(layout, registry)
+    assert views.last_heartbeat_sent(registry) is None                           # never sent -> None
+    for ts in ("2026-07-01T00:00:00Z", "2026-07-08T00:00:00Z", "2026-07-04T00:00:00Z"):
+        store.append({"ts": ts, "lead": SYSTEM_LEAD, "type": "heartbeat.sent",
+                      "payload": {"trigger": "cadence"}, "schema": 1})
+    assert views.last_heartbeat_sent(registry) == "2026-07-08T00:00:00Z"          # newest ts wins
 
 
 # === firewall: the dashboard never reaches the portfolio side =======================================

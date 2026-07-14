@@ -75,7 +75,11 @@ def test_heartbeat_still_fires_on_a_faulted_tick(layout, registry):
 
 
 def test_a_quiet_daily_tick_without_heartbeat_sends_nothing(layout, registry):
-    # The anti-slot-machine cadence: a quiet daily tick pushes nothing and (no --heartbeat) sends nothing.
+    # The anti-slot-machine cadence: a quiet daily tick pushes nothing and — with a heartbeat already sent
+    # within the cadence (M7-01) — sends no heartbeat either (a catch-up fires only when one is overdue).
+    from prospector.runner.runner import record_heartbeat_sent
+    from prospector.store.event_store import EventStore
+    record_heartbeat_sent(EventStore(layout, registry), "2026-06-30T22:30:00Z")  # 2d before the day-2 tick
     notifier = NullNotifier()
     r = _tick(layout, registry, _fetch_mf_only([XLK_ROW]), day=2, notifier=notifier)
     assert r.pushed is False

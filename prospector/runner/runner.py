@@ -270,6 +270,33 @@ def _email_context(deps, store, now: str, date: str, runlog: RunLog, changed_lea
                                       faults=faults, changed_leads=changed_leads, trigger="run")
 
 
+def heartbeat_is_due(registry, now: str, cfg: dict) -> bool:
+    """§10 dead-man cadence gate (M7-01). A heartbeat is DUE when the record shows none sent within the
+    cadence — read from the folded `heartbeat.sent` stream on `_system` (the ONE clock the sender writes
+    and the dead-man reads). NEVER-sent -> due (the first tick confirms the channel); an unparseable prior
+    ts -> due (fail toward SENDING — never silently skip the one health channel). Cadence is
+    `schedule.heartbeat_cadence_days` (DEFAULT 7). A UTC gap-check owned by the runner: a tick the Mac
+    slept through catches up on wake, retiring run.sh's local-weekday gate + `weekly_day` (M7-05)."""
+    rows = registry.events_by_type("heartbeat.sent")
+    if not rows:
+        return True
+    cadence = int((cfg.get("schedule") or {}).get("heartbeat_cadence_days", 7))
+    try:
+        return (parse_ts(now) - parse_ts(rows[-1]["ts"])).days >= cadence
+    except Exception:
+        return True  # an unparseable last-sent must not silence the dead-man
+
+
+def record_heartbeat_sent(store, ts: str, *, trigger: str = "cadence") -> None:
+    """Fossilize a `heartbeat.sent` on `_system` at `ts` (M7-01) — the append-only record of 'the dead-man
+    spoke'. CRITICAL: emit this ONLY after a clean notifier hand-off (never on attempt) — a failed send
+    must not advance the clock, or the dead-man goes quiet believing it spoke. `trigger` is 'cadence' (the
+    runner's due-check) or 'manual' (a `--heartbeat` force-send). This is the ONE fact both the send gate
+    (`heartbeat_is_due`) and the §8a liveness (`views.heartbeat`) read — one clock, two consumers."""
+    store.append({"ts": ts, "lead": SYSTEM_LEAD, "type": "heartbeat.sent",
+                  "payload": {"trigger": trigger}, "schema": 1})
+
+
 def run_tick(deps: RunnerDeps) -> RunLog:
     """Execute ONE cadence tick in the CONTRACT run order (§9):
 
@@ -332,7 +359,12 @@ def run_tick(deps: RunnerDeps) -> RunLog:
         # weekly heartbeat can BOTH fire this tick (a change on a weekly run). The notifier RAISES on a
         # send failure — caught here as a soft `notify` fault so a broken sender never loses the run-log
         # (a fault email beats silence; the dead-man still records). NullNotifier just records the context.
-        if pushed or deps.heartbeat:
+        # §10 heartbeat cadence (M7-01): the RUNNER decides heartbeat day now — a UTC gap-check on the
+        # folded `heartbeat.sent` — so a tick the Mac slept through catches one up on wake (the old
+        # run.sh local-weekday gate silently dropped a sleep-across-Sunday heartbeat). `--heartbeat`
+        # (`deps.heartbeat`) still force-sends manually.
+        send_heartbeat = deps.heartbeat or heartbeat_is_due(deps.registry, now, deps.cfg)
+        if pushed or send_heartbeat:
             try:
                 ctx = _email_context(deps, store, now, date, runlog, changed_leads, faults, pushed)
             except Exception as e:  # a fold/context failure must not abort the run-log write
@@ -344,9 +376,14 @@ def run_tick(deps: RunnerDeps) -> RunLog:
                         deps.notifier.push(ctx)
                     except Exception as e:  # a send failure is a soft fault — it must not lose the run-log
                         _emit_fault(store, "notify", e, now, faults)
-                if deps.heartbeat:  # the weekly dead-man — fires regardless of activity (cadence arms at M7)
+                if send_heartbeat:  # the weekly dead-man — fires on cadence (or --heartbeat), catches a gap up
                     try:
                         deps.notifier.heartbeat(ctx)
+                        # M7-01 CRITICAL: record the send ONLY after a CLEAN hand-off (inside the try), so a
+                        # raising send skips the record and the clock does NOT advance — the dead-man must
+                        # never fall silent believing it spoke. Through `store` so §9g counts it.
+                        record_heartbeat_sent(store, now,
+                                              trigger="manual" if deps.heartbeat else "cadence")
                     except Exception as e:
                         _emit_fault(store, "notify.heartbeat", e, now, faults)
 

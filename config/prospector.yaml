@@ -384,9 +384,13 @@ email:                     # §8a/§10 — the email sender (DEFAULT-class; tran
   smtp_port: 587           # 587 STARTTLS (default) | 465 SSL
   smtp_security: starttls  # "starttls" | "ssl"
 
-schedule:                  # milestone 7 — keys reserved now
+schedule:                  # milestone 7 — the runner owns the heartbeat cadence (M7-01/M7-05)
   daily_utc: "22:30"       # after US close + EOD data settle
-  weekly_day: SUN
+  heartbeat_cadence_days: 7  # the §10 dead-man cadence: the runner sends the weekly heartbeat when the
+                             # last `heartbeat.sent` is >= this many days old — a UTC gap-check that
+                             # catches up a cycle the Mac slept through (the old run.sh local-weekday
+                             # gate silently dropped a sleep-across-Sunday heartbeat, M7-01). Feeds both
+                             # the send cadence and the §8a silence floor (one clock, one source).
 
 s3:                        # milestone 7 — keys reserved now; sync is disabled when bucket is null
   bucket: null

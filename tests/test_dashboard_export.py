@@ -32,6 +32,11 @@ def _seed(layout, registry) -> None:
     ResolutionMachine(registry, EventStore(layout, registry), None, None)  # creates resolution_queue
     store = EventStore(layout, registry)
 
+    # A recent heartbeat.sent (M7-01): the dead-man's liveness now keys on this, not the last run, so the
+    # manifest reads "heartbeat: OK" only when a heartbeat was actually sent within the floor.
+    store.append({"ts": "2026-07-06T00:00:00Z", "lead": "_system", "type": "heartbeat.sent",
+                  "payload": {"trigger": "cadence"}, "schema": 1})
+
     # A LIVE xcorr lead: spawn -> departure -> five silent ticks -> a verdict (still active, non-shadow).
     store.append({"ts": "2026-07-06T00:00:00Z", "lead": LIVE, "type": "lead.spawned",
                   "payload": {"spawner": "xcorr", "display": "XLK×XLU", "shadow": False}, "schema": 1})
