@@ -191,6 +191,7 @@ def run(store_path, heartbeat):
     import time
     from uuid import uuid4
 
+    from prospector.ingest.capture import CaptureProvider
     from prospector.ingest.holdings import HoldingsIngest
     from prospector.ingest.prices import PriceIngest
     from prospector.primitives.atomic import write_atomic
@@ -233,6 +234,22 @@ def run(store_path, heartbeat):
         if heartbeat:  # asked for a heartbeat but nowhere to send it — say so, don't fail the tick
             click.echo("note: --heartbeat set but email.smtp_host is unconfigured — no email sent "
                        "(NullNotifier). Configure email.* + PROSPECTOR_SMTP_PASSWORD to enable.")
+    # §6 M6 discourse capture. ANTHROPIC_API_KEY is a SECRET — env-only (from the git-ignored .env),
+    # exactly like the Tiingo/SMTP secrets, never in config. Capture is ENABLED only when
+    # capture.monthly_budget_usd is set (null = disabled — the shipped default). Fail FAST if capture is
+    # enabled but the key is unset: a silent no-capture would quietly drop the one dataset that cannot be
+    # backfilled. When capture is disabled, the provider stays None and the runner's capture phase no-ops.
+    capture_cfg = cfg.get("capture") or {}
+    capture_provider = None
+    if capture_cfg.get("monthly_budget_usd") is not None:
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not anthropic_key:
+            raise click.ClickException(
+                "capture.monthly_budget_usd is set (capture enabled) but ANTHROPIC_API_KEY is unset — set "
+                "it in .env or the environment (it is a secret; never put it in config). Set "
+                "capture.monthly_budget_usd: null to disable capture.")
+        capture_provider = CaptureProvider(anthropic_key,
+                                           model=str(capture_cfg.get("model", "claude-haiku-4-5")))
     now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     tick_date = now[:10]
 
@@ -259,7 +276,7 @@ def run(store_path, heartbeat):
             edgar_client=edgar_client, price_ingest=price_ingest, holdings_ingest=holdings_ingest,
             notifier=notifier,
             cfg=cfg, cfg_hash=cfg_hash, now=now, run_id=uuid4().hex, monotonic=time.monotonic,
-            heartbeat=heartbeat)
+            heartbeat=heartbeat, capture_provider=capture_provider)
         runlog = run_tick(deps)
     finally:
         registry.close()

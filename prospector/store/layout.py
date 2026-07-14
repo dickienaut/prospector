@@ -109,6 +109,15 @@ class StoreLayout:
         # hand-frozen fixtures. Test fixtures are NEVER refreshed by that fetch (offline-determinism).
         return self.root / "ingest" / "soi" / series_id / accession / name
 
+    def captures_path(self, lead: str, ts: str, name: str) -> Path:
+        # §6 discourse capture (milestone 6): raw web_search result blocks + fetched page text, frozen
+        # per (lead, tick) under captures/{lead}/{ts}/query_{n}.json. Keyed on the LEAD (the structural
+        # hit that triggered the capture) and the tick `ts` (compact form, like snapshots), so v2 can
+        # thaw backward through the archive. Index-less (like ingest/) — the queryable index is the
+        # `capture.stored` event; the blobs stay on disk/S3. This module is the SINGLE choke point for
+        # capture paths (the never-read-wall test allows the `captures` token ONLY here + the writer).
+        return self.root / "captures" / lead / ts_compact(ts) / name
+
     def edgar_path(self, date: str, name: str) -> Path:
         return self.root / "ingest" / "edgar" / date / name
 

@@ -290,11 +290,17 @@ snapshots:
   quiet: weekly            # floor when the collection is quiet
   # plus an immediate snapshot on any state change (reactive tier)
 
-capture:                   # milestone 6 — keys reserved now
-  k_queries: 5
-  m_fetch_urls: 2
-  max_searches_per_week: 60
-  monthly_budget_usd: null # user sets before capture goes live; null = capture disabled
+capture:                   # milestone 6 — discourse capture (§6)
+  k_queries: 5             # K deterministic templated queries per capture (no LLM authorship)
+  top_n: 5                 # top-N constituent names fed into query construction
+  m_fetch_urls: 2          # M result URLs fetched (extracted page text) per query
+  max_searches_per_week: 60  # HARD cap (searches are exactly countable); breach pauses + faults
+  unit_price_usd: 0.01     # web_search price per search ($10 / 1,000 searches) — VERIFY vs the live
+                           # published price before arming; the USD estimate is count x this
+  model: claude-haiku-4-5  # the search is a mechanical fetch-only call (prose discarded), so a cheap
+                           # model is the cost-right default; paired with the basic web_search tool variant
+  monthly_budget_usd: null # user sets before capture goes live; null = capture disabled. A DEFAULT
+                           # (not CONTRACT) — raise it anytime by hand; each change fossils config.changed
 
 backtest:
   corroboration_window_months: 24

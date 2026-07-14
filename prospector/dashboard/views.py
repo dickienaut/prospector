@@ -136,6 +136,15 @@ def registry_health(states: Iterable[dict]) -> dict:
             "reverted": len(reverted), "verdicts": dict(verdicts)}
 
 
+def capture_inventory_counts(states: Iterable[dict]) -> dict:
+    """Per-lead discourse-capture count (§6 capture inventory, §8b) — how many captures each lead has
+    accrued, from the fold's `capture_inventory`. A read-only legibility line (build note §3h: a tiny
+    count-per-lead, not a new page); v1 never READS a capture, so this counts, never renders, content.
+    Leads with zero captures are omitted (keep the line short)."""
+    return {s.get("lead"): len(s.get("capture_inventory") or [])
+            for s in states if (s.get("capture_inventory") or [])}
+
+
 # --- the _system panels (faults, launches, coverage, run history) -------------------------------
 
 

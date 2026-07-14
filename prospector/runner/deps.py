@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from prospector.ingest.capture import CaptureProvider
 from prospector.ingest.edgar import EdgarClient
 from prospector.ingest.holdings import HoldingsIngest
 from prospector.ingest.prices import PriceIngest
@@ -41,3 +42,6 @@ class RunnerDeps:
     # the weekly run, so a heartbeat email proves the whole pipeline ran). Set by `pros run --heartbeat`;
     # M7's scheduler calls that weekly. Default False (a daily tick pages on change only). Trailing +
     # defaulted so existing RunnerDeps(...) constructions (incl. the test _deps helpers) are unaffected.
+    capture_provider: CaptureProvider | None = None  # §6 M6: the Anthropic web_search provider. None when
+    # capture is DISABLED (capture.monthly_budget_usd null, or no ANTHROPIC_API_KEY) — the runner's capture
+    # phase then records 'disabled' and does nothing. `pros run` builds it only when capture is armed.

@@ -38,10 +38,14 @@ from prospector.store.layout import StoreLayout
 from prospector.store.registry import Registry
 from prospector.store.reindex import rebuild_registry
 
-# The append-only fossil trees (build note §1, + `registry/` per the decision record). registry.sqlite
-# is a file at the store ROOT (not under any of these), handled separately via the `.backup` API — so a
-# tree copy can never raw-copy the WAL db or its -wal/-shm sidecars.
-FOSSIL_TREES = ("events", "snapshots", "ingest", "baselines", "runs", "registry")
+# The append-only fossil trees (build note §1, + `registry/` per the decision record; + `captures/`
+# per the M6 slice). registry.sqlite is a file at the store ROOT (not under any of these), handled
+# separately via the `.backup` API — so a tree copy can never raw-copy the WAL db or its -wal/-shm
+# sidecars. `captures/` (M6 discourse capture, §6) is INCLUDED because it is the one dataset that is
+# BOTH irreplaceable AND un-backfillable — a search result / fetched page cannot be re-fetched as it was
+# on the day. Same reasoning that added `registry/`: index-less blob trees the fossils can't rebuild
+# must be on the HDDs (reindex touches only events/snapshots). See the M6 build note §3a.
+FOSSIL_TREES = ("events", "snapshots", "ingest", "baselines", "runs", "registry", "captures")
 DEFAULT_MARKER = ".prospector-backup-target"
 REGISTRY_NAME = "registry.sqlite"
 

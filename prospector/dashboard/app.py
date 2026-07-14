@@ -198,6 +198,8 @@ def main() -> None:
 
         with st.expander("Registry health + unknown-type panel"):
             st.write(views.registry_health(states))
+            st.caption("Capture inventory (§6 discourse captures per lead — write-only, never read in v1):")
+            st.write(views.capture_inventory_counts(states) or "— none —")
             st.caption("Unknown-type panel (empty in v1, built for v2 writers):")
             st.write(views.unknown_type_summary(states)["counts"] or "— none —")
 

@@ -41,6 +41,7 @@ from prospector.fold.snapshots import SnapshotConfig, should_snapshot, write_sna
 from prospector.identity.resolution import ResolutionMachine
 from prospector.ingest.edgar import (SOI_AMBIGUOUS, SOI_ERROR, classify_soi_target,
                                      latest_prospectus, prospectus_history)
+from prospector.ingest import capture
 from prospector.ingest.holdings import (MembershipSnapshot, priceable_members, priced_coverage,
                                          weight_covering_members)
 from prospector.ingest.prices import (CALENDAR_PER_TRADING_DAY, PriceIngestError, build_panel,
@@ -60,6 +61,7 @@ from prospector.sensors.dispersion import dispersion_lead_id
 from prospector.sensors.launch_corroboration import (lead_sectors, pending_soi_resolution,
                                                      series_id_sectors)
 from prospector.sensors.rebalance import (active_incl_shadow_lead_ids,  # §4d rebalance active set
+                                          active_nonshadow_lead_ids,  # §6 capture: shadow never captures
                                           watching_leads)  # §10: on_live_lead routing for advisories
 from prospector.store.envelope import SYSTEM_LEAD, parse_ts
 from prospector.store.fund_registry import FundRegistry
@@ -275,7 +277,7 @@ def run_tick(deps: RunnerDeps) -> RunLog:
         2. ingest            (§9a — mf-tickers + the sector-price panel)
         3. sensors §4a-§4d   (WIRED: xcorr §4a, dispersion §4b/§9e shadow, launch §4c, mandate §4d, SOI §9d)
         4. identity retries  (drain the retry-then-manual queue)
-        5. capture           (no-op until M6)
+        5. capture           (§6 discourse capture — WIRED at M6; disabled until armed)
         6. snapshots         (reactive materialization)
         7. push if state changed (§10 — through the notifier seam)
 
@@ -478,9 +480,18 @@ def _run_sensors(deps: RunnerDeps, store, now: str, date: str, faults: list, run
         runlog.sensors["identity_retries"] = "fault"
         _emit_fault(store, "identity.retries", e, now, faults)
 
-    # 5. CAPTURE — no-op until M6 (§9-run-order-5). The slot exists now so M6 plugs in without
-    #    reshaping the run order.
-    runlog.sensors["capture"] = "slot"
+    # 5. CAPTURE (§9-run-order-5, §6) — WIRED (M6, the last v1 build slice). Deterministic-templated
+    #    discourse capture over the tick's ACTIVE NON-SHADOW leads (shadow burn-in is not trusted enough
+    #    to spend on), AFTER the sensor phase (captures reference the tick's leads) and before the
+    #    wrapper's backup step (so the night's captures reach the HDDs same-night). DISABLED unless armed
+    #    (capture.monthly_budget_usd set + ANTHROPIC_API_KEY present); a HARD budget cap pauses + faults
+    #    on breach (never a silent overrun). Nothing in v1 READS a capture — a write-only substrate for
+    #    v2 (CLAUDE.md wall, enforced by the never-read-wall test).
+    try:
+        _run_capture(deps, store, now, faults, runlog)
+    except Exception as e:  # a capture-phase failure is a soft fault, never a run-abort (§9g)
+        runlog.sensors["capture"] = "fault"
+        _emit_fault(store, "capture", e, now, faults)
 
 
 def _build_sector_panel(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog):
@@ -917,6 +928,135 @@ def _run_rebalance(deps: RunnerDeps, store, now: str, faults: list, runlog: RunL
                               deps.cfg, now, store.append, as_of=date_)
         scanned = True
     runlog.sensors["rebalance"] = "ran" if scanned else ("seeded" if seeded else "skipped")
+
+
+def _run_capture(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog) -> None:
+    """§6 discourse capture (M6). For each ACTIVE NON-SHADOW lead due for capture (never captured, or its
+    last capture is >= 7 days old — the per-lead weekly gate), build K deterministic templated queries
+    from lead metadata and, per query, run one web_search, fetch the top-M result URLs, and freeze ONLY
+    the raw result blocks + fetched text (the wall — CLAUDE.md "No LLM text as data"). One `capture.stored`
+    event per lead per capture.
+
+    DISABLED unless armed: runs only when `capture.monthly_budget_usd` is set AND a provider is injected
+    (`ANTHROPIC_API_KEY` present) — otherwise records 'disabled' and does nothing (ships off; the owner
+    arms it). BUDGET is a HARD cap read FRESH each tick (the value is a tunable DEFAULT, not cached):
+    before each search, if the persisted weekly search count >= `max_searches_per_week` OR the month's
+    estimated spend (count x `unit_price_usd`) >= `monthly_budget_usd`, capture PAUSES and emits ONE
+    operational fault with a stable key (`capture.budget:searches`/`:usd`) — pages once, then rides the
+    heartbeat while the pause persists (§10, never a silent overrun/skip). A transient per-URL fetch
+    failure is a soft operational fault (`capture.fetch:{status}`); the partial capture is still stored,
+    never killed over one URL (§3c). Determinism (§6, no LLM authorship): the query set is OUR templating;
+    if the provider issues a query different from ours, a `capture.query_drift` fault fires loud."""
+    cap = deps.cfg.get("capture") or {}
+    budget_usd = cap.get("monthly_budget_usd")
+    if budget_usd is None or deps.capture_provider is None:
+        runlog.sensors["capture"] = "disabled"  # ships off; owner arms via budget + key (build note §4)
+        return
+    budget = capture.CaptureBudget(deps.registry)
+    max_week = int(cap.get("max_searches_per_week", 60))
+    unit_price = float(cap.get("unit_price_usd") or 0.0)
+    k = int(cap.get("k_queries", 5))
+    m = int(cap.get("m_fetch_urls", 2))
+    top_n = int(cap.get("top_n", 5))
+    week_key, month_key = capture.period_keys(now)
+    ran = paused = False
+    for lead in sorted(active_nonshadow_lead_ids(deps.registry, deps.layout)):  # shadow never captures
+        state = fold(deps.registry.events_for_lead(lead))
+        if not _capture_due(state, now):
+            continue
+        queries = capture.build_queries(_capture_meta(deps.registry, lead, state, top_n), k, top_n)
+        if not queries:
+            continue  # no templatable metadata yet — nothing honest to search for
+        result_counts: list = []
+        wrote = False
+        for n, query in enumerate(queries):
+            # BUDGET (hard cap, read fresh): pause BEFORE issuing a search that would breach either cap.
+            if budget.count("week", week_key) >= max_week:
+                _emit_fault(store, "capture.budget",
+                            f"weekly search cap reached ({max_week}) — capture paused", now, faults,
+                            key="capture.budget:searches")
+                paused = True
+                break
+            mo = budget.count("month", month_key)
+            if unit_price and mo * unit_price >= float(budget_usd):
+                _emit_fault(store, "capture.budget",
+                            f"monthly budget reached (~${mo * unit_price:.2f} >= ${float(budget_usd):.2f}) "
+                            "— capture paused", now, faults, key="capture.budget:usd")
+                paused = True
+                break
+            try:
+                res = deps.capture_provider.search(query)
+            except Exception as e:  # a search failure is a soft fault; try the next query
+                _emit_fault(store, "capture.search", f"{query!r}: {e}", now, faults, lead=lead,
+                            key=f"capture.search:{getattr(e, 'status', None)}")
+                continue
+            budget.record_search(week_key, month_key, now)  # metered the moment a search is issued
+            issued = res.get("query_issued")
+            if issued is not None and issued != query:  # §6 no-LLM-authorship: fault loud on divergence
+                _emit_fault(store, "capture.query_drift",
+                            f"provider issued {issued!r} != templated {query!r}", now, faults,
+                            lead=lead, key="capture.query_drift")
+            blocks = res.get("result_blocks") or []
+            fetched: list = []
+            for url in capture.top_urls(blocks, m):  # OUR deterministic top-M URL selection
+                try:
+                    fetched.append({"url": url, "status": 200,
+                                    "text": deps.capture_provider.fetch_page(url)})
+                except Exception as e:  # store the partial; never kill the capture over one URL (§3c)
+                    _emit_fault(store, "capture.fetch", f"{url}: {e}", now, faults, lead=lead,
+                                key=f"capture.fetch:{getattr(e, 'status', None)}")
+                    fetched.append({"url": url, "status": getattr(e, "status", None), "error": str(e)})
+            capture.write_query_blob(deps.layout, lead, now, n, {
+                "query": query, "query_issued": issued, "provider": capture.PROVIDER, "ts": now,
+                "result_blocks": blocks, "fetched": fetched})  # ONLY result blocks + fetched text (wall)
+            result_counts.append({"query_n": n, "results": len(blocks),
+                                  "fetched": sum(1 for f in fetched if "text" in f)})
+            wrote = True
+        if wrote:
+            # One capture.stored onto the lead per capture (§6). The fold reads query_set / s3_prefix /
+            # result_counts into capture_inventory (the weekly gate + the dashboard count line).
+            store.append({"ts": now, "lead": lead, "type": "capture.stored",
+                          "payload": {"query_set": queries,
+                                      "s3_prefix": capture.capture_prefix(lead, now),
+                                      "result_counts": result_counts}, "schema": 1})
+            ran = True
+        if paused:
+            break
+    runlog.sensors["capture"] = "paused" if paused else ("ran" if ran else "skipped")
+
+
+def _capture_due(state: dict, now: str) -> bool:
+    """The per-lead weekly capture gate (§6): due if the lead has NEVER been captured (covers a lead that
+    just entered active — its archive starts at landing, build note §3e) OR its most-recent capture is
+    >= 7 days old. Read from the fold's `capture_inventory` (the fossil record, §9f — no side state)."""
+    stamps = [e.get("ts") for e in (state.get("capture_inventory") or []) if e.get("ts")]
+    if not stamps:
+        return True
+    return (parse_ts(now) - parse_ts(max(stamps))).days >= 7
+
+
+def _capture_meta(registry, lead: str, state: dict, top_n: int) -> dict:
+    """Lead metadata for deterministic query construction (§6): the basket display name (off the fold),
+    top-N constituent names (from the most-recent `dispersion.tick` payload — the generous §4b payload
+    carries full constituent membership, weight-desc), and concentration industries (a `sectors` list on a
+    `launch` corroboration payload, when present). Read from the record (§9f); best-effort — thin metadata
+    yields fewer queries, never a crash. This reads EVENT payloads, never a capture blob (the wall holds)."""
+    constituents: list = []
+    disp = registry.events_for_lead(lead, "dispersion.tick")
+    if disp:
+        payload = json.loads(disp[-1]["payload"])  # newest tick (rows ordered by ts, event_id)
+        named = [(mm.get("name"), mm.get("weight") or 0.0)
+                 for c in payload.get("clusters", []) for mm in c.get("members", []) if mm.get("name")]
+        named.sort(key=lambda nw: (-nw[1], nw[0]))
+        for name, _w in named:
+            if name not in constituents:
+                constituents.append(name)
+    industries: list = []
+    for r in registry.events_for_lead(lead, "launch"):
+        for s in (json.loads(r["payload"]).get("sectors") or []):
+            if s not in industries:
+                industries.append(s)
+    return {"display": state.get("display"), "constituents": constituents, "industries": industries}
 
 
 def _run_soi_corroboration(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog,
