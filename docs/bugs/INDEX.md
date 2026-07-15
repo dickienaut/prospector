@@ -132,6 +132,16 @@ project's signature "fix makes cry-wolf" shape.*
 | **BK-READ-01** | BK-2's content-verify re-reads every unchanged rewritten-in-place file every run (dst-HDD read amplification, unbounded as `ingest/` grows) — correctness intact, **cost** regression | backup | — | 🟡 ratified-residual | judgment | **accept + document** (correctness over cost at current scale — the re-read runs post-tick, seconds on a single-digit-GB store) · [decision](../decisions/2026-07-15-backup-content-verify-reread-accepted.md). Revisit trigger: backup wall-time > ~1 min or store growth making it minutes-long; **override:** if QA's #64 repro shows amplification materially worse than seconds, back to the design thread |
 | **BK-MSG-01** | backup's broad `except Exception` labels ANY mid-copy fault "retry once the drive is healthy" — mislabels a non-drive fault | backup | — | ✅ #67 | one-off | hint gated on `isinstance(e, OSError)`; non-drive faults surface the real error · `test_backup.py::test_a_non_drive_midcopy_fault_does_not_get_the_drive_health_hint` |
 
+## Post-#67/#66 cold review — 2026-07-15 (`notes/2026-07-15-pr67-pr66-cold-review_qa.md`, PR #69)
+
+*QA cold read of the tier-4 sweep (#67) + single-writer lock (#66): all 11 #67 claims + all 6 #66 checks
+CONFIRMED-CLOSED; one new LOW finding — on #67's own H3 fix (below). Also flagged, **pending their own
+disposition**: two LOW #66 findings — **LOCK-TEST-TAUT** and **DEPLOY-OVERLAY-DRIFT** (see the review doc).*
+
+| ID | Symptom (one line) | Subsystem | Shape | Status | Class | Guarding test / fix site |
+|----|--------------------|-----------|-------|--------|-------|--------------------------|
+| **H3-DECOY** | H3's prefix header match is first-match-wins → a decoy `Weighted Average Life` column before the real `Weight` is silently read as the weight (latent — bites when the universe extends to bond funds) | ingest·holdings | green-on-synthetic · fail-silent | ✅ #71 | 1,8 | `_col` prefers **exact** match + `_weight_prefix_count` faults loud on >1-weight-prefix-no-exact · `test_holdings_weight_decoy.py` · [record](qa/2026-07-15-h3-decoy-weight-prefix-collision.md) |
+
 ---
 
 ## §3 · Open / deferred — the live tail (refer-back while fixing)
