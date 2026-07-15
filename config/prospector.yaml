@@ -406,3 +406,11 @@ backup:
   # so `pros backup` faults loudly until the Mini's drive paths are configured here.
   targets: []                        # e.g. [/Volumes/ProspectorBackup1/prospector, /Volumes/ProspectorBackup2/prospector]
   marker: .prospector-backup-target  # the blessing sentinel each target drive must carry (DEFAULT)
+  # M7-02: backup health surfaces through the ONE fault channel the §8a heartbeat already reads (decision
+  # docs/decisions/2026-07-14-backup-health-one-fault-channel.md). Each daily tick, the runner reads the
+  # last-success marker `pros backup` writes to each configured target and folds a `backup.stale` fault if
+  # the newest backup is missing or older than `max_age_days`. Small multiple of the daily tick: the runner
+  # reads the PRIOR tick's backup (backup runs after the tick), so 3d tolerates that ~1d lag PLUS a
+  # slept-through cycle without crying wolf, while a genuinely-behind drive faults within a couple ticks.
+  # Only checked when targets is non-empty (a dev box's empty targets faults loudly at `pros backup` time).
+  max_age_days: 3

@@ -49,6 +49,14 @@ FOSSIL_TREES = ("events", "snapshots", "ingest", "baselines", "runs", "registry"
 DEFAULT_MARKER = ".prospector-backup-target"
 REGISTRY_NAME = "registry.sqlite"
 
+# M7-02: the last-successful-backup marker the runner reads to fold a `backup.stale` health fault (decision
+# docs/decisions/2026-07-14-backup-health-one-fault-channel.md). Distinct from DEFAULT_MARKER (the operator's
+# blessing sentinel, created ONCE by hand): this one is WRITTEN BY US on each VERIFIED backup success, carrying
+# that backup's UTC timestamp, so "is there a fresh successful backup on this drive" is an honest fact the
+# runner can check — not a process self-report. Written only on the success path (never on attempt), same
+# discipline as `heartbeat.sent`.
+SUCCESS_MARKER = ".prospector-backup-ok"
+
 # Trees whose files are APPEND-ONLY or first-write-wins — content is FIXED once written, so the cheap
 # size+mtime quick-check can never alias a change (there is no in-place rewrite to hide). events/ is
 # append-only by constitution; runs/ writes one runlog per tick; captures/ is write-once; snapshots/ is
@@ -168,14 +176,20 @@ def _blessed(target: Path, marker: str) -> bool:
 
 
 def backup_store(layout: StoreLayout, targets, *, marker: str = DEFAULT_MARKER,
-                 registry_path: Path | None = None) -> BackupReport:
+                 registry_path: Path | None = None, now: str | None = None) -> BackupReport:
     """Mirror the append-only fossil trees + a WAL-safe registry snapshot to EVERY target.
 
     Best-effort-but-loud (build note §2): each unmounted/unblessed target is recorded in
     `report.failures` (the CLI turns a non-empty failures list into a non-zero exit) while every
     healthy target still receives the data — a missing drive must never cause the GOOD drive to be
     skipped, but it must still fault loudly. Raises `BackupError` only when NOTHING can proceed (no
-    targets configured). The registry goes through `backup_sqlite` (`.backup` API), never a raw copy."""
+    targets configured). The registry goes through `backup_sqlite` (`.backup` API), never a raw copy.
+
+    M7-02: when `now` (a UTC ISO ts) is given, each VERIFIED-success target gets a `SUCCESS_MARKER`
+    stamped with `now` — written INSIDE the per-target try, AFTER the copy + registry succeed, so a target
+    that failed mid-copy (recorded in `report.failures`) gets no marker. That marker is what the runner
+    reads to fold `backup.stale` into the §8a heartbeat's health channel — the honest "there is a fresh
+    successful backup here" fact. `now=None` (the default) skips the marker (callers that only mirror)."""
     tgts = [Path(t) for t in targets]
     if not tgts:
         raise BackupError(
@@ -211,6 +225,13 @@ def backup_store(layout: StoreLayout, targets, *, marker: str = DEFAULT_MARKER,
             if reg.is_file():
                 backup_sqlite(reg, t / REGISTRY_NAME)   # WAL-safe .backup, never a raw copy of a live db
                 r.registry_backed_up = True
+            # M7-02: stamp the last-success marker ONLY here — after the copy + registry both landed clean,
+            # inside the try so a mid-copy failure (caught below, recorded in `report.failures`) leaves NO
+            # fresh marker and the runner will fold `backup.stale`. Same never-on-attempt discipline as
+            # `heartbeat.sent`. If the stamp itself raises (e.g. the drive fills at the last byte) the target
+            # is recorded as failed — a backup we cannot attest is not a success.
+            if now is not None:
+                (t / SUCCESS_MARKER).write_text(now, encoding="utf-8")
         except Exception as e:   # noqa: BLE001 — best-effort-but-loud: record and continue to the next drive
             report.failures.append(
                 (str(t), f"copy failed mid-backup ({type(e).__name__}: {e}) — the record is NOT fully "
@@ -218,6 +239,19 @@ def backup_store(layout: StoreLayout, targets, *, marker: str = DEFAULT_MARKER,
             continue
         report.targets.append(r)
     return report
+
+
+def last_backup_ts(target) -> str | None:
+    """The UTC ts stamped in `target`'s last-success marker, or None if it is absent/unreadable (M7-02).
+    A READ of the external drive — writes nothing. None is the honest "no confirmed backup here" answer the
+    runner treats as stale (never-backed-up, unmounted, or a lost marker are one actionable fact: no fresh
+    backup, go look). An unreadable marker returns None too — the runner faults toward loud rather than
+    trusting an ambiguous mark."""
+    try:
+        p = Path(target) / SUCCESS_MARKER
+        return p.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
 
 
 def verify_restore(backup_root, scratch_root=None) -> dict:
