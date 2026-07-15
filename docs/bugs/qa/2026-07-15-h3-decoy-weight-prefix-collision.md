@@ -44,3 +44,15 @@ XPASS(strict) ("failed") until removed, which is the landed signal.
 
 See `docs/notes/2026-07-15-pr67-pr66-cold-review_qa.md` for the full review (all 11 #67 claims + all 6 #66
 checks CONFIRMED-CLOSED, plus the two LOW #66 findings LOCK-TEST-TAUT and DEPLOY-OVERLAY-DRIFT).
+
+## Fix (applied — PR #71, 2026-07-15)
+Landed on main after #67 (per SEQUENCING above; the apply branch is off main-with-#67, so the H3 code is
+present). Aligned with the reference `h3_decoy_fix.diff`:
+- `_col` now prefers an **EXACT** match over a prefix, so a real `Weight` column wins over a
+  `Weighted Average Life` decoy (the decoy body parses to `[0.60, 0.40]`, the real column — no fault needed).
+- `_weight_prefix_count` faults **loud** when >1 columns start with "weight" and none is exactly "Weight":
+  `ambiguous holdings header for … : multiple columns start with 'weight' and none is exactly 'Weight' —
+  refusing to guess the weight column` (the genuinely-ambiguous case, fail-loud not silent).
+- The `xfail(strict=True)` marker is removed — `test_holdings_weight_decoy.py` is now a passing regression
+  guard, plus a new `test_two_weight_prefixed_columns_with_no_exact_weight_faults_loud` pinning the fault.
+- Full suite green. **Status: FIXED.**

@@ -144,16 +144,31 @@ def parse_spdr_holdings(body: bytes, ticker: str) -> pd.DataFrame:
     rows = _rows_from_body(body)
 
     def _col(cells, prefix):
-        # H3: locate a header column by PREFIX (startswith), so a known issuer variant like "Weight (%)"
-        # resolves — where exact `"weight" in norm` membership faulted with `no holdings header`. A
-        # genuinely alien header (no cell starting "name"/"weight") still matches nothing and the row
-        # FAULTS: trading the loud fault for a silent misparse of an unknown layout would be a severity
-        # inversion (the mandatory negative test pins that). Accept what's been seen; keep faulting on what
-        # hasn't. Returns the first matching column index, or None.
+        # H3: locate a header column by name, so a known issuer variant like "Weight (%)" resolves — where
+        # exact `"weight" in norm` membership faulted with `no holdings header`. A genuinely alien header
+        # (no cell starting "name"/"weight") still matches nothing and the row FAULTS: trading the loud
+        # fault for a silent misparse of an unknown layout would be a severity inversion.
+        #
+        # H3-DECOY: prefer an EXACT match over a prefix match, so a decoy column that merely STARTS with the
+        # prefix (e.g. "Weighted Average Life", a real SPDR fixed-income column) never shadows the real
+        # "Weight" column. Returns the exact-match index if present, else the FIRST prefix match, else None;
+        # an ambiguous >1-prefix header with no exact winner is caught loud by `_weight_prefix_count` below.
+        prefix_hit = None
         for idx, c in enumerate(cells):
-            if c.strip().lower().startswith(prefix):
+            norm = c.strip().lower()
+            if norm == prefix:
                 return idx
-        return None
+            if prefix_hit is None and norm.startswith(prefix):
+                prefix_hit = idx
+        return prefix_hit
+
+    def _weight_prefix_count(cells):
+        # H3-DECOY: how many columns start with "weight" when there is NO exact "Weight" column. >1 means
+        # the layout is genuinely ambiguous (e.g. "Weighted Average Life" + "Weight (%)") and first-match
+        # would silently guess — fault loud instead. An exact "weight" column disambiguates (returns 0).
+        if any(c.strip().lower() == "weight" for c in cells):
+            return 0
+        return sum(1 for c in cells if c.strip().lower().startswith("weight"))
 
     header_idx = None
     header: list[str] = []
@@ -163,6 +178,10 @@ def parse_spdr_holdings(body: bytes, ticker: str) -> pd.DataFrame:
             break
     if header_idx is None:
         raise HoldingsIngestError(f"no holdings header (Name/Weight) in body for {ticker}")
+    if _weight_prefix_count(header) > 1:
+        raise HoldingsIngestError(
+            f"ambiguous holdings header for {ticker}: multiple columns start with 'weight' and none is "
+            f"exactly 'Weight' — refusing to guess the weight column")
 
     name_i, weight_i = _col(header, "name"), _col(header, "weight")
     ticker_i = _col(header, "ticker")  # §4b: the constituent's Tiingo price-lookup symbol (display-only)
