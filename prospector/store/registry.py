@@ -78,15 +78,20 @@ class Registry:
             self.conn.row_factory = sqlite3.Row
             return
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        # `timeout=0`: the connection's busy-wait comes from OUR explicit PRAGMA below, NOT the sqlite3
+        # connect default (which is 5000 ms and would silently backstop a dropped PRAGMA — the LOCK-TEST-TAUT
+        # tautology: the old value-check passed even with the PRAGMA gone). Setting the belt authoritatively
+        # here makes a dropped PRAGMA fail its guarding test; running it FIRST (before the WAL/DDL init
+        # below) means those steps still get the 5 s wait.
+        self.conn = sqlite3.connect(str(self.db_path), timeout=0, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
         # M7-06 belt (with the single-writer lock as the primary — see prospector/store/run_lock.py):
         # writer-vs-writer contention is structurally gone once one tick holds the run.lock, but the
         # residual is the brief lock the SQLite `.backup` API takes if a MANUAL `pros backup` overlaps a
         # tick. busy_timeout turns that from an immediate SQLITE_BUSY error into a short wait. Hardcoded —
         # promote to config only if it ever actually needs tuning (the config-under-real-pain rule).
         self.conn.execute("PRAGMA busy_timeout=5000")
+        self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(_DDL)
         if self.get_meta("schema_version") is None:
             self.set_meta("schema_version", str(SCHEMA_VERSION))

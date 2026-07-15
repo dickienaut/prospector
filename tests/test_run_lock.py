@@ -61,7 +61,14 @@ def test_a_killed_holder_leaves_no_stale_lock(tmp_path):
 
 # -- the belt: busy_timeout on the registry writer connection ------------------------------------------
 
-def test_busy_timeout_is_set_on_the_registry_writer_connection(registry):
+def test_busy_timeout_is_set_by_our_pragma_not_the_connect_default(registry):
+    # LOCK-TEST-TAUT: guard the M7-06 belt for REAL. The old check `busy_timeout == 5000` was tautological —
+    # CPython's `sqlite3.connect(timeout=5.0)` DEFAULT already yields 5000, so it passed identically with the
+    # writer's `PRAGMA busy_timeout=5000` deleted. The writer now connects `timeout=0` (default busy_timeout
+    # 0 — asserted below), so its reported 5000 can ONLY come from our PRAGMA: delete that line and this
+    # drops to 0 and FAILS. A behaviour assertion, not a value that rides the interpreter default.
+    import sqlite3
+    assert sqlite3.connect(":memory:", timeout=0).execute("PRAGMA busy_timeout").fetchone()[0] == 0
     assert registry.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
 
 

@@ -70,7 +70,7 @@ line 47` can.
 | 8 | First backup | completes to both targets | exit status · files on the drives | **GATE** |
 | 9 | `verify-restore` | reindex succeeds; counts match the live store | command output · spot-check counts | **GATE** (an untested backup is a hope) |
 | 10 | `deploy.sh` refusal under a held lock | refuses, nonzero, the message | shell observation | **GATE** |
-| 11 | Dual `lock-path` identity | identical path from **both** checkouts | `pros store lock-path` in dev · in prod | **GATE** (the assumption the dev-side lock stands on) |
+| 11 | Dual `lock-path` identity | identical path from **both** checkouts | `pros store lock-path` in dev · in prod | **GATE** (the assumption the dev-side lock stands on — **closes DEPLOY-OVERLAY-DRIFT**, the one gap the deploy lock cannot verify from inside a single checkout) |
 | 12 | API key present | fail-fast does **not** fire | **both** checkouts' `.env` | **GATE** (capture) |
 | 13 | Budget number set | `capture.monthly_budget_usd` = *value* | the merged config | **GATE** (capture) |
 | 14 | Armed byte-compare | issued == query, byte-exact, on **one** live call | the comparison itself | **GATE** (capture does not arm until this passes) |
