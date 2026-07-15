@@ -211,6 +211,27 @@ def test_a_blessed_target_failing_mid_copy_records_a_failure_and_still_backs_up_
     assert (healthy / "registry.sqlite").is_file()
 
 
+def test_a_non_drive_midcopy_fault_does_not_get_the_drive_health_hint(layout, registry, tmp_path, monkeypatch):
+    """BK-MSG-01: the broad mid-copy `except` is deliberate (fall through to the healthy drive), but the
+    operator hint must match the cause. A NON-OSError fault (a code bug in the copy path, not a degraded
+    drive) must NOT be labelled 'retry once the drive is healthy' — retrying won't fix a bug; it must
+    surface as an unexpected error to investigate, carrying the real exception class."""
+    _seed(layout, registry)
+    target = _bless(tmp_path / "hd1")
+
+    def boom_copy2(src, dst, *a, **k):
+        raise KeyError("not a drive fault — a programming error in the copy path")
+    monkeypatch.setattr(backup_module.shutil, "copy2", boom_copy2)
+
+    report = backup_store(layout, [target])
+
+    assert len(report.failures) == 1
+    _, reason = report.failures[0]
+    assert "KeyError" in reason                              # the real cause is surfaced ...
+    assert "retry once the drive is healthy" not in reason  # ... not the misleading drive hint
+    assert "unexpected error" in reason
+
+
 # -- M7-02: the last-success marker (the runner's backup-health input) --------------------------------
 
 def test_success_marker_is_stamped_on_a_verified_target_and_read_back(layout, registry, tmp_path):

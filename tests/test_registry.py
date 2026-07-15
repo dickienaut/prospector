@@ -59,6 +59,16 @@ def test_pending_uploads_mark_uploaded_round_trip(registry):
     assert row["uploaded_at"] == "2026-07-14T14:00:00Z"
 
 
+def test_upload_table_name_is_validated_fail_closed(registry):
+    # sql-assert: the table name is interpolated into the SQL. The guard must fail CLOSED even under
+    # `python -O` (which strips `assert`) — an unknown table must never reach a query. The literal-dict
+    # lookup raises KeyError; it never builds `SELECT * FROM <arbitrary>`.
+    with pytest.raises(KeyError):
+        registry.pending_uploads("events; DROP TABLE events")
+    with pytest.raises(KeyError):
+        registry.mark_uploaded("evil", "e1", "2026-07-14T14:00:00Z")
+
+
 def test_meta_get_set_round_trip(registry):
     assert registry.get_meta("no_such_key") is None
     registry.set_meta("config_hash", "abc123")

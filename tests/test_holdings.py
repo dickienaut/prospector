@@ -82,6 +82,29 @@ def test_parse_header_but_no_rows_raises():
         parse_spdr_holdings(body, "XLK")
 
 
+def test_parse_accepts_a_weight_percent_header_variant():
+    # H3: a plausible real issuer variant "Weight (%)" must resolve — exact `"weight" in norm` membership
+    # faulted on it with `no holdings header`. Percent weights 50 + 50 -> 0.50 + 0.50 = 1.0 (H1 band).
+    body = (b"Name,Weight (%),Ticker,Identifier,Sector\n"
+            b"APPLE INC,50,AAPL,037833100,Information Technology\n"
+            b"MICROSOFT CORP,50,MSFT,594918104,Information Technology\n")
+    frame = parse_spdr_holdings(body, "XLK")
+    assert list(frame["name"]) == ["APPLE INC", "MICROSOFT CORP"]
+    assert list(frame["weight"]) == [0.50, 0.50]           # the "Weight (%)" column resolved, not faulted
+
+
+def test_parse_still_faults_on_a_genuinely_alien_header():
+    # H3 (MANDATORY negative test): widening the header match must NEVER convert the loud `no holdings
+    # header` fault into a silent misparse of an unrecognized layout — that severity inversion would be
+    # worse than the original bug. A header with no cell starting "name"/"weight" is unknown territory and
+    # must still fault to manual review. Accept what's been seen; keep faulting on what hasn't.
+    body = (b"Security,Pct,Symbol\n"
+            b"APPLE INC,50,AAPL\n"
+            b"MICROSOFT CORP,50,MSFT\n")
+    with pytest.raises(HoldingsIngestError, match="no holdings header"):
+        parse_spdr_holdings(body, "XLK")
+
+
 def test_parse_faults_on_fraction_scaled_weights_never_mis_scales_silently():
     # H1: a file already expressed in FRACTIONS (0.60/0.40, not 60%/40%) would be ÷100'd to 0.006/0.004,
     # summing to ~0.01 — a silent 100x-small scale, invisible to coverage (scale-invariant) but fatal to
