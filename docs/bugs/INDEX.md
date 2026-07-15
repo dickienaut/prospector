@@ -99,11 +99,11 @@ alarm-layer cluster: three of the five HIGH items sit on the fault/alarm layer, 
 | **R3** | two cash/derivative lines sharing the `-` sentinel collapse to one diff key; the lighter one silently vanishes | rebalance | identity-anchor · fail-silent | 🟡 (subsumed by R1's `-`-exclusion #55; no dedicated guard) | 5 | R1's `_is_cash_or_derivative` drops `-` lines before the key |
 | **R4** | rebalance prior-parse fault has no `key=` → moving prior date pages daily (E1 recurrence on a sibling path) | rebalance | spurious-fire | ✅ #55 | 7 | `::test_unparseable_prior_fault_signature_is_stable_across_ticks` · [record](qa/2026-07-14-rebalance-prior-parse-volatile-message.md) |
 | **BK-2** | mtime-window aliasing: a same-size content change within 2s of the prior backup is silently skipped → stale HDD copy | backup | fail-silent | ✅ #56 | 8 | `test_backup.py::test_a_same_size_ingest_re_pull_within_the_mtime_window_still_re_copies` |
-| **M7-04** | `deploy.sh` can swap code/deps under an in-flight scheduled tick — no lock coordinates the two | deploy·runner | concurrency | ⭕ | judgment | lock/coordination — not yet designed |
+| **M7-04** | `deploy.sh` can swap code/deps under an in-flight scheduled tick — no lock coordinates the two | deploy·runner | concurrency | ✅ #66 | judgment | `deploy.sh` takes the runner's lock via `pros store lock-run` · `test_run_lock.py` · [decision](../decisions/2026-07-14-single-writer-lock-and-deploy-coordination.md) |
 | **M7-05** | heartbeat day keyed on LOCAL weekday while the cadence anchor is UTC; `schedule.weekly_day` dormant (read nowhere) | heartbeat·ops | doc-drift | ✅ #58 (swept by M7-01) | 9 | M7-01 retired the local-weekday gate + `weekly_day` |
 | **R2** | the *naive* R1 fix (route the diff through `priceable_members`) would drop foreign equities whose add/drop IS signal — needs a cash-sentinel, not the price-universe gate | rebalance | identity-anchor | ✅ (constraint honored by R1, #55) | 5 · judgment | R1's `-`-sentinel keeps foreign constituents in the diff |
 | **BK-3** | fire-and-forget copy: no post-copy read-back/checksum (the store's `write_atomic` does this; backup doesn't) | backup | — | 💤 (deferred, decision #57) | judgment | scheduled `verify-restore` leaning (decision #57) |
-| **M7-06** | no single-instance lock / no `busy_timeout` PRAGMA; concurrency rests on launchd serialization + atomic appends | runner·store | concurrency | ⭕ | judgment | `kickstart -k` escape hatch documented |
+| **M7-06** | no single-instance lock / no `busy_timeout` PRAGMA; concurrency rests on launchd serialization + atomic appends | runner·store | concurrency | ✅ #66 | judgment | single-writer `run.lock` (`fcntl.flock`) + `busy_timeout=5000` belt · `test_run_lock.py` · [decision](../decisions/2026-07-14-single-writer-lock-and-deploy-coordination.md) |
 | **GI-01** | couldn't verify `prospector.local.yaml`/`.env` are gitignored (source export carried no `.gitignore`) | config | — | ✅ (verified: `.gitignore:12`,`:15`) | judgment | both gitignored — verified 2026-07-14, not a defect |
 
 ## M6 discourse-capture review — 2026-07-13 (`notes/m6_capture_review_qa.md`)
@@ -148,9 +148,10 @@ project's signature "fix makes cry-wolf" shape.*
   against imagined behavior (pre-softening the guard is green-on-synthetic aimed at our own determinism
   guard). Our-side templating is already proven byte-deterministic. ✅ **CAP-USD** rides along — a loud
   `capture.budget:usd_unpriced` fault when armed-but-unpriced. (Both stacked, PR pending QA.)
-- ⭕ **Concurrency judgments** — **M7-04** (deploy vs in-flight tick, no lock) and **M7-06** (no single-instance
-  lock / `busy_timeout`) — design-judgment, currently resting on launchd serialization; open for a ratified
-  coordination design.
+- ✅ **Concurrency (M7-04 / M7-06) — LANDED (#66):** one single-writer `run.lock` (`fcntl.flock`), acquired
+  in-process by `pros run` and by `deploy.sh` (via `pros store lock-run`), + a `busy_timeout` belt. flock
+  releases on process death, so a crash never wedges the lock (`kickstart -k` stays safe). The invariant is
+  now mechanism, not assumption (decision `2026-07-14-single-writer-lock-and-deploy-coordination.md`).
 - 🟡 **B1 / B2** — ratified with an **honest residual**: `prospectus_accession` stays registrant-level
   (flagged in the docstring); following `filings.files[]` pagination is the named deferral. **R3** rides here
   too (subsumed by R1's `-`-exclusion; a dedicated two-`-`-line regression is the residual).
