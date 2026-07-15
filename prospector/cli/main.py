@@ -151,9 +151,12 @@ def backup_cmd(store_path):
         raise click.ClickException(f"no store at {layout.root} — nothing to back up")
     cfg, _ = load_config(_CONFIG_PATH)
     bcfg = cfg.get("backup") or {}
+    # M7-02: stamp each verified-success target with this UTC time so the runner can fold `backup.stale`
+    # into the §8a heartbeat's health channel (decision 2026-07-14-backup-health-one-fault-channel.md).
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     try:
         report = backup_store(layout, bcfg.get("targets") or [],
-                              marker=bcfg.get("marker") or DEFAULT_MARKER)
+                              marker=bcfg.get("marker") or DEFAULT_MARKER, now=now)
     except BackupError as e:
         raise click.ClickException(str(e))
     for r in report.targets:
