@@ -136,6 +136,41 @@ def store_verify_restore(backup_dir):
     click.echo("spot-check: compare these to the live store (`pros lead list` / `pros store reindex`)")
 
 
+@store_group.command("lock-path")
+@_store_option
+def store_lock_path(store_path):
+    """Print the single-writer lock file path (`<store.root>/run.lock`) — the path the runner and the deploy
+    coordination both use, derived from config the runtime's way (never hardcoded). A pure read."""
+    from prospector.store.run_lock import run_lock_path
+    layout = _layout(store_path)
+    click.echo(run_lock_path(layout.root))
+
+
+@store_group.command("lock-run", context_settings=dict(ignore_unknown_options=True))
+@_store_option
+@click.argument("command", nargs=-1, type=click.UNPROCESSED, required=True)
+def store_lock_run(store_path, command):
+    """Acquire the single-writer lock, run COMMAND while holding it, release on exit (M7-04). The runtime's
+    OWN flock (`prospector.store.run_lock`) — macOS-portable, since the shell `flock(1)` util does not exist
+    on macOS — so `deploy.sh` takes the SAME lock the runner holds and never swaps code/deps under an
+    in-flight tick. On contention: refuse with exit code 75 (EX_TEMPFAIL, 'a tick is in flight — retry');
+    otherwise propagate COMMAND's own exit code.  Usage:  pros store lock-run -- <command> [args...]"""
+    import subprocess
+
+    from prospector.store.run_lock import RunLockHeld, acquire
+    layout = _layout(store_path)
+    try:
+        lock = acquire(layout.root)
+    except RunLockHeld as e:
+        click.echo(f"REFUSED: {e}", err=True)
+        raise SystemExit(75)  # EX_TEMPFAIL — a tick is in flight; the caller (deploy.sh) retries
+    try:
+        completed = subprocess.run(list(command))
+    finally:
+        lock.release()
+    raise SystemExit(completed.returncode)
+
+
 # -- backup (fossil-store durability — a READ of the store, never run-now) -----
 
 
@@ -255,6 +290,18 @@ def run(store_path, heartbeat):
                                            model=str(capture_cfg.get("model", "claude-haiku-4-5")))
     now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     tick_date = now[:10]
+
+    # M7-04/M7-06 SINGLE-WRITER LOCK — AFTER config validation (a misconfigured run fails fast and touches
+    # nothing), BEFORE the registry opens or any fossil is written. A second tick (the scheduled fire OR a
+    # manual `pros run` in another shell) refuses HERE and exits nonzero, writing no fossils and paging no
+    # one (the legit tick is running; the duplicate is prevented noise). Held in a local for the whole tick
+    # — released when `run` returns/unwinds (WriterLock.__del__) and, belt, on process death (flock), so a
+    # crash or `kickstart -k` never leaves a stale lock. See prospector/store/run_lock.py.
+    from prospector.store.run_lock import RunLockHeld, acquire as _acquire_writer_lock
+    try:
+        _writer_lock = _acquire_writer_lock(layout.root)
+    except RunLockHeld as e:
+        raise click.ClickException(str(e))
 
     registry = Registry(layout.registry_path())
     try:

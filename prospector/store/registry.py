@@ -81,6 +81,12 @@ class Registry:
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
+        # M7-06 belt (with the single-writer lock as the primary — see prospector/store/run_lock.py):
+        # writer-vs-writer contention is structurally gone once one tick holds the run.lock, but the
+        # residual is the brief lock the SQLite `.backup` API takes if a MANUAL `pros backup` overlaps a
+        # tick. busy_timeout turns that from an immediate SQLITE_BUSY error into a short wait. Hardcoded —
+        # promote to config only if it ever actually needs tuning (the config-under-real-pain rule).
+        self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.executescript(_DDL)
         if self.get_meta("schema_version") is None:
             self.set_meta("schema_version", str(SCHEMA_VERSION))

@@ -51,10 +51,26 @@ if ! git -C "$PROD" diff --quiet -- config/prospector.yaml; then
   echo "      See docs/decisions/2026-07-12-local-config-overlay.md." >&2
   exit 3
 fi
-git -C "$PROD" checkout --quiet --detach "$TAG"
-
-# --- 4. sync deps from the tag's lockfile, and report.
-( cd "$PROD" && uv sync --locked )
+# --- 3b+4. Under the SINGLE-WRITER LOCK (M7-04): a deploy must never swap code/deps under an in-flight
+#     scheduled tick. Take the SAME lock the runner holds — `pros store lock-run` (prospector.store.run_lock,
+#     fcntl.flock), macOS-PORTABLE (the shell `flock(1)` util does not exist on macOS). Run from the DEV repo
+#     (this release's code + its current venv, so the command exists even on the first deploy of this
+#     feature); on the Mini, dev and prod share the ONE external store, so the lock path the dev derives
+#     matches the prod runner's. The checkout + `uv sync` run TOGETHER under one hold. On contention: refuse
+#     and retry, never wait silently (`lock-run` exits 75 = EX_TEMPFAIL).
+if ! ( cd "$REPO" && uv run pros store lock-run -- \
+        bash -euo pipefail -c '
+          git -C "$0" checkout --quiet --detach "$1"
+          cd "$0" && uv sync --locked
+        ' "$PROD" "$TAG" ); then
+  rc=$?
+  if [ "$rc" -eq 75 ]; then
+    echo "STOP: a scheduled tick is in flight (single-writer lock held) — retry the deploy in a few minutes." >&2
+  else
+    echo "ERROR: deploy mutation (checkout / uv sync) failed under the lock — see the message above." >&2
+  fi
+  exit 4
+fi
 echo "deployed ${TAG} → ${PROD}"
 echo "  worktree HEAD: $(git -C "$PROD" rev-parse --short HEAD)  (detached at ${TAG})"
 echo "  the scheduler runs the new code on its next fire (run.sh runs \`uv run\` fresh — no restart needed)."
