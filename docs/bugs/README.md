@@ -139,6 +139,21 @@ regenerated section rots, or a "closed" changelog line is added without deleting
   closes. (Kin to the whole doc-discipline: amend-never-regenerate, the `2026-07-11-docs-reorganization` +
   `-doc-naming-convention` rules.)
 
+#### Non-defect Class values — `one-off` and `judgment`
+Not every row is one of the numbered patterns above. Two Class values sit **outside** §1a's defect list,
+and the boundary between them is load-bearing (so the register never blurs "adjudicated" or "singleton"
+into "unexamined"):
+- **`one-off`** — a **real defect** that matches **no** recurring pattern: a genuine singleton, the honest
+  answer when forcing a numbered class would coin a fake one. It still has a fix + a guarding test.
+- **`judgment`** — **not a defect at all.** An adjudicated **design call** (M7-04 / M7-06 concurrency
+  posture, R2's cash-sentinel constraint, BK-3's deferral) or a **verified non-defect** (GI-01 — checked
+  and cleared). Its "resolution" is a ruling or a verification, recorded so the row is a deliberate,
+  complete entry — but there is nothing *broken* to fix.
+- **The boundary:** `one-off` is *a defect with no pattern*; `judgment` is *no defect* — an owner /
+  design-thread call (or a clearance) captured so the register stays complete. Neither is a §1a taggable
+  failure-class; both live in the Class column so a reader never mistakes an adjudicated call or a cleared
+  check for un-hit ground.
+
 ### §1b · The frame — not taggable (read to understand: root · countermeasure · severity axis)
 
 *Never a bug's tag. These are the lenses: **2** the root (why the silent set stays invisible), **6** the
@@ -228,14 +243,23 @@ genuinely new subsystem or shape appears — the same discipline as the class nu
 **Shape — *how it failed*** (one or more; the recurring cross-cutting patterns — a genuinely singular shape
 gets `—`):
 `fail-silent` · `spurious-fire` · `identity-anchor` · `green-on-synthetic` · `invariant-in-prose` ·
-`test-passes-wrong-reason` · `convergent-prior` · `doc-drift` · `split-path` · `count-lie`.
+`test-passes-wrong-reason` · `convergent-prior` · `doc-drift` · `split-path` · `count-lie` · `concurrency`.
 *Also on older rows (finer-grained, doubling as their class): `fault-isolation` (N6, BK-1), `state-as-signal`
 (N10).*
 
-The **Shape axis is the §1a taggable classes made searchable** — `green-on-synthetic` is class 1,
-`invariant-in-prose` is class 3, `test-passes-wrong-reason` is class 4, `identity-anchor` is class 5,
-`spurious-fire` is the class-7 nuisance-alarm surface, `doc-drift` is class 9. Grep a shape to find every
-instance of a class across every subsystem; that cross-cut is the point.
+The **Shape axis is the §1a taggable classes made searchable** — the correspondence, written down here so
+the two columns can't silently drift apart (the denormalization is **deliberate**: Shape is the greppable
+projection of the classes): `green-on-synthetic` ↔ class 1 · `invariant-in-prose` ↔ 3 ·
+`test-passes-wrong-reason` ↔ 4 · `identity-anchor` ↔ 5 · `spurious-fire` ↔ the class-7 nuisance-alarm
+surface · `doc-drift` ↔ 9 · `fail-silent` ↔ the class-8 fail-silent-degradation **frame** (§1b — the
+severity axis, not a numbered §1a pattern). `concurrency` (M7-04, M7-06) is the exception that proves the
+rule: a genuinely new shape with **no §1a class twin** — its rows are `judgment` design-calls, not a
+numbered defect pattern; if a *coded* concurrency defect ever lands, that is when it earns a class number.
+Grep a shape to find every instance of a class across every subsystem; that cross-cut is the point.
+
+*Future guard (noted, NOT built — the real-pain rule):* if the two columns ever actually drift, the fix is
+a one-line lineage assertion over `INDEX.md` (a class-7 row must carry `spurious-fire`; a class-1 row
+`green-on-synthetic`; …). Build it the day a drift bites, not before.
 
 ---
 

@@ -99,19 +99,19 @@ alarm-layer cluster: three of the five HIGH items sit on the fault/alarm layer, 
 | **R3** | two cash/derivative lines sharing the `-` sentinel collapse to one diff key; the lighter one silently vanishes | rebalance | identity-anchor · fail-silent | 🟡 (subsumed by R1's `-`-exclusion #55; no dedicated guard) | 5 | R1's `_is_cash_or_derivative` drops `-` lines before the key |
 | **R4** | rebalance prior-parse fault has no `key=` → moving prior date pages daily (E1 recurrence on a sibling path) | rebalance | spurious-fire | ✅ #55 | 7 | `::test_unparseable_prior_fault_signature_is_stable_across_ticks` · [record](qa/2026-07-14-rebalance-prior-parse-volatile-message.md) |
 | **BK-2** | mtime-window aliasing: a same-size content change within 2s of the prior backup is silently skipped → stale HDD copy | backup | fail-silent | ✅ #56 | 8 | `test_backup.py::test_a_same_size_ingest_re_pull_within_the_mtime_window_still_re_copies` |
-| **M7-04** | `deploy.sh` can swap code/deps under an in-flight scheduled tick — no lock coordinates the two | deploy·runner | — (concurrency) | ⭕ | judgment | lock/coordination — not yet designed |
+| **M7-04** | `deploy.sh` can swap code/deps under an in-flight scheduled tick — no lock coordinates the two | deploy·runner | concurrency | ⭕ | judgment | lock/coordination — not yet designed |
 | **M7-05** | heartbeat day keyed on LOCAL weekday while the cadence anchor is UTC; `schedule.weekly_day` dormant (read nowhere) | heartbeat·ops | doc-drift | ✅ #58 (swept by M7-01) | 9 | M7-01 retired the local-weekday gate + `weekly_day` |
 | **R2** | the *naive* R1 fix (route the diff through `priceable_members`) would drop foreign equities whose add/drop IS signal — needs a cash-sentinel, not the price-universe gate | rebalance | identity-anchor | ✅ (constraint honored by R1, #55) | 5 · judgment | R1's `-`-sentinel keeps foreign constituents in the diff |
 | **BK-3** | fire-and-forget copy: no post-copy read-back/checksum (the store's `write_atomic` does this; backup doesn't) | backup | — | 💤 (deferred, decision #57) | judgment | scheduled `verify-restore` leaning (decision #57) |
-| **M7-06** | no single-instance lock / no `busy_timeout` PRAGMA; concurrency rests on launchd serialization + atomic appends | runner·store | — (concurrency) | ⭕ | judgment | `kickstart -k` escape hatch documented |
+| **M7-06** | no single-instance lock / no `busy_timeout` PRAGMA; concurrency rests on launchd serialization + atomic appends | runner·store | concurrency | ⭕ | judgment | `kickstart -k` escape hatch documented |
 | **GI-01** | couldn't verify `prospector.local.yaml`/`.env` are gitignored (source export carried no `.gitignore`) | config | — | ✅ (verified: `.gitignore:12`,`:15`) | judgment | both gitignored — verified 2026-07-14, not a defect |
 
 ## M6 discourse-capture review — 2026-07-13 (`notes/m6_capture_review_qa.md`)
 
 | ID | Symptom (one line) | Subsystem | Shape | Status | Class | Guarding test / fix site |
 |----|--------------------|-----------|-------|--------|-------|--------------------------|
-| **CAP-DRIFT** | `capture.query_drift` compares the provider-issued query byte-exact; any benign normalization (trim / smart-quote / case) fires it on **every** capture — cry-wolf on the determinism guard | capture·runner | spurious-fire · green-on-synthetic | ⭕ (settle before capture is armed) | 1,7 | normalized compare (`issued.strip()!=query.strip()`); capture currently unarmed |
-| **CAP-USD** | monthly-USD cap silently stops enforcing if `unit_price_usd` is unset/0 — only the weekly count cap then guards spend | capture | fail-silent | ⭕ (low / latent) | 8 | fault/warn if `monthly_budget_usd` set while `unit_price_usd` falsy |
+| **CAP-DRIFT** | `capture.query_drift` compares the provider-issued query byte-exact; any benign normalization (trim / smart-quote / case) fires it on **every** capture — cry-wolf on the determinism guard | capture·runner | spurious-fire · green-on-synthetic | 🟡 ratified byte-exact; live-arming verify is the gate (stacked, PR pending QA) | 1,7 | **ordered by ruling** ([decision](../decisions/2026-07-14-query-drift-byte-exact.md)): observe first — one armed byte-compare **before arming** → byte-exact stands if the echo is clean → only a *demonstrated* transform earns a *minimal, observed-scoped* normalization (trims → `strip` only; documented finding), never a pre-emptive `strip()`; tests `test_build_queries_deterministic_and_ordered` + `test_query_drift_is_byte_exact_a_cosmetic_normalization_still_faults` |
+| **CAP-USD** | monthly-USD cap silently stops enforcing if `unit_price_usd` is unset/0 — only the weekly count cap then guards spend | capture | fail-silent | ✅ (stacked, PR pending QA) | 8 | loud `capture.budget:usd_unpriced` fault when armed + unpriced · `test_capture.py::test_usd_cap_unenforceable_when_unpriced_faults_loud` |
 
 ---
 
@@ -126,9 +126,14 @@ alarm-layer cluster: three of the five HIGH items sit on the fault/alarm layer, 
   heartbeat cluster (**M7-01** catch-up + **M7-03** in-email honesty, #58) the M7 dead-man now reports the two
   facts that matter — *is the runner alive* and *is the record being backed up*. Its "ran but bad" checksum
   sibling **BK-3** stays deferred (decision §3, scheduled `verify-restore`).
-- ⭕ **CAP-DRIFT** — settle the byte-exact `query_drift` guard (normalized compare, or prove byte-exactness
-  against one live armed call) **before capture is armed**; today the failure mode is silent, on day one of
-  arming it pages daily. **CAP-USD** (latent) rides along.
+- 🟡 **CAP-DRIFT** — **SETTLED (decision 2026-07-14): observe first, then decide — not either/or.** The
+  ORDERED gate, not a menu: (1) one armed byte-compare **before capture is armed** (it ships disabled) to
+  see what the provider actually echoes; (2) the byte-exact guard **stands if the echo is clean**; (3)
+  **only** a *demonstrated* transform earns a **minimal normalization scoped to that transform** (trims →
+  `strip` and only strip; smart-quotes → that mapping), recorded as a finding — never a pre-emptive `strip()`
+  against imagined behavior (pre-softening the guard is green-on-synthetic aimed at our own determinism
+  guard). Our-side templating is already proven byte-deterministic. ✅ **CAP-USD** rides along — a loud
+  `capture.budget:usd_unpriced` fault when armed-but-unpriced. (Both stacked, PR pending QA.)
 - ⭕ **Concurrency judgments** — **M7-04** (deploy vs in-flight tick, no lock) and **M7-06** (no single-instance
   lock / `busy_timeout`) — design-judgment, currently resting on launchd serialization; open for a ratified
   coordination design.

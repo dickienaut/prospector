@@ -1046,6 +1046,18 @@ def _run_capture(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog
     budget = capture.CaptureBudget(deps.registry)
     max_week = int(cap.get("max_searches_per_week", 60))
     unit_price = float(cap.get("unit_price_usd") or 0.0)
+    if not unit_price:
+        # CAP-USD: we are ARMED (monthly_budget_usd is set — we passed the disabled check above) but
+        # unit_price_usd is unset/0, so the month's estimated spend `mo * unit_price` is always $0 and the
+        # USD cap below (`mo * unit_price >= budget_usd`) can NEVER fire — the dollar ceiling silently
+        # stops enforcing, leaving ONLY the weekly COUNT cap to guard spend. Make the degradation LOUD
+        # (§10, never a silent skip): one stable-key fault so the operator sees the ceiling is inert
+        # instead of discovering it after an overrun. This WARNS once per tick (rides the heartbeat while
+        # it persists); capture still runs — the count cap guards — so it does not disable capture.
+        _emit_fault(store, "capture.budget",
+                    "monthly_budget_usd is set but unit_price_usd is unset/0 — the USD cap cannot enforce "
+                    "(estimated spend is $0); only max_searches_per_week guards spend",
+                    now, faults, key="capture.budget:usd_unpriced")
     k = int(cap.get("k_queries", 5))
     m = int(cap.get("m_fetch_urls", 2))
     top_n = int(cap.get("top_n", 5))
@@ -1083,7 +1095,15 @@ def _run_capture(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog
                 continue
             budget.record_search(week_key, month_key, now)  # metered the moment a search is issued
             issued = res.get("query_issued")
-            if issued is not None and issued != query:  # §6 no-LLM-authorship: fault loud on divergence
+            # §6 no-LLM-authorship: fault loud when the provider's issued query diverges from OUR templated
+            # one — the tripwire for the model silently rewriting our search. BYTE-EXACT by ruling
+            # (docs/decisions/2026-07-14-query-drift-byte-exact.md): do NOT normalize (.strip()/case/
+            # quote-fold) the comparison — normalizing DISCARDS the evidence this guard exists to catch.
+            # Our side is proven deterministic (test_build_queries_deterministic_and_ordered); the residual
+            # — does a LIVE model echo our query byte-for-byte — is verified by ONE armed byte-compare
+            # BEFORE capture is armed (it ships disabled). If that call shows benign normalization,
+            # softening this is a DELIBERATE, documented finding (a new decision), never a silent .strip().
+            if issued is not None and issued != query:
                 _emit_fault(store, "capture.query_drift",
                             f"provider issued {issued!r} != templated {query!r}", now, faults,
                             lead=lead, key="capture.query_drift")
