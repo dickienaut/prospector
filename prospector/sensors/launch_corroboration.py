@@ -233,7 +233,11 @@ def cross_stream_lag(lead_events: Iterable[Mapping]) -> timedelta | None:
     category is real data). None when the lead has no structural spawn or no corroborating launch
     (undefined, not fabricated). Reuses `launch_lag`, which reads ONLY `detected_at` (lag integrity)."""
     events = list(lead_events)
-    spawns = sorted(e["ts"] for e in events if e.get("type") == "lead.spawned")
+    # lag-lexical-sort: order T1 (the earliest structural spawn) CHRONOLOGICALLY, symmetric with T2's
+    # `min(..., key=parse_ts)` below. A bare `sorted(...)` is a LEXICAL string sort — correct only while
+    # every ts is a canonical whole-second `…Z`, but a fractional-second or otherwise differently-spelled
+    # ts mis-orders (e.g. "…00.5Z" sorts before "…00Z"), picking a wrong T1 and shaving the signed lag.
+    spawns = sorted((e["ts"] for e in events if e.get("type") == "lead.spawned"), key=parse_ts)
     launches = [e["payload"] for e in events
                 if e.get("type") == "launch" and isinstance(e.get("payload"), Mapping)
                 and e["payload"].get("detected_at")]
