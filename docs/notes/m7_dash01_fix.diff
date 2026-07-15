@@ -1,0 +1,24 @@
+--- a/prospector/dashboard/app.py	2026-07-14 20:17:02
++++ b/prospector/dashboard/app.py	2026-07-14 20:19:27
+@@ -78,7 +78,8 @@
+         faults = views.fault_log(registry)
+ 
+         # --- the dead-man + the ceiling, up top (the alert posture) -------------------------------
+-        hb = views.heartbeat(runs, now, views.last_heartbeat_sent(registry), floor_days=7)  # M7-03
++        _hb_cadence = int((cfg.get("schedule") or {}).get("heartbeat_cadence_days", 7))  # M7-DASH-01: one clock
++        hb = views.heartbeat(runs, now, views.last_heartbeat_sent(registry), floor_days=_hb_cadence)  # M7-03
+         cs = views.ceiling_status(states, ceiling)
+         c1, c2, c3 = st.columns(3)
+         c1.metric("Heartbeat", "OK" if hb["ok"] else "BROKEN",
+--- a/prospector/dashboard/export.py	2026-07-14 20:17:02
++++ b/prospector/dashboard/export.py	2026-07-14 20:19:27
+@@ -194,7 +194,8 @@
+     shadow_days = int((cfg.get("dispersion") or {}).get("shadow_days", 90))
+ 
+     cs = views.ceiling_status(states, ceiling)
+-    hb = views.heartbeat(runs, now, views.last_heartbeat_sent(registry))  # M7-03: last heartbeat, not run
++    _hb_cadence = int((cfg.get("schedule") or {}).get("heartbeat_cadence_days", 7))  # M7-DASH-01: one clock
++    hb = views.heartbeat(runs, now, views.last_heartbeat_sent(registry), floor_days=_hb_cadence)  # M7-03: last heartbeat, not run
+     shadow = views.shadow_panel(states, now, shadow_days)
+ 
+     parts: list[str] = [_manifest(store_path, now, runs, cs, len(shadow), hb), ""]
