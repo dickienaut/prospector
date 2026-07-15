@@ -47,6 +47,7 @@ path places, sizes, or recommends a trade.
 | `store/snapshots.py`→`fold/snapshots.py` | Reactive snapshot policy + writer (fail-loud on divergence) | `should_snapshot()`, `write_snapshot()` |
 | `store/s3_sync.py` | Fire-and-forget S3 mirror; `.backup`-only registry upload | `S3Sync.sync()` |
 | `store/backup.py` | Local dual-HDD fossil backup (§7) — incremental tree mirror + WAL-safe registry `.backup`; fail-loud blessing marker; restore-verify; **M7-02 last-success marker** the runner reads to fold `backup.stale` into the §8a heartbeat's health | `backup_store()`, `last_backup_ts()`, `verify_restore()` |
+| `store/run_lock.py` | Single-writer lock (M7-04/M7-06) — `fcntl.flock` on `<store.root>/run.lock`; one tick per store (`pros run` refuses a second), `deploy.sh` shares it via `pros store lock-run`; releases on process death (no stale lock) | `acquire()`, `run_lock_path()`, `RunLockHeld` |
 | `store/reindex.py` | Rebuild the registry from the `events/`+`snapshots/` trees | `rebuild_registry()` |
 | `store/fund_registry.py` | Series-ID-keyed fund entries; the HECO rule enforced at the write path | `FundRegistry.upsert()` |
 | `primitives/atomic.py` | tmp→fsync→rename atomic write + SHA-256 (vendored, hardened) | `write_atomic()`, `write_json_atomic()` |
@@ -230,6 +231,7 @@ recompute (its only option is `--store`).
 | `pros identity queue` | The manual-resolution queue |
 | `pros store reindex` | Rebuild the index from the fossil record (repair, not run-now) |
 | `pros store verify-restore <dir>` | Rebuild a throwaway store from a backup's fossils; print counts to spot-check (restore proof) |
+| `pros store lock-path` / `lock-run -- <cmd>` | The single-writer lock (M7-04): print `<store.root>/run.lock`; or acquire it and run a command under it (deploy coordination; refuses with exit 75 if a tick is in flight) |
 | `pros backup` | Mirror the fossil store + WAL-safe registry to the configured HDD targets (durability; a read of the store, fail-loud) |
 | `pros backtest --from … --to …` | Calibration + the acceptance gate (writes only under `backtest/`) |
 

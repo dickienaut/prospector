@@ -78,7 +78,8 @@ def _is_cash_or_derivative(row) -> bool:
     price-universe gate `holdings.priceable_members`, which ALSO drops FOREIGN equities whose genuine
     add/drop/reweight IS a rebalance signal; the diff keeps foreign constituents, drops only non-security
     lines."""
-    ticker = str(row.get("ticker", "")).strip()
+    _t = row.get("ticker", "")
+    ticker = "" if pd.isna(_t) else str(_t).strip()   # S5: NaN -> "" ("unknown"), never the string "nan"
     if ticker == "-":                       # the SSGA cash/derivative sentinel (explicit dash only —
         return True                          # a MISSING/blank ticker column is "unknown", NOT cash:
     return "MONEY MARKET" in str(row.get("name", "")).upper()   # synthetic frames omit ticker entirely
@@ -91,8 +92,9 @@ def _identified(frame: pd.DataFrame) -> dict[str, dict]:
     are one row per lot)."""
     out: dict[str, dict] = {}
     for _, row in frame.iterrows():
-        ident = str(row.get("identifier", "")).strip()
-        if not ident or _is_cash_or_derivative(row):
+        _id = row.get("identifier", "")
+        ident = "" if pd.isna(_id) else str(_id).strip()   # S5: NaN identifier -> "" -> excluded, never a
+        if not ident or _is_cash_or_derivative(row):        # truthy "nan" key treated as a real security
             continue
         w = row.get("weight")
         prev = out.get(ident)

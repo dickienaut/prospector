@@ -34,20 +34,25 @@ full finding, and the rule/decision each spawned is the lineage.
 | ID | Symptom (one line) | Subsystem | Shape | Status | Class | Guarding test / fix site |
 |----|--------------------|-----------|-------|--------|-------|--------------------------|
 | **H1** | holdings weights already-fractional → silently ÷100 too small → every fund `dormant` | ingest·holdings | green-on-synthetic · fail-silent | ✅ | 1,2,8 | per-file weight-sum sanity guard, `holdings.py:171` |
-| **H2** | real xlsx frozen to disk mislabeled `.csv` | ingest·holdings | convergent-prior | ⭕ | 2 | `ext="xlsx"` (Tier-4) |
-| **H3** | `"Weight (%)"` header variant → `no holdings header` | ingest·holdings | convergent-prior | ⭕ | 2 | prefix/contains match (Tier-4) |
-| **H4** | plain `REAL ESTATE INVESTMENT TRUSTS` header → `fault` not Real-Estate rollup | ingest·soi | green-on-synthetic | ⭕ (re-scoped synthetic-only) | 1 | plain-REIT alias in `gics_industry_alias` |
+| **H2** | real xlsx frozen to disk mislabeled `.csv` | ingest·holdings | convergent-prior | ✅ (already on main) | 2 | `holdings.py:320` `ext="xlsx"` — fixed pre-currency-rule; **register drift** corrected by the sweep |
+| **H3** | `"Weight (%)"` header variant → `no holdings header` | ingest·holdings | convergent-prior | ✅ #67 | 2 | prefix `_col(startswith)` in `holdings.py` · `test_holdings.py::test_parse_accepts_a_weight_percent_header_variant` + `::test_parse_still_faults_on_a_genuinely_alien_header` (mandatory negative) |
+| **H4** | plain `REAL ESTATE INVESTMENT TRUSTS` header → `fault` not Real-Estate rollup | ingest·soi | green-on-synthetic | ✅ (alias present; real fault-path synthetic-only) | 1 | `gics_industry_alias: Real Estate Investment Trusts` in config; on real NPORT-EX the plain header sits under `CORPORATE BONDS` (excluded from the equity rollup), so the fault path is synthetic-only-reachable |
 | **S1** | same-`ts` no-`event_id` fold not order-invariant | fold | green-on-synthetic | ✅ | 1 | fold requires/handles `event_id` |
 | **S2** | two sub-second snapshots collide → `SnapshotDivergenceError` | snapshot·store | — | ✅ | — | sub-second `ts_compact` |
-| **S3** | `^…$` regex admits trailing `\n` | store | — | ⭕ | — | `\Z`/`fullmatch` (Tier-4) |
-| **S5** | pandas NaN sector → `"nan"` passes guards → phantom sector weight | ingest·soi | convergent-prior · fail-silent | ⭕ | 1,2 | `pd.isna` guard |
+| **S3** | `^…$` regex admits trailing `\n` | store | — | ✅ (already on main) | — | `fund_registry.py:33-34` + `envelope.py:26` all use `\Z` (every write-path validator); **register drift** corrected |
+| **S5** | pandas NaN sector → `"nan"` passes guards → phantom sector weight | ingest·soi | convergent-prior · fail-silent | ✅ #67 | 1,2 | `pd.isna` guard at `launch_corroboration.py:70` + `rebalance.py:82,94` · `test_launch_corroboration.py::test_sector_concentration_ignores_a_nan_sector_no_phantom_bucket` + `test_rebalance_sensor.py::test_identified_excludes_a_nan_identifier_no_phantom_security` |
 | **I1** | ticker-reuse: detected series dropped, `matches[0]` may mis-pick | identity | identity-anchor | ✅ | 5 | `2026-07-06-identity-integrity.md` |
 | **B1** | prospectus attached at trust level, not series | identity·ingest | identity-anchor | 🟡 | 5,6 | series-scoped `resolve_series`; accession residual flagged |
 | **B2** | old-filing registrant → wrong `no_prospectus` → manual queue | identity·edgar | — | 🟡 | — | `older_filings_unread` reason; pagination deferred |
 | **B3** | `SPY` in seed → market corrupts the 55-pair grid | xcorr | invariant-in-prose | ✅ | 3 | explicit `!= market` guard |
 | **P1** | unadjusted Stooq Close → every cross-action return wrong | ingest·prices | green-on-synthetic | ✅ | 1,6 | `guard_live_source` + Tiingo adjClose vs NVDA-split |
-| report.py | `acute_crises: []` empty list → `IndexError` | backtest | — | ⭕ | — | `... or [{}]` (Tier-4) |
-| smells ×6 | lag-lexical-sort, eigengap, token-substring, sql-assert, edgar-`matches[0]`, ledger-datesort | various | — | ⭕ | mixed | low-severity sweep |
+| report.py | `acute_crises: []` empty list → `IndexError` | backtest | — | ✅ (already on main) | — | `report.py:101` `((…).get("acute_crises") or [{}])[0]` — catches present-but-empty; **register drift** corrected |
+| **lag-lexical-sort** | T1 spawn chosen by lexical ts sort, asymmetric with T2's `parse_ts` → wrong T1 on mixed-format timestamps | identity·runner | — | ✅ #67 | — | sort T1 by `parse_ts` · `test_launch_corroboration.py::test_cross_stream_lag_picks_the_earliest_spawn_chronologically_not_lexically` |
+| **eigengap** | no λ₂/λ₁ floor before trusting the spectral bipartition → a pure-noise contrast axis still yields a finite Q | dispersion | — | 💤 (parked-with-gate) | judgment | shadow-only today (spurious Q floods only the shadow record). **Must be answered at the dispersion PROMOTION review** — the moment blast radius shifts to real pages. Retroactively computable: constituent prices are frozen fossils, so set the floor from **measured** gap-vs-outcome across burn-in firings, not a guessed constant (the fossil store pays for the park) |
+| **token-substring** | ≥4-char tokens match by plain substring (`reit ⊂ reiterate`, `bank ⊂ embankment`) — can bridge unrelated sectors | backtest | — | ✅ not-a-defect | judgment | deliberate recall-biased **stem** match over a **curated** static table, **backtest-only** (`corroboration.py`); mismatches surface in recall/precision. **Scope: do NOT reuse on uncurated input without revisiting** — there it is the I1/`matches[0]` class wearing a different hat |
+| **sql-assert** | upload table name f-string-interpolated, gated only by a `-O`-strippable `assert` | store | — | ✅ #67 | — | literal-dict lookup (fail-closed even under `-O`) · `test_registry.py::test_upload_table_name_is_validated_fail_closed` |
+| **edgar-`matches[0]`** | silent first-pick on an ambiguous symbol (the reused-ticker trap) | ingest·edgar | identity-anchor | ✅ (already on main) | 5 | `edgar.py:400-405` returns an `ambiguous_symbol` fault before `matches[0]`; **register drift** corrected |
+| **ledger-datesort** | prior-snapshot selection compared date-dir names lexically | runner | — | ✅ (already on main) | — | `runner.py:170` `date.fromisoformat(name) < date.fromisoformat(current_date)`; **register drift** corrected |
 | **DRIFT-1/2** | state-doc self-contradiction; aging-monitor "pinned" 8 revs | docs | doc-drift | ⭕ | 9 | doc pass owed |
 
 ## The going-live pass — 2026-07-07 (`notes/prospector_followup_review_2026-07-07.md`, `2026-07-07-live-cadence-qa-fixes.md`, `PROSPECTOR_REGRESSION_TESTS*_README.md`)
@@ -99,11 +104,11 @@ alarm-layer cluster: three of the five HIGH items sit on the fault/alarm layer, 
 | **R3** | two cash/derivative lines sharing the `-` sentinel collapse to one diff key; the lighter one silently vanishes | rebalance | identity-anchor · fail-silent | 🟡 (subsumed by R1's `-`-exclusion #55; no dedicated guard) | 5 | R1's `_is_cash_or_derivative` drops `-` lines before the key |
 | **R4** | rebalance prior-parse fault has no `key=` → moving prior date pages daily (E1 recurrence on a sibling path) | rebalance | spurious-fire | ✅ #55 | 7 | `::test_unparseable_prior_fault_signature_is_stable_across_ticks` · [record](qa/2026-07-14-rebalance-prior-parse-volatile-message.md) |
 | **BK-2** | mtime-window aliasing: a same-size content change within 2s of the prior backup is silently skipped → stale HDD copy | backup | fail-silent | ✅ #56 | 8 | `test_backup.py::test_a_same_size_ingest_re_pull_within_the_mtime_window_still_re_copies` |
-| **M7-04** | `deploy.sh` can swap code/deps under an in-flight scheduled tick — no lock coordinates the two | deploy·runner | concurrency | ⭕ | judgment | lock/coordination — not yet designed |
+| **M7-04** | `deploy.sh` can swap code/deps under an in-flight scheduled tick — no lock coordinates the two | deploy·runner | concurrency | ✅ #66 | judgment | `deploy.sh` takes the runner's lock via `pros store lock-run` · `test_run_lock.py` · [decision](../decisions/2026-07-14-single-writer-lock-and-deploy-coordination.md) |
 | **M7-05** | heartbeat day keyed on LOCAL weekday while the cadence anchor is UTC; `schedule.weekly_day` dormant (read nowhere) | heartbeat·ops | doc-drift | ✅ #58 (swept by M7-01) | 9 | M7-01 retired the local-weekday gate + `weekly_day` |
 | **R2** | the *naive* R1 fix (route the diff through `priceable_members`) would drop foreign equities whose add/drop IS signal — needs a cash-sentinel, not the price-universe gate | rebalance | identity-anchor | ✅ (constraint honored by R1, #55) | 5 · judgment | R1's `-`-sentinel keeps foreign constituents in the diff |
 | **BK-3** | fire-and-forget copy: no post-copy read-back/checksum (the store's `write_atomic` does this; backup doesn't) | backup | — | 💤 (deferred, decision #57) | judgment | scheduled `verify-restore` leaning (decision #57) |
-| **M7-06** | no single-instance lock / no `busy_timeout` PRAGMA; concurrency rests on launchd serialization + atomic appends | runner·store | concurrency | ⭕ | judgment | `kickstart -k` escape hatch documented |
+| **M7-06** | no single-instance lock / no `busy_timeout` PRAGMA; concurrency rests on launchd serialization + atomic appends | runner·store | concurrency | ✅ #66 | judgment | single-writer `run.lock` (`fcntl.flock`) + `busy_timeout=5000` belt · `test_run_lock.py` · [decision](../decisions/2026-07-14-single-writer-lock-and-deploy-coordination.md) |
 | **GI-01** | couldn't verify `prospector.local.yaml`/`.env` are gitignored (source export carried no `.gitignore`) | config | — | ✅ (verified: `.gitignore:12`,`:15`) | judgment | both gitignored — verified 2026-07-14, not a defect |
 
 ## M6 discourse-capture review — 2026-07-13 (`notes/m6_capture_review_qa.md`)
@@ -124,8 +129,8 @@ project's signature "fix makes cry-wolf" shape.*
 | **M7-DASH-01** | the M7-03 fix relocated OK/BROKEN to the dashboard + board-snapshot but both hardcode `floor_days=7`, ignoring `schedule.heartbeat_cadence_days` (which the email honors) → a healthy system reads **BROKEN** on a >7d cadence (or false-OK on <7d) | dashboard·heartbeat | spurious-fire · green-on-synthetic | ✅ (stacked, PR pending QA) | 1,7 | `test_dashboard_heartbeat_cadence.py` (real export + app.py call sites) · [record](qa/2026-07-14-m7-dash01-heartbeat-cadence-hardcode.md) |
 | **HB-NOTE-01** | heartbeat email footer hardcodes "7-day floor" text regardless of cadence — same one-clock drift, cosmetic | email | doc-drift | ✅ (stacked, PR pending QA) | 9 | `email_render.py` footer threads `hb['floor_days']` |
 | **M7-DOC-01** | `runner.py` §9d docstring cites the retired `schedule.weekly_day` key | docs·runner | doc-drift | ✅ (stacked, PR pending QA) | 9 | docstring updated (`weekly_day` retired with M7-01; cadence gate is the deferred N9) |
-| **BK-READ-01** | BK-2's content-verify re-reads every unchanged rewritten-in-place file every run (dst-HDD read amplification, unbounded as `ingest/` grows) — correctness intact, **cost** regression | backup | — | ⭕ (decision-dependent — design thread: hash-cache vs re-read) | judgment | not patched; flagged for the design thread |
-| **BK-MSG-01** | backup's broad `except Exception` labels ANY mid-copy fault "retry once the drive is healthy" — mislabels a non-drive fault | backup | — | ⭕ (INFO / noted) | one-off | heads-up so pending **M7-02 (#60)** doesn't inherit the mislabel |
+| **BK-READ-01** | BK-2's content-verify re-reads every unchanged rewritten-in-place file every run (dst-HDD read amplification, unbounded as `ingest/` grows) — correctness intact, **cost** regression | backup | — | 🟡 ratified-residual | judgment | **accept + document** (correctness over cost at current scale — the re-read runs post-tick, seconds on a single-digit-GB store) · [decision](../decisions/2026-07-15-backup-content-verify-reread-accepted.md). Revisit trigger: backup wall-time > ~1 min or store growth making it minutes-long; **override:** if QA's #64 repro shows amplification materially worse than seconds, back to the design thread |
+| **BK-MSG-01** | backup's broad `except Exception` labels ANY mid-copy fault "retry once the drive is healthy" — mislabels a non-drive fault | backup | — | ✅ #67 | one-off | hint gated on `isinstance(e, OSError)`; non-drive faults surface the real error · `test_backup.py::test_a_non_drive_midcopy_fault_does_not_get_the_drive_health_hint` |
 
 ---
 
@@ -148,14 +153,20 @@ project's signature "fix makes cry-wolf" shape.*
   against imagined behavior (pre-softening the guard is green-on-synthetic aimed at our own determinism
   guard). Our-side templating is already proven byte-deterministic. ✅ **CAP-USD** rides along — a loud
   `capture.budget:usd_unpriced` fault when armed-but-unpriced. (Both stacked, PR pending QA.)
-- ⭕ **Concurrency judgments** — **M7-04** (deploy vs in-flight tick, no lock) and **M7-06** (no single-instance
-  lock / `busy_timeout`) — design-judgment, currently resting on launchd serialization; open for a ratified
-  coordination design.
+- ✅ **Concurrency (M7-04 / M7-06) — LANDED (#66):** one single-writer `run.lock` (`fcntl.flock`), acquired
+  in-process by `pros run` and by `deploy.sh` (via `pros store lock-run`), + a `busy_timeout` belt. flock
+  releases on process death, so a crash never wedges the lock (`kickstart -k` stays safe). The invariant is
+  now mechanism, not assumption (decision `2026-07-14-single-writer-lock-and-deploy-coordination.md`).
 - 🟡 **B1 / B2** — ratified with an **honest residual**: `prospectus_accession` stays registrant-level
   (flagged in the docstring); following `filings.files[]` pagination is the named deferral. **R3** rides here
   too (subsumed by R1's `-`-exclusion; a dedicated two-`-`-line regression is the residual).
 - ⭕ **Doc debt** — DRIFT-1, DRIFT-2, C.2 (regenerate "what's built" from the wired set; §5 as single source).
-- ⭕ **Tier-4 low-severity sweep** — H2, H3, H4-alias, S3, S5, `report.py` empty-list, and the six smells.
+  Deliberately **not** in the Tier-4 sweep — rides the rev15 spec-fold ("record matches territory", done together).
+- ✅ **Tier-4 low-severity sweep — CLOSED (#67):** H3/S5/lag-lexical-sort/sql-assert/BK-MSG-01 fixed
+  (commit-per-item); H2/H4/S3/report.py/edgar-`matches[0]`/ledger-datesort were already fixed on main and the
+  **register drift** (false-⭕) is corrected with citations; **eigengap** → 💤 parked-with-gate (dispersion
+  promotion review), **token-substring** → ✅ not-a-defect (curated backtest stem-match, scope-bounded);
+  **BK-READ-01** → 🟡 ratified-residual (decision `2026-07-15-backup-content-verify-reread-accepted.md`).
 - 💤 **BK-3** — post-copy checksum deferred by decision #57 (leaning toward a scheduled `verify-restore`).
 
 ---
