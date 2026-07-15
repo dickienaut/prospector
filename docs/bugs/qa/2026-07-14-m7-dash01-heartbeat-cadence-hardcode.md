@@ -2,6 +2,10 @@
 
 **Severity:** MED (nuisance-alarm / GPWS class — introduced by PR #58's M7-03 fix)
 **Verdict:** NEW / CONFIRMED on real substrate
+**Status:** ✅ FIXED — implementer applied `m7_dash01_fix.diff` + removed both xfail markers; the LOW
+siblings HB-NOTE-01 and M7-DOC-01 folded into the same cadence-honesty pass. Stacked on #64, pending QA
+merge. Full suite green (606 passed / 4 skipped / 2 xfailed in the local venv — the 2 extra skips vs QA's
+609/1/2 are streamlit-absent dashboard tests, incl. this finding's app.py case, which QA verified live).
 **Files:** `prospector/dashboard/app.py:81`, `prospector/dashboard/export.py:197`
 **Correct pattern to mirror:** `prospector/runner/email_render.py:58-59`
 **Broken promise:** `config/prospector.yaml:389-393` ("one clock, one source")

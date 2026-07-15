@@ -62,10 +62,6 @@ def _write_cfg(tmp_path, cadence_days):
 
 # === the board-snapshot export must not cry wolf on a longer cadence (drives the REAL export path) ==
 
-@pytest.mark.xfail(strict=True, reason="M7-DASH-01 RED-first: export.py:197 calls views.heartbeat with "
-    "no floor_days (defaults to 7), so board_snapshot_markdown prints 'heartbeat: BROKEN' for a HEALTHY "
-    "system on a >7d cadence. GREEN when export threads cfg.schedule.heartbeat_cadence_days; implementer "
-    "removes this marker in the apply PR.")
 def test_board_snapshot_export_honors_configured_cadence(layout, registry):
     # runner-faithful: build the resolution_queue table (N1) while writable, then seed fossils
     machine = ResolutionMachine(registry, EventStore(layout, registry), None, None)
@@ -83,9 +79,6 @@ def test_board_snapshot_export_honors_configured_cadence(layout, registry):
 
 # === the Streamlit dashboard shell must not cry wolf either (drives the REAL app.py render) =========
 
-@pytest.mark.xfail(strict=True, reason="M7-DASH-01 RED-first: app.py:81 hardcodes floor_days=7, so the "
-    "Heartbeat metric reads BROKEN for a HEALTHY system on a 14-day cadence. GREEN when app.py threads "
-    "cfg.schedule.heartbeat_cadence_days; implementer removes this marker in the apply PR.")
 def test_dashboard_app_heartbeat_honors_configured_cadence(layout, registry, monkeypatch, tmp_path):
     st_testing = pytest.importorskip("streamlit.testing.v1")
     monkeypatch.setenv("STREAMLIT_BROWSER_GATHER_USAGE_STATS", "false")

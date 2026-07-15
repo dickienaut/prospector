@@ -1189,9 +1189,10 @@ def _run_soi_corroboration(deps: RunnerDeps, store, now: str, faults: list, runl
     xcorr/dispersion leads (their own SLOTs), and the fund-block anchor is the registry entry's name —
     live yield is gated on those, exactly like SPDR-only holdings coverage.
 
-    No weekly cadence gate yet (the runner is cadence-agnostic; `schedule.weekly_day` is M7): §9d
-    attempts each pending launch every tick, bounded by the retry horizon. Throttling the SOI-heavy
-    fetch to weekly is an M7 scheduling concern, not a correctness one."""
+    No per-lead cadence gate yet: §9d attempts each pending launch every tick, bounded by the retry
+    horizon. Throttling the SOI-heavy fetch to a cadence is the deferred N9 item (`schedule.weekly_day`
+    was retired with M7-01's heartbeat-cadence move; the surviving knob is `heartbeat_cadence_days`, which
+    governs the dead-man, not this fetch) — a scheduling concern, not a correctness one."""
     horizon = float((deps.cfg.get("corroboration") or {}).get("retry_horizon_days", 180))
     # Work-list from the fold (§9f): every `launch` event across all leads, with event_id for the
     # (ts, event_id) total order (read_lead's Envelope drops event_id, so read the rows directly).

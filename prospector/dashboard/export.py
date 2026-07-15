@@ -194,7 +194,8 @@ def board_snapshot_markdown(registry, states: Iterable[dict], runs, machine, cfg
     shadow_days = int((cfg.get("dispersion") or {}).get("shadow_days", 90))
 
     cs = views.ceiling_status(states, ceiling)
-    hb = views.heartbeat(runs, now, views.last_heartbeat_sent(registry))  # M7-03: last heartbeat, not run
+    _hb_cadence = int((cfg.get("schedule") or {}).get("heartbeat_cadence_days", 7))  # M7-DASH-01: one clock
+    hb = views.heartbeat(runs, now, views.last_heartbeat_sent(registry), floor_days=_hb_cadence)  # M7-03: last heartbeat, not run
     shadow = views.shadow_panel(states, now, shadow_days)
 
     parts: list[str] = [_manifest(store_path, now, runs, cs, len(shadow), hb), ""]

@@ -113,6 +113,20 @@ alarm-layer cluster: three of the five HIGH items sit on the fault/alarm layer, 
 | **CAP-DRIFT** | `capture.query_drift` compares the provider-issued query byte-exact; any benign normalization (trim / smart-quote / case) fires it on **every** capture — cry-wolf on the determinism guard | capture·runner | spurious-fire · green-on-synthetic | 🟡 ratified byte-exact; live-arming verify is the gate (stacked, PR pending QA) | 1,7 | **ordered by ruling** ([decision](../decisions/2026-07-14-query-drift-byte-exact.md)): observe first — one armed byte-compare **before arming** → byte-exact stands if the echo is clean → only a *demonstrated* transform earns a *minimal, observed-scoped* normalization (trims → `strip` only; documented finding), never a pre-emptive `strip()`; tests `test_build_queries_deterministic_and_ordered` + `test_query_drift_is_byte_exact_a_cosmetic_normalization_still_faults` |
 | **CAP-USD** | monthly-USD cap silently stops enforcing if `unit_price_usd` is unset/0 — only the weekly count cap then guards spend | capture | fail-silent | ✅ (stacked, PR pending QA) | 8 | loud `capture.budget:usd_unpriced` fault when armed + unpriced · `test_capture.py::test_usd_cap_unenforceable_when_unpriced_faults_loud` |
 
+## Post-M6 stack cold review — 2026-07-14 (`notes/2026-07-14-post-m6-stack-review_qa.md`, PR #64)
+
+*A cold read of the whole post-M6 stack over real substrate: all 7 landed fixes CONFIRMED-CLOSED; 5 new
+findings. The MED is the M7-03 fix's own regression — a nuisance-alarm the alarm-layer fix introduced, the
+project's signature "fix makes cry-wolf" shape.*
+
+| ID | Symptom (one line) | Subsystem | Shape | Status | Class | Guarding test / fix site |
+|----|--------------------|-----------|-------|--------|-------|--------------------------|
+| **M7-DASH-01** | the M7-03 fix relocated OK/BROKEN to the dashboard + board-snapshot but both hardcode `floor_days=7`, ignoring `schedule.heartbeat_cadence_days` (which the email honors) → a healthy system reads **BROKEN** on a >7d cadence (or false-OK on <7d) | dashboard·heartbeat | spurious-fire · green-on-synthetic | ✅ (stacked, PR pending QA) | 1,7 | `test_dashboard_heartbeat_cadence.py` (real export + app.py call sites) · [record](qa/2026-07-14-m7-dash01-heartbeat-cadence-hardcode.md) |
+| **HB-NOTE-01** | heartbeat email footer hardcodes "7-day floor" text regardless of cadence — same one-clock drift, cosmetic | email | doc-drift | ✅ (stacked, PR pending QA) | 9 | `email_render.py` footer threads `hb['floor_days']` |
+| **M7-DOC-01** | `runner.py` §9d docstring cites the retired `schedule.weekly_day` key | docs·runner | doc-drift | ✅ (stacked, PR pending QA) | 9 | docstring updated (`weekly_day` retired with M7-01; cadence gate is the deferred N9) |
+| **BK-READ-01** | BK-2's content-verify re-reads every unchanged rewritten-in-place file every run (dst-HDD read amplification, unbounded as `ingest/` grows) — correctness intact, **cost** regression | backup | — | ⭕ (decision-dependent — design thread: hash-cache vs re-read) | judgment | not patched; flagged for the design thread |
+| **BK-MSG-01** | backup's broad `except Exception` labels ANY mid-copy fault "retry once the drive is healthy" — mislabels a non-drive fault | backup | — | ⭕ (INFO / noted) | one-off | heads-up so pending **M7-02 (#60)** doesn't inherit the mislabel |
+
 ---
 
 ## §3 · Open / deferred — the live tail (refer-back while fixing)
