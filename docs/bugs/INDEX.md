@@ -94,7 +94,7 @@ alarm-layer cluster: three of the five HIGH items sit on the fault/alarm layer, 
 | **SNAP-01** | snapshot divergence (backdated event / non-det fold) counted 0 and never pages — `fault_sink=store.append` bypasses the `faults` accumulator | snapshot·runner | split-path · count-lie · fail-silent | ✅ #55 | 3,4,7,8 | `test_snapshot_divergence_accumulator.py` · [record](qa/2026-07-14-snapshot-divergence-accumulator-bypass.md) |
 | **BK-1** | a blessed drive failing mid-copy (ENOSPC/unplugged) skips the healthy drive and records no failure | backup | fail-silent · fault-isolation | ✅ #56 | 8 | `test_backup.py::test_a_blessed_target_failing_mid_copy_records_a_failure_and_still_backs_up_the_healthy_drive` |
 | **R1** | real SSGA cash lines carry CUSIPs → a benign money-market sweep fires a spurious "restructuring" rebalance onto shadow leads | rebalance | green-on-synthetic · identity-anchor · spurious-fire | ✅ #55 | 1,5,8 | `test_runner_rebalance_cash_and_prior.py::test_pure_cash_sweep_does_not_accrete_a_rebalance` · [record](qa/2026-07-14-rebalance-cash-line-cusip.md) |
-| **M7-02** | backup runs in a separate process, writes no fault event → the weekly email reports "Health: OK" while backups fail for weeks | backup·heartbeat·email | fail-silent | 💤 (decision #57; build = the dogfood) | 8 | [`2026-07-14-backup-health-one-fault-channel.md`](../decisions/2026-07-14-backup-health-one-fault-channel.md) |
+| **M7-02** | backup runs in a separate process, writes no fault event → the weekly email reports "Health: OK" while backups fail for weeks | backup·heartbeat·email | fail-silent | ✅ #60 | 8 | `test_runner_backup_stale.py` + `test_backup.py` (marker) · [record](qa/2026-07-14-backup-stale-health-channel.md) |
 | **M7-03** | in-email "Heartbeat: OK/BROKEN" line structurally always OK — its BROKEN branch is dead code in any sent email (keyed on the last RUN, not the last heartbeat) | heartbeat·email | fail-silent | ✅ #58 | 7 | `test_email_render.py::test_heartbeat_body_reports_cadence_state_not_a_tautological_ok` · `test_dashboard_views.py` |
 | **R3** | two cash/derivative lines sharing the `-` sentinel collapse to one diff key; the lighter one silently vanishes | rebalance | identity-anchor · fail-silent | 🟡 (subsumed by R1's `-`-exclusion #55; no dedicated guard) | 5 | R1's `_is_cash_or_derivative` drops `-` lines before the key |
 | **R4** | rebalance prior-parse fault has no `key=` → moving prior date pages daily (E1 recurrence on a sibling path) | rebalance | spurious-fire | ✅ #55 | 7 | `::test_unparseable_prior_fault_signature_is_stable_across_ticks` · [record](qa/2026-07-14-rebalance-prior-parse-volatile-message.md) |
@@ -119,13 +119,13 @@ alarm-layer cluster: three of the five HIGH items sit on the fault/alarm layer, 
 
 - 💤 **N9** (SOI cadence gate → M7) and **E2** (flapping-fault window) — both pinned by `xfail(strict=True)`
   tests that flip to a loud XPASS the moment the fix lands. Zero cost today.
-- 💤 **M7-02** (backup-health → the weekly email) — the immediate follow-up to the heartbeat cluster: a
-  `backup.stale` last-success marker the runner reads and folds into a fault (decision ratified in PR #57,
-  [`2026-07-14-backup-health-one-fault-channel.md`](../decisions/2026-07-14-backup-health-one-fault-channel.md)).
-  The heartbeat cluster (**M7-01** catch-up + **M7-03** in-email honesty) has LANDED (#58) — the runner owns
-  the cadence via a folded `heartbeat.sent`, catching up a slept-through cycle. **M7-02 is the next build, and
-  the dogfood of this archive: the first bug authored under the doctrine here** (QA logs the Problem row, build
-  adds the Fix on merge).
+- ✅ **M7-02** (backup-health → the weekly email) — **LANDED (#60)**, and the **dogfood** of this archive: the
+  first bug carried end-to-end under the §6 discipline. `pros backup` stamps a last-success marker on each
+  target on verified success; the runner reads it each tick and folds `backup.stale` (missing / older than
+  `backup.max_age_days`) into the §8a heartbeat's one health channel (decision #57). Together with the
+  heartbeat cluster (**M7-01** catch-up + **M7-03** in-email honesty, #58) the M7 dead-man now reports the two
+  facts that matter — *is the runner alive* and *is the record being backed up*. Its "ran but bad" checksum
+  sibling **BK-3** stays deferred (decision §3, scheduled `verify-restore`).
 - 🟡 **CAP-DRIFT** — **SETTLED (decision 2026-07-14): observe first, then decide — not either/or.** The
   ORDERED gate, not a menu: (1) one armed byte-compare **before capture is armed** (it ships disabled) to
   see what the provider actually echoes; (2) the byte-exact guard **stands if the echo is clean**; (3)

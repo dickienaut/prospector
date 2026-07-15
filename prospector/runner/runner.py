@@ -63,6 +63,7 @@ from prospector.sensors.launch_corroboration import (lead_sectors, pending_soi_r
 from prospector.sensors.rebalance import (active_incl_shadow_lead_ids,  # §4d rebalance active set
                                           active_nonshadow_lead_ids,  # §6 capture: shadow never captures
                                           watching_leads)  # §10: on_live_lead routing for advisories
+from prospector.store.backup import last_backup_ts  # M7-02: fold backup health into the ONE fault channel
 from prospector.store.envelope import SYSTEM_LEAD, parse_ts
 from prospector.store.fund_registry import FundRegistry
 
@@ -297,6 +298,45 @@ def record_heartbeat_sent(store, ts: str, *, trigger: str = "cadence") -> None:
                   "payload": {"trigger": trigger}, "schema": 1})
 
 
+def _check_backup_freshness(deps: RunnerDeps, store, now: str, faults: list) -> None:
+    """M7-02: fold a `backup.stale` fault for any configured backup target lacking a FRESH last-success
+    marker — the ONE backup-health channel (decision docs/decisions/2026-07-14-backup-health-one-fault-
+    channel.md). `pros backup` stamps a marker on each target on VERIFIED success; the runner reads it here
+    and emits an operational fault the §8a heartbeat already carries, so a failing backup reaches the
+    operator's one health channel instead of dying in the launchd stderr log. Read-only: reads a marker off
+    the external drive, writes nothing to it (the firewall + read-only posture hold).
+
+    Two triggers into one fault (§decision-2): a MISSING marker (never-backed-up, unmounted, or lost) and a
+    STALE marker (older than `backup.max_age_days`, DEFAULT 3) are the same actionable fact — no fresh
+    backup, go look — so both emit `backup.stale`. The threshold is a small multiple of the daily tick
+    (the runner reads the PRIOR tick's backup) so a slept-through cycle doesn't cry wolf; a genuinely-behind
+    drive faults within a couple ticks. Stable per-target `key=` (message carries the moving ts/now for
+    forensics) → a persisting-stale drive pages once then rides the heartbeat (the §10 E1/R4 convention). No
+    configured targets → nothing to check (a dev box's empty targets faults loudly at `pros backup` time)."""
+    bcfg = deps.cfg.get("backup") or {}
+    targets = bcfg.get("targets") or []
+    if not targets:
+        return
+    max_age = int(bcfg.get("max_age_days", 3))
+    for t in targets:
+        ts = last_backup_ts(t)
+        if ts is None:
+            _emit_fault(store, "backup.stale",
+                        f"no successful-backup marker on {t} — the fossil record has no confirmed backup on "
+                        "this drive (never backed up, unmounted, or the marker was lost); check the drive "
+                        "and run `pros backup`", now, faults, key=f"backup.stale:{t}")
+            continue
+        try:
+            stale = (parse_ts(now) - parse_ts(ts)).days >= max_age
+        except Exception:
+            stale = True  # an unparseable marker cannot attest freshness — fault toward loud (§8 fail-loud)
+        if stale:
+            _emit_fault(store, "backup.stale",
+                        f"newest successful backup on {t} is {ts}, over {max_age}d stale as of {now} — the "
+                        "fossil record is not being backed up; check the drive and run `pros backup`", now,
+                        faults, key=f"backup.stale:{t}")
+
+
 def run_tick(deps: RunnerDeps) -> RunLog:
     """Execute ONE cadence tick in the CONTRACT run order (§9):
 
@@ -349,6 +389,15 @@ def run_tick(deps: RunnerDeps) -> RunLog:
             changed_leads, page_worthy = _materialize_snapshots(deps, store, now, faults)
         except Exception as e:  # a snapshot-phase failure still writes the run-log
             _emit_fault(store, "snapshots", e, now, faults)
+
+        # M7-02: assess backup health (the ONE channel — a stale/missing last-success marker on a configured
+        # target folds a `backup.stale` fault the §8a heartbeat carries). In the `finally` alongside snapshots
+        # so it reports even on a faulted/crashed tick, and BEFORE `_compute_push` so its fault feeds the push
+        # comparand and the heartbeat count — a backup that isn't happening is exactly a weekly-email fact.
+        try:
+            _check_backup_freshness(deps, store, now, faults)
+        except Exception as e:  # the freshness read must never abort the run-log write
+            _emit_fault(store, "backup.check", e, now, faults)
 
         # §10 NUISANCE-ALARM SUPPRESSION: compare this tick's faults to the prior run's (from the fossil,
         # before THIS run-log is written), so a recurring identical fault rides the heartbeat, not a page.

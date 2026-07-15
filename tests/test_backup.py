@@ -23,8 +23,8 @@ from prospector.cli.main import cli
 from prospector.fold.fold import fold
 from prospector.fold.snapshots import write_snapshot
 from prospector.primitives.atomic import write_json_atomic
-from prospector.store.backup import (DEFAULT_MARKER, BackupError, backup_store,
-                                     verify_restore)
+from prospector.store.backup import (DEFAULT_MARKER, SUCCESS_MARKER, BackupError, backup_store,
+                                     last_backup_ts, verify_restore)
 from prospector.store.event_store import EventStore
 
 LEAD = "ld_x"
@@ -209,6 +209,57 @@ def test_a_blessed_target_failing_mid_copy_records_a_failure_and_still_backs_up_
     assert report.targets[0].files_copied > 0 and report.targets[0].registry_backed_up
     assert any((healthy / "events" / LEAD).glob("*.json"))
     assert (healthy / "registry.sqlite").is_file()
+
+
+# -- M7-02: the last-success marker (the runner's backup-health input) --------------------------------
+
+def test_success_marker_is_stamped_on_a_verified_target_and_read_back(layout, registry, tmp_path):
+    """M7-02: on a VERIFIED backup, the target gets a `SUCCESS_MARKER` carrying that backup's UTC ts, and
+    `last_backup_ts` reads it back. This marker (distinct from the operator's blessing marker) is the honest
+    'there is a fresh successful backup here' fact the runner folds into the §8a heartbeat's health channel.
+    Written only when `now` is supplied — the CLI always supplies it."""
+    _seed(layout, registry)
+    good = _bless(tmp_path / "hd1")
+    now = "2026-07-14T22:31:00Z"
+
+    report = backup_store(layout, [good], now=now)
+
+    assert [t.target for t in report.targets] == [str(good)]
+    assert (good / SUCCESS_MARKER).read_text(encoding="utf-8") == now   # stamped with the backup time
+    assert last_backup_ts(good) == now                                   # and reads back through the API
+    assert last_backup_ts(tmp_path / "never") is None                    # a target with no marker → None
+
+
+def test_no_success_marker_on_a_target_that_failed_mid_copy(layout, registry, tmp_path, monkeypatch):
+    """The marker is written INSIDE the per-target try, AFTER the copy + registry land — so a target that
+    fails partway through the copy (BK-1's mid-copy failure) gets NO fresh marker, and the runner will fold
+    `backup.stale` for it. Never-on-attempt, same discipline as `heartbeat.sent`: a backup we cannot attest
+    is not a success. The healthy sibling still gets its marker (best-effort-but-loud)."""
+    _seed(layout, registry)
+    degrading = _bless(tmp_path / "hd_fills_up")   # fails partway through the copy
+    healthy = _bless(tmp_path / "hd_ok")           # completes — MUST still get its marker
+    now = "2026-07-14T22:31:00Z"
+
+    real_copy2 = backup_module.shutil.copy2
+    def flaky_copy2(src, dst, *a, **k):
+        if str(dst).startswith(str(degrading)):
+            raise OSError(28, "No space left on device")
+        return real_copy2(src, dst, *a, **k)
+    monkeypatch.setattr(backup_module.shutil, "copy2", flaky_copy2)
+
+    backup_store(layout, [degrading, healthy], now=now)
+
+    assert last_backup_ts(degrading) is None       # no marker on the drive that failed mid-copy
+    assert last_backup_ts(healthy) == now          # the healthy drive attests success
+
+
+def test_no_marker_written_when_now_is_omitted(layout, registry, tmp_path):
+    # Backward-compatible: a caller that only mirrors (no `now`) writes no marker — the mirror is unchanged.
+    _seed(layout, registry)
+    good = _bless(tmp_path / "hd1")
+    backup_store(layout, [good])
+    assert not (good / SUCCESS_MARKER).exists()
+    assert last_backup_ts(good) is None
 
 
 def test_unmounted_target_is_never_created(layout, registry, tmp_path):
