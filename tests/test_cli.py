@@ -49,7 +49,10 @@ def test_command_tree_is_exactly_the_contract_surface():
     # they compute nothing new and write only to external targets / a throwaway scratch, so they are in
     # the same allowed class as `store reindex`, NOT run-now surfaces (CLAUDE.md no-run-now CONTRACT).
     assert set(cli.commands) == {"store", "lead", "verdict", "identity", "backtest", "run", "backup"}
-    assert set(cli.commands["store"].commands) == {"reindex", "verify-restore"}
+    # `store lock-path` (a pure read — prints the run.lock path) and `store lock-run` (acquire the
+    # single-writer lock, run a command under it — the M7-04 deploy coordinator) are store MAINTENANCE, not
+    # run-now surfaces: neither recomputes the live record (the no-run-now CONTRACT holds, like reindex).
+    assert set(cli.commands["store"].commands) == {"reindex", "verify-restore", "lock-path", "lock-run"}
     assert set(cli.commands["lead"].commands) == {"list", "show"}
     assert set(cli.commands["identity"].commands) == {"resolve", "queue"}
     # `pros run` is a cadence entrypoint, not a run-now surface: its only params are --store and the
