@@ -75,6 +75,18 @@ and otherwise propagates its command's exit code. The `deploy.sh` refusal is a s
 (shell-level, Phase-3 style) — prove the refusal once, don't assume it. Full suite green through the CI gate;
 owner reviews and merges.
 
+## On-Mini verification (owner, after merge + deploy) — two things only the real machine can prove
+
+1. **The refusal fires.** Hold the lock manually, confirm a manual `pros run` refuses loudly and the next
+   scheduled tick runs clean; one deliberate `deploy.sh` attempt during a held lock to see its refusal.
+2. **The shared-store assumption the dev-side lock rests on.** Run `pros store lock-path` from **both** the dev
+   and prod checkouts and assert the two paths are **identical.** `deploy.sh` takes the lock from the *dev*
+   checkout on the premise that dev and prod resolve `store.root` to the *same* external store — but the
+   overlay (`config/prospector.local.yaml`) is per-checkout and untracked, so if it ever drifted, a deploy
+   would lock the **wrong** store and could proceed **during a live tick, silently** — the bad direction (a
+   lock that guards nothing is worse than a visibly-broken one). Pinning the two `lock-path` outputs equal,
+   once, on the real machine closes the one gap the mechanism cannot verify from inside itself.
+
 ## Record-keeping
 
 Closes **M7-04** and **M7-06** in `docs/bugs/INDEX.md` (→ ✅, linking this record + the tests). Rides along: a

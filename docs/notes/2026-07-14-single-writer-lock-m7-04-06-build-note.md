@@ -68,7 +68,12 @@ actually needs tuning (the config-under-real-pain rule).
 
 Once deployed: hold the lock manually, confirm a manual `pros run` refuses loudly; release; confirm the next
 scheduled tick runs clean. One deliberate `deploy.sh` attempt during a held lock to see the refusal message.
-Two minutes, and the invariant is proven live, not assumed.
+**Then pin the shared-store assumption the dev-side deploy lock stands on:** run `pros store lock-path` from
+**both** the dev and prod checkouts and assert the two paths are **identical**. deploy.sh takes the lock from
+the dev checkout because dev and prod resolve `store.root` to the same external store — but the overlay is
+per-checkout and untracked, so a drifted dev overlay would lock the *wrong* store and let a deploy proceed
+during a live tick, silently (the bad direction). Two minutes, and the invariant is proven live, not assumed.
+(Ratified addition, design seat 2026-07-15 — see the decision record's on-Mini section.)
 
 ## 6. Record-keeping (the archive discipline — this closes two register rows)
 
