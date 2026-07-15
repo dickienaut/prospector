@@ -119,6 +119,33 @@ def test_cross_stream_lag_is_none_without_a_spawn_or_a_launch():
     assert cross_stream_lag(launch_only) is None and cross_stream_lag(spawn_only) is None
 
 
+def test_cross_stream_lag_picks_the_earliest_spawn_chronologically_not_lexically():
+    # lag-lexical-sort: T1 must be the CHRONOLOGICALLY-earliest spawn, symmetric with T2's `parse_ts`. A
+    # bare string sort is LEXICAL — "…00.5Z" sorts BEFORE "…00Z" (the '.' 0x2E precedes 'Z' 0x5A), so a
+    # lexical T1 would pick the LATER (00.5) spawn and shave 0.5 s off the signed lag. The two spawns here
+    # are one second-fraction apart; the fix makes T1 the true-earliest 00:00:00Z.
+    lead_events = [
+        {"type": "lead.spawned", "ts": "2026-07-02T00:00:00.5Z", "payload": {}},  # later, but lexically first
+        {"type": "lead.spawned", "ts": "2026-07-02T00:00:00Z", "payload": {}},     # the true earliest (T1)
+        {"type": "launch", "ts": "2026-07-05T00:00:00Z",
+         "payload": {"detected_at": "2026-07-03T00:00:00Z"}}]
+    # detected(07-03) − earliest-spawn(07-02T00:00:00Z) = exactly 1 day; a lexical T1 (the .5 spawn) would
+    # give 1 day − 0.5 s.
+    assert cross_stream_lag(lead_events) == timedelta(days=1)
+
+
+def test_sector_concentration_ignores_a_nan_sector_no_phantom_bucket():
+    # S5: a pandas NaN sector cell stringifies to "nan" (truthy, not in _UNRESOLVED_SECTOR), which without
+    # the guard accumulates a PHANTOM "nan" sector and can cross min_weight. The pd.isna guard routes it to
+    # "" — the same honest unresolved path as a blank cell (never a "nan" bucket, never a silent match).
+    import numpy as np
+    import pandas as pd
+    holdings = pd.DataFrame({"sector": ["Information Technology", np.nan], "weight": [0.60, 0.40]})
+    result = sector_concentration(holdings, min_weight=0.30)
+    assert "nan" not in result
+    assert result == frozenset({"Information Technology"})   # the NaN 0.40 is ignored, not a phantom sector
+
+
 # === both-sides negative, off-thesis dormant, and the holdings-unavailable majority case =========
 
 def test_both_sides_negative_pair_misses_but_dispersion_basket_matches():

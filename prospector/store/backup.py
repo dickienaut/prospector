@@ -233,9 +233,16 @@ def backup_store(layout: StoreLayout, targets, *, marker: str = DEFAULT_MARKER,
             if now is not None:
                 (t / SUCCESS_MARKER).write_text(now, encoding="utf-8")
         except Exception as e:   # noqa: BLE001 — best-effort-but-loud: record and continue to the next drive
+            # BK-MSG-01: the broad catch is deliberate (any per-target fault must fall through to the
+            # healthy drive), but the operator HINT must match the cause. A drive-shaped fault (OSError:
+            # ENOSPC, unplugged, I/O error) earns "retry once the drive is healthy"; anything else (a bug in
+            # `_mirror_tree`/`backup_sqlite`, a `KeyError`) is NOT fixed by retrying — surface it as an
+            # unexpected error to investigate, so the message never sends the operator to the wrong place.
+            hint = ("retry once the drive is healthy" if isinstance(e, OSError)
+                    else "unexpected error — investigate (not necessarily a drive fault)")
             report.failures.append(
                 (str(t), f"copy failed mid-backup ({type(e).__name__}: {e}) — the record is NOT fully "
-                         "backed up to this target; retry once the drive is healthy"))
+                         f"backed up to this target; {hint}"))
             continue
         report.targets.append(r)
     return report
