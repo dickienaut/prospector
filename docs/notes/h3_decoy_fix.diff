@@ -1,0 +1,46 @@
+--- a/prospector/ingest/holdings.py	2026-07-15 06:35:29
++++ b/prospector/ingest/holdings.py	2026-07-15 06:37:02
+@@ -149,12 +149,29 @@
+         # genuinely alien header (no cell starting "name"/"weight") still matches nothing and the row
+         # FAULTS: trading the loud fault for a silent misparse of an unknown layout would be a severity
+         # inversion (the mandatory negative test pins that). Accept what's been seen; keep faulting on what
+-        # hasn't. Returns the first matching column index, or None.
++        # hasn't.
++        #
++        # H3-DECOY: prefer an EXACT match over a prefix match, so a decoy column that merely STARTS with
++        # the prefix (e.g. "Weighted Average Life" on a fixed-income holdings file) never shadows the
++        # real "Weight" column. Returns the exact-match index if present, else the first prefix match,
++        # else None. Ambiguity with no exact winner is caught by _weight_prefix_count below (fail loud,
++        # not silent misparse — the same no-severity-inversion rule the prefix match itself protects).
++        prefix_hit = None
+         for idx, c in enumerate(cells):
+-            if c.strip().lower().startswith(prefix):
++            norm = c.strip().lower()
++            if norm == prefix:
+                 return idx
+-        return None
++            if prefix_hit is None and norm.startswith(prefix):
++                prefix_hit = idx
++        return prefix_hit
+ 
++    def _weight_prefix_count(cells):
++        # How many columns START with "weight" but there is no exact "weight" column. >1 means the layout
++        # is ambiguous (e.g. "Weighted Average Life" + "Weight (%)"): first-match-wins would silently pick
++        # one. Fault loud instead. An exact "weight" column disambiguates, so returns 0 in that case.
++        exact = any(c.strip().lower() == "weight" for c in cells)
++        return 0 if exact else sum(1 for c in cells if c.strip().lower().startswith("weight"))
++
+     header_idx = None
+     header: list[str] = []
+     for i, row in enumerate(rows):
+@@ -163,6 +180,10 @@
+             break
+     if header_idx is None:
+         raise HoldingsIngestError(f"no holdings header (Name/Weight) in body for {ticker}")
++    if _weight_prefix_count(header) > 1:
++        raise HoldingsIngestError(
++            f"ambiguous holdings header for {ticker}: multiple columns start with 'weight' and none is "
++            f"exactly 'Weight' — refusing to guess the weight column")
+ 
+     name_i, weight_i = _col(header, "name"), _col(header, "weight")
+     ticker_i = _col(header, "ticker")  # §4b: the constituent's Tiingo price-lookup symbol (display-only)
