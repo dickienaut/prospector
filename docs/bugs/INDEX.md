@@ -135,12 +135,13 @@ project's signature "fix makes cry-wolf" shape.*
 ## Post-#67/#66 cold review — 2026-07-15 (`notes/2026-07-15-pr67-pr66-cold-review_qa.md`, PR #69)
 
 *QA cold read of the tier-4 sweep (#67) + single-writer lock (#66): all 11 #67 claims + all 6 #66 checks
-CONFIRMED-CLOSED; one new LOW finding — on #67's own H3 fix (below). Also flagged, **pending their own
-disposition**: two LOW #66 findings — **LOCK-TEST-TAUT** and **DEPLOY-OVERLAY-DRIFT** (see the review doc).*
+CONFIRMED-CLOSED; three new LOW findings — one on #67's H3 fix, two on #66 — all now disposed (below).*
 
 | ID | Symptom (one line) | Subsystem | Shape | Status | Class | Guarding test / fix site |
 |----|--------------------|-----------|-------|--------|-------|--------------------------|
 | **H3-DECOY** | H3's prefix header match is first-match-wins → a decoy `Weighted Average Life` column before the real `Weight` is silently read as the weight (latent — bites when the universe extends to bond funds) | ingest·holdings | green-on-synthetic · fail-silent | ✅ #71 | 1,8 | `_col` prefers **exact** match + `_weight_prefix_count` faults loud on >1-weight-prefix-no-exact · `test_holdings_weight_decoy.py` · [record](qa/2026-07-15-h3-decoy-weight-prefix-collision.md) |
+| **LOCK-TEST-TAUT** | the M7-06 `busy_timeout` test asserts `==5000`, but CPython's `connect(timeout=5.0)` default already yields 5000 → green even with the PRAGMA deleted (test-integrity, class-4 one layer down) | store | test-passes-wrong-reason | ✅ #72 | 4 | writer connects `timeout=0` so the PRAGMA is the authoritative source; test asserts behaviour (RED when the PRAGMA is dropped) · `test_run_lock.py::test_busy_timeout_is_set_by_our_pragma_not_the_connect_default` |
+| **DEPLOY-OVERLAY-DRIFT** | deploy locks from the DEV checkout on the premise dev/prod resolve `store.root` identically; a drifted untracked `prospector.local.yaml` overlay would lock the wrong store silently | deploy·config | — | 🟡 design-acknowledged | judgment | inherently unverifiable in a single checkout; mitigation = the on-Mini **dual `lock-path` GATE** — run `pros store lock-path` in **both** checkouts, assert identical (activation-checklist design note item 11 + decision `2026-07-14-single-writer-lock-and-deploy-coordination.md` on-Mini §) |
 
 ---
 
