@@ -66,8 +66,9 @@ def sector_concentration(holdings: pd.DataFrame | None, min_weight: float) -> fr
         return frozenset()
     by_sector: dict[str, float] = {}
     for _, row in holdings.iterrows():
-        sec = str(row.get("sector", "")).strip()
-        w = row.get("weight")
+        v = row.get("sector", "")
+        sec = "" if pd.isna(v) else str(v).strip()   # S5: a pandas NaN must not stringify to "nan" — a
+        w = row.get("weight")                          # truthy phantom sector; "" routes to the unresolved path
         if sec in _UNRESOLVED_SECTOR or w is None:
             continue
         by_sector[sec] = by_sector.get(sec, 0.0) + float(w)

@@ -134,6 +134,18 @@ def test_cross_stream_lag_picks_the_earliest_spawn_chronologically_not_lexically
     assert cross_stream_lag(lead_events) == timedelta(days=1)
 
 
+def test_sector_concentration_ignores_a_nan_sector_no_phantom_bucket():
+    # S5: a pandas NaN sector cell stringifies to "nan" (truthy, not in _UNRESOLVED_SECTOR), which without
+    # the guard accumulates a PHANTOM "nan" sector and can cross min_weight. The pd.isna guard routes it to
+    # "" — the same honest unresolved path as a blank cell (never a "nan" bucket, never a silent match).
+    import numpy as np
+    import pandas as pd
+    holdings = pd.DataFrame({"sector": ["Information Technology", np.nan], "weight": [0.60, 0.40]})
+    result = sector_concentration(holdings, min_weight=0.30)
+    assert "nan" not in result
+    assert result == frozenset({"Information Technology"})   # the NaN 0.40 is ignored, not a phantom sector
+
+
 # === both-sides negative, off-thesis dormant, and the holdings-unavailable majority case =========
 
 def test_both_sides_negative_pair_misses_but_dispersion_basket_matches():
