@@ -17,6 +17,8 @@ from __future__ import annotations
 from typing import Iterable
 
 from prospector.dashboard import views
+from prospector.runner.fault_taxonomy import page_worthy_faults  # PAGE-WORTHY-MIRROR: the ONE §10 predicate,
+# shared with runner._compute_push so the email subject and the push decision cannot diverge (class 3).
 
 
 # --- small render helpers (self-contained, mirroring export._fmt so this stays a standalone pure module) ---
@@ -85,14 +87,6 @@ def _partition_faults(faults: list) -> tuple[list, list]:
     return op, adv
 
 
-def _page_worthy(faults: list) -> list:
-    """The faults that DRIVE a page (§10 alarm-posture taxonomy — mirrors runner._page_worthy_faults):
-    operational faults + review-advisories on a live-lead fund. A non-live-lead advisory is surfaced but
-    never paged, so it never sets a FAULT subject."""
-    return [f for f in faults
-            if f.get("category", "operational") != "review-advisory" or f.get("on_live_lead")]
-
-
 # --- subjects (§8a) --------------------------------------------------------------------------------
 
 def _changed_summary(changed_leads: dict) -> str:
@@ -136,7 +130,7 @@ def push_subject(ctx: dict, prefix: str) -> str:
     """The immediate-push subject (§8a). A PAGE-WORTHY fault (operational, or a review-advisory on a live
     lead — §10 taxonomy) outranks a state change when a tick carries both: `[PROS] FAULT: <subsystem>` else
     `[PROS] state change: <summary>`. A non-live-lead advisory never pages, so it never sets the subject."""
-    pw = _page_worthy(ctx["faults"])
+    pw = page_worthy_faults(ctx["faults"])
     if pw:
         return f"{prefix} FAULT: {_fault_summary(pw)}"
     return f"{prefix} state change: {_changed_summary(ctx['changed_leads'])}"
