@@ -143,6 +143,18 @@ CONFIRMED-CLOSED; three new LOW findings — one on #67's H3 fix, two on #66 —
 | **LOCK-TEST-TAUT** | the M7-06 `busy_timeout` test asserts `==5000`, but CPython's `connect(timeout=5.0)` default already yields 5000 → green even with the PRAGMA deleted (test-integrity, class-4 one layer down) | store | test-passes-wrong-reason | ✅ #72 | 4 | writer connects `timeout=0` so the PRAGMA is the authoritative source; test asserts behaviour (RED when the PRAGMA is dropped) · `test_run_lock.py::test_busy_timeout_is_set_by_our_pragma_not_the_connect_default` |
 | **DEPLOY-OVERLAY-DRIFT** | deploy locks from the DEV checkout on the premise dev/prod resolve `store.root` identically; a drifted untracked `prospector.local.yaml` overlay would lock the wrong store silently | deploy·config | — | 🟡 design-acknowledged | judgment | inherently unverifiable in a single checkout; mitigation = the on-Mini **dual `lock-path` GATE** — run `pros store lock-path` in **both** checkouts, assert identical (activation-checklist design note item 11 + decision `2026-07-14-single-writer-lock-and-deploy-coordination.md` on-Mini §) |
 
+## Design-seat code review — 2026-07-15 (the first finding the design seat originated from code access)
+
+*The design seat gained read-only **search** of a `main` snapshot (retrieval by query — not browse, not run),
+and its first use surfaced a class-3 it reasoned through, flagging the one thing it structurally could NOT
+check (is there an agreement test?); the build seat grounded it against live `main` @ `1e577b9`. The seam
+held — new capability, no erosion of QA's independence (which still comes from QA's different position, not
+the design seat's access).*
+
+| ID | Symptom (one line) | Subsystem | Shape | Status | Class | Guarding test / fix site |
+|----|--------------------|-----------|-------|--------|-------|--------------------------|
+| **PAGE-WORTHY-MIRROR** | the §10 page-worthiness predicate is implemented **twice**, byte-identical (`runner._page_worthy_faults` / `email_render._page_worthy`), agreement asserted **only in both docstrings** and no test importing both — so a change to one silently diverges the **push decision** (runner's `_compute_push`) from the email **subject** (email_render's `push_subject`), landing a fault-driven push subject-lined `state change: …`, mislabeled on the one line §8a makes load-bearing | email·runner | invariant-in-prose | ✅ #73 | 3 | predicate lifted to `runner/fault_taxonomy.py`, imported by both consumers — drift impossible **by construction**. Duplication was **import-graph-forced** (`runner.py:51` imports email_render; email_render imports nothing back — a cycle blocks the naive import), so the fix is the shared home, not an import. **No agreement test by design** — post-lift it would assert `f(x)==f(x)`, the tautology this repo disposed as **LOCK-TEST-TAUT**; the structure is the guard, and the two consumers keep their own behaviour tests. Sibling **M7-DASH-01** (one rule, two homes). `_partition_faults` is **not** a sibling — it splits on `category` alone, ignoring `on_live_lead` (a category split, not a page-worthiness split); verified, not a defect |
+
 ---
 
 ## §3 · Open / deferred — the live tail (refer-back while fixing)

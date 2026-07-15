@@ -49,6 +49,7 @@ from prospector.ingest.prices import (CALENDAR_PER_TRADING_DAY, PriceIngestError
 from prospector.ingest.prospectus import ProspectusIngest
 from prospector.ingest.soi import SoiIngest
 from prospector.runner import email_render
+from prospector.runner.fault_taxonomy import page_worthy_faults  # PAGE-WORTHY-MIRROR: the ONE §10 predicate
 from prospector.runner.deps import RunnerDeps
 from prospector.runner.runlog import RunLog, recent_runs, write_run_log
 from prospector.sensors import dispersion as dispersion_sensor
@@ -209,19 +210,12 @@ def _load_prior_faults(layout, registry) -> list:
         return []  # a missing/corrupt prior run-log must not blind the push — treat as 'no prior fault'
 
 
-def _page_worthy_faults(faults: list) -> list:
-    """The §10 fault-taxonomy filter — which faults DRIVE a page (CONTRACT, alarm posture). `operational`
-    faults always (something broke — a failed fetch, a tripped guard, a degenerate matrix). `review-advisory`
-    faults ONLY when their fund touches a live lead (`on_live_lead`) — a held/watched fund quietly rewording
-    its mandate is the one advisory worth interrupting for; every other advisory (a new-launch fund's
-    unreadable prospectus — the sensor correctly punting, nothing broken) is counted + surfaced but does NOT
-    page. Non-page-worthy advisories stay in `faults` for the count/display; only the push decision filters
-    them out — the shadow-push discipline one layer down (keep the record whole, filter at the decision).
-    A fault with no/unknown `category` is treated as operational (it pages — the fail-safe default: an
-    unrecognized fault must not silently escape the alarm). Only an explicit `review-advisory` is held back;
-    this matches `email_render._page_worthy` exactly, so the count/subject and the push decision agree."""
-    return [f for f in faults
-            if f.get("category", "operational") != "review-advisory" or f.get("on_live_lead")]
+# PAGE-WORTHY-MIRROR (class 3): the §10 page-worthiness predicate lives in ONE home now —
+# `runner.fault_taxonomy.page_worthy_faults` — imported by both the push decision (`_compute_push`, below)
+# and the email subject (`email_render.push_subject`). It was duplicated byte-for-byte with the agreement
+# asserted only in prose; the shared home makes drift impossible by construction (no agreement test — that
+# would be tautological post-lift, LOCK-TEST-TAUT). Re-exported under the private name the callers/tests use.
+_page_worthy_faults = page_worthy_faults
 
 
 def _compute_push(page_worthy: dict, faults: list, prior_faults: list) -> bool:
