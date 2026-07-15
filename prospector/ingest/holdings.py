@@ -143,22 +143,32 @@ def parse_spdr_holdings(body: bytes, ticker: str) -> pd.DataFrame:
     unresolved. Raise HoldingsIngestError on a body with no recognizable header/weight column."""
     rows = _rows_from_body(body)
 
+    def _col(cells, prefix):
+        # H3: locate a header column by PREFIX (startswith), so a known issuer variant like "Weight (%)"
+        # resolves — where exact `"weight" in norm` membership faulted with `no holdings header`. A
+        # genuinely alien header (no cell starting "name"/"weight") still matches nothing and the row
+        # FAULTS: trading the loud fault for a silent misparse of an unknown layout would be a severity
+        # inversion (the mandatory negative test pins that). Accept what's been seen; keep faulting on what
+        # hasn't. Returns the first matching column index, or None.
+        for idx, c in enumerate(cells):
+            if c.strip().lower().startswith(prefix):
+                return idx
+        return None
+
     header_idx = None
-    col: dict[str, int] = {}
+    header: list[str] = []
     for i, row in enumerate(rows):
-        norm = [c.strip().lower() for c in row]
-        if "name" in norm and "weight" in norm:
-            header_idx = i
-            col = {c.strip().lower(): idx for idx, c in enumerate(row)}
+        if _col(row, "name") is not None and _col(row, "weight") is not None:
+            header_idx, header = i, row
             break
     if header_idx is None:
         raise HoldingsIngestError(f"no holdings header (Name/Weight) in body for {ticker}")
 
-    name_i, weight_i = col["name"], col["weight"]
-    ticker_i = col.get("ticker")  # §4b: the constituent's Tiingo price-lookup symbol (display-only)
-    ident_i = col.get("identifier")
-    sector_i = col.get("sector")
-    ccy_i = col.get("local currency")  # §9e: USD/foreign gate for the price universe (blank if absent)
+    name_i, weight_i = _col(header, "name"), _col(header, "weight")
+    ticker_i = _col(header, "ticker")  # §4b: the constituent's Tiingo price-lookup symbol (display-only)
+    ident_i = _col(header, "identifier")
+    sector_i = _col(header, "sector")
+    ccy_i = _col(header, "local currency")  # §9e: USD/foreign gate for the price universe (blank if absent)
 
     members = []
     for row in rows[header_idx + 1:]:

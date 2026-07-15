@@ -147,15 +147,20 @@ class Registry:
     # -- upload bookkeeping (operational, not record content) ---------------
 
     def pending_uploads(self, table: str) -> list[sqlite3.Row]:
-        assert table in ("events", "snapshots")
-        return self.conn.execute(
-            f"SELECT * FROM {table} WHERE uploaded_at IS NULL ORDER BY ts").fetchall()
+        # sql-assert: the table name is interpolated into the SQL, so it must be gated by a REAL guard —
+        # `assert` is stripped by `python -O`, which would leave the f-string ungated on a bug/attacker
+        # value. A literal-dict lookup fails CLOSED even under -O: an unknown table raises KeyError and
+        # never reaches a query. (Both callers pass literals today; this removes the -O footgun.)
+        query = {"events": "SELECT * FROM events WHERE uploaded_at IS NULL ORDER BY ts",
+                 "snapshots": "SELECT * FROM snapshots WHERE uploaded_at IS NULL ORDER BY ts"}[table]
+        return self.conn.execute(query).fetchall()
 
     def mark_uploaded(self, table: str, key: str, uploaded_at: str) -> None:
-        assert table in ("events", "snapshots")
-        pk = "event_id" if table == "events" else "snapshot_id"
-        self.conn.execute(
-            f"UPDATE {table} SET uploaded_at = ? WHERE {pk} = ?", (uploaded_at, key))
+        # sql-assert (see pending_uploads): validate the interpolated identifier by a literal-dict lookup,
+        # not a `-O`-strippable assert — the pk is baked into each literal statement.
+        sql = {"events": "UPDATE events SET uploaded_at = ? WHERE event_id = ?",
+               "snapshots": "UPDATE snapshots SET uploaded_at = ? WHERE snapshot_id = ?"}[table]
+        self.conn.execute(sql, (uploaded_at, key))
         self.conn.commit()
 
     # -- meta ----------------------------------------------------------------

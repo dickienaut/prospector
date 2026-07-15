@@ -27,6 +27,20 @@ def _frame(rows):
 
 # -- diff: adds / drops / threshold weight moves / cash exclusion ----------------------------
 
+def test_identified_excludes_a_nan_identifier_no_phantom_security():
+    # S5: a pandas NaN identifier stringifies to "nan" (truthy), which the `not ident` guard would treat as
+    # a REAL security — a phantom position whose daily wiggle could fire a spurious rebalance. The pd.isna
+    # guard routes NaN -> "" -> excluded, exactly like a blank identifier.
+    import numpy as np
+    frame = _frame([
+        {"name": "AAA", "identifier": "111", "weight": 0.50, "sector": "T"},
+        {"name": "Mystery", "identifier": np.nan, "weight": 0.50, "sector": "T"},
+    ])
+    ident = rebalance._identified(frame)
+    assert "nan" not in ident
+    assert set(ident) == {"111"}
+
+
 def test_diff_detects_adds_drops_and_threshold_weight_moves():
     prior = _frame([
         {"name": "AAA", "identifier": "111", "weight": 0.20, "sector": "T"},
