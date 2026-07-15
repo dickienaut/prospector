@@ -250,7 +250,8 @@ def render_heartbeat(ctx: dict, prefix: str) -> tuple[str, str]:
     runner owns the cadence (M7-01): it sends on schedule and catches up a cycle it slept through, so a
     MISSING heartbeat is now an unambiguous dead-man — never a benign sleep-across-Sunday false alarm."""
     body = _body(ctx)
-    note = ("\n\nWeekly heartbeat — silence beyond the 7-day floor means broken (§8a dead-man). "
+    floor = int(ctx.get("heartbeat", {}).get("floor_days") or 7)  # HB-NOTE-01: one clock — the configured
+    note = (f"\n\nHeartbeat — silence beyond the {floor}-day floor means broken (§8a dead-man). "  # cadence, not a hardcoded 7
             "The runner owns the cadence: it sends on schedule and catches up a cycle it slept "
             "through (M7-01).")
     return heartbeat_subject(ctx, prefix), body + note
