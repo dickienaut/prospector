@@ -1,0 +1,12 @@
+# Every path is owned by the human owner. Paired with the `main` ruleset's require_code_owner_review +
+# required_approving_review_count>=1 + require_last_push_approval, this turns rule 2 ("agents propose, the
+# human disposes") from a posture into a wall:
+#
+#   - The bot seats — Code (claudeatalphalabsengineering) and QA — open PRs but structurally CANNOT approve
+#     them: GitHub blocks a PR's author from approving its own PR, and the bots are not code owners.
+#   - Only @dickienaut's review (as code owner) lets a PR merge.
+#   - require_last_push_approval re-blocks the merge on any commit pushed AFTER that approval (the
+#     approve-then-swap hole), because the new push needs approval from someone other than the pusher.
+#
+# See docs/notes/…four-seat-model…  and docs/decisions/2026-07-12-code-does-not-merge-human-reviews.md.
+* @dickienaut
