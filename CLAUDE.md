@@ -235,13 +235,16 @@ leaves a `config.changed` fossil — never by a self-updating rule:
 - **Always work on a new branch.** Never commit directly to `main`. At the start of any change,
   branch off `main` (`git switch -c <descriptive-name>`) and do the work there; graduate it to `main`
   by pull request. If a session begins on `main` with work to do, create the branch first.
-- **Code never merges to `main` — it opens the PR and stops.** Code's job ends at *pushed branch → green CI →
-  open PR*; the **owner reviews and merges** (from the Mac or the GitHub mobile app). The `main` ruleset
-  requires CI-green but **0 approvals**, so Code *could* auto-merge a green PR — **it must not.** **CI-green is
-  not correctness:** green-on-synthetic, a test that passes for the wrong reason, a merge-introduced regression
-  all clear CI — and the human review is where that class is caught. The ruleset (active, no bypass) binds Code
-  the same as anyone wherever the merge is triggered; this rule is the **posture** on top of that mechanism.
-  Ratified: `docs/decisions/2026-07-12-code-does-not-merge-human-reviews.md`.
+- **Code never merges to `main`** — it opens the PR and stops. Code's job ends at pushed branch → green CI →
+  open PR; the owner reviews, approves, and merges from the phone (the Mini holds no owner credential). This
+  is now mechanism, not posture: Code acts under the machine account `claudeatalphalabsengineering`, which is
+  not a code owner and cannot approve its own PR, and the `main` ruleset requires one code-owner approval
+  covering the most recent push, no bypass — so no sequence of agent actions alone lands code on `main`. The
+  residual posture is narrow and still binding: once the owner has approved, Code could click merge — it must
+  not. CI-green is not correctness: green-on-synthetic, a test that passes for the wrong reason, a
+  merge-introduced regression all clear CI — and the human review is where that class is caught. Ratified:
+  `docs/decisions/2026-07-16-agent-identity-split-and-merge-gate.md` (supersedes
+  `docs/decisions/2026-07-12-code-does-not-merge-human-reviews.md`, which recorded the posture-era rule).
 - **Branch off a freshly-fetched `origin/main`, never off a sibling feature branch** —
   `git fetch origin && git switch -c <descriptive-name> origin/main`. When PRs merge quickly, a branch cut from
   a **stale local `main`** (or from another feature branch) carries a stale base, and a PR from it can
