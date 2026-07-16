@@ -24,6 +24,12 @@ jobs:
       - name: Install uv (with cache)
         uses: astral-sh/setup-uv@v6
         with:
+          # Pin the uv version so setup-uv installs it directly instead of querying the GitHub API
+          # for "latest" — that API call is a single point of failure: a GitHub API blip on
+          # 2026-07-16 failed every run here (HTTP error at setup, before a test could start).
+          # Ironic for an offline-suite gate to need a live API to bootstrap; pinning removes the
+          # dependency. Bump deliberately when moving to a newer uv (keep in step with the dev env).
+          version: "0.11.26"
           enable-cache: true
 
       # --locked installs from the lockfile AND fails if it drifted from pyproject.toml.
