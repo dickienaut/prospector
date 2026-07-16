@@ -2,6 +2,7 @@
 
 **Verified:** 2026-07-16T21:23:07Z · **against `main` @ `44d81c630cdf6f78fcf3c52554e94a106b3cf5bf`**
 **Seat:** QA (cold read, repo of record) · **Method:** live GitHub API reads + two write-probes, no merge, no lasting writes.
+**Build addendum:** 2026-07-16 · rule-6 acceptance half (below) · against `main` @ `eeb1c389d19251ef0657f90f2525c6fb00b42d10`, Build seat.
 
 This record anchors the enforced-tier mechanism claims in `METHOD.md` (formerly
 `2026-07-16-how-we-work.md`) to evidence outside the narrative — the live `main`
@@ -45,15 +46,24 @@ workflow path. "QA cannot modify CI config" is therefore proven by a **watched
 rejection**, not inferred from a scope string. Probe branch deleted
 (`204`); nothing left on the remote.
 
-## OPEN — rule 6, the other half: "Build can modify CI config" · NOT YET PROVEN
-Unverifiable from the QA seat: Build's credential is not present here (the QA
-environment holds only the `claudeatalphalabsengineering` account). The enforced-tier
-differential ("Build can / QA cannot") is currently evidence-backed on the
-"cannot" side only. **Ask:** Build proves its half symmetrically — attempt a
-`.github/workflows/*` write from the Build seat and record the **success**
-(expect 200/201, not 404). Until then, phrase rule 6 as "QA cannot modify CI
-config (proven); the Build differential is by intent, pending Build-side
-confirmation."
+## Rule 6, the other half — "Build can modify CI config" · CONFIRMED (Build seat, 2026-07-16)
+Build closed QA's open ask from its own seat. Build's token is the **same** machine
+account (`claudeatalphalabsengineering`) but carries scope `read:org, repo, workflow` —
+the `workflow` scope QA's token lacks. On a throwaway branch off `main` @
+`eeb1c389d19251ef0657f90f2525c6fb00b42d10`, the Build seat ran the same two writes QA did:
+
+| write target | status | reading |
+|---|---|---|
+| `.github/workflows/_build_probe.yml` | **201** (created, commit `e08ca19`) | CI-config write **succeeds** |
+| `docs/notes/_build_probe.md` (control) | **201** (commit `78df7b0`) | non-workflow write succeeds |
+
+Same account, same method as the QA probe; only the token scope differs. The
+workflow-path write QA's `repo`-only token got **404** on, Build's `+workflow` token
+gets **201** on. The enforced-tier differential is now a **watched result from both
+sides** — QA cannot (404), Build can (201) — so rule 6's "Build can / QA cannot" is
+evidence-backed both directions, asserted on neither. Probe branch deleted; nothing
+left on the remote. The interim hedge QA proposed ("pending Build-side confirmation")
+is no longer needed; METHOD.md's rule 6 stands affirmatively.
 
 ---
 *Anchored record. Every value above is a live read or a watched probe result as
