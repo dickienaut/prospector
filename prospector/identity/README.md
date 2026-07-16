@@ -37,6 +37,6 @@ the §4c two-phase-launch intake). **Built.**
 ## See also
 
 - Spec §2 (identity / the queue) and §4c (two-phase launch, lag integrity) in
-  `docs/prospector-v1-spec-rev14-2026-07-08.md`; `ARCHITECTURE.md` §6 (identity) and §9.
+  `docs/prospector-v1-spec-rev15-2026-07-16.md`; `ARCHITECTURE.md` §6 (identity) and §9.
 - `docs/decisions/2026-07-03-launch-sensor-capture-first.md`,
   `docs/decisions/2026-07-06-identity-integrity.md`.

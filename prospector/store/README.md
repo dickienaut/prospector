@@ -63,5 +63,5 @@ is only a queryable **index** projected over it — reindexable from the files a
 ## See also
 
 - Spec §5 (data model / a lead is the fold) and §7 (store tree, S3, backtest separation) in
-  `docs/prospector-v1-spec-rev14-2026-07-08.md`; `ARCHITECTURE.md` §2 (module map), §3 (the spine),
+  `docs/prospector-v1-spec-rev15-2026-07-16.md`; `ARCHITECTURE.md` §2 (module map), §3 (the spine),
   §9 (built vs deferred). Identity rule detail: `docs/decisions/2026-07-06-identity-integrity.md`.

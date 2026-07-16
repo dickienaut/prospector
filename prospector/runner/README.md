@@ -59,7 +59,7 @@ produce identical events.
 
 ## See also
 
-- Spec **§9/§9a–§9g** and §10 in `docs/prospector-v1-spec-rev14-2026-07-08.md`; `ARCHITECTURE.md`
+- Spec **§9/§9a–§9g** and §10 in `docs/prospector-v1-spec-rev15-2026-07-16.md`; `ARCHITECTURE.md`
   §2/§9. Decisions: `docs/decisions/2026-07-06-m5-runner-skeleton.md`, `-mandate-9c.md`,
   `-soi-corroboration-retry-9d.md`, `-soi-fetch.md`, `-prices-ingest-and-p1.md`,
   `2026-07-07-xcorr-live.md`, `2026-07-07-tiingo-price-source.md`, `2026-07-08-live-cadence-qa-fixes.md`.

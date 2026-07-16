@@ -60,7 +60,7 @@ report lays out evidence; it does not decide pass/fail (a "no" is the system wor
 
 ## See also
 
-- Spec §10 (test 5 / 5b / 5c) and §4a in `docs/prospector-v1-spec-rev14-2026-07-08.md`;
+- Spec §10 (test 5 / 5b / 5c) and §4a in `docs/prospector-v1-spec-rev15-2026-07-16.md`;
   `ARCHITECTURE.md` §2 (module map) and §5 (the backtest + acceptance gate).
 - `docs/decisions/2026-07-02-stress-gate-recalibration.md` (absolute 0.85, crisis-only; the
   aging-drift monitor) and `docs/decisions/2026-07-02-crash-flags-guidance-rev2.md` (the box A/B/C

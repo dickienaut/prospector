@@ -36,7 +36,7 @@ reorg — only relocated (`docs/decisions/2026-07-11-docs-reorganization.md`).
 ```
 docs/
   INDEX.md                                       ← you are here
-  prospector-v1-spec-rev14-2026-07-08.md         ← CURRENT build spec
+  prospector-v1-spec-rev15-2026-07-16.md         ← CURRENT build spec
   project-prospector-state-of-project-rev7-2026-07-11.md   ← CURRENT status rollup
   decisions/   dated fossils — every load-bearing decision, chronological, never rewritten
   bugs/        the bug archive — README.md (doctrine: classes + how-to), INDEX.md (searchable register), qa/ (records)
@@ -76,7 +76,7 @@ one into `history/`, and update this index + the pointers in `CLAUDE.md` / `ARCH
   *Contract — amended only.*
 
 ### The live docs (at the `docs/` root)
-- **Build spec — CURRENT: `prospector-v1-spec-rev14-2026-07-08.md`** — *rev 15 pending* (the §9e / §8b / §10
+- **Build spec — CURRENT: `prospector-v1-spec-rev15-2026-07-16.md`** — *rev 15 pending* (the §9e / §8b / §10
   CONTRACT fold). Section-numbered CONTRACTs + defaults; the IN / OUT scope; the milestones; **Appendix A**
   (LTEE archive port map) + **Appendix B** (proto-clusters, the v2 constituent-substrate design note).
   *Contract — amended only.*
@@ -86,7 +86,7 @@ one into `history/`, and update this index + the pointers in `CLAUDE.md` / `ARCH
 ### Superseded revs — `history/`
 *The prior revs of the two rolling docs, carried for provenance. The current rev always lives at the root; the
 whole series is the change-history.*
-- Build spec: `prospector-v1-spec-rev1` through `rev13` (rev 14 is current, at the root). Revs 1 / 2 / 4 / 7 / 10
+- Build spec: `prospector-v1-spec-rev1` through `rev14` (rev 15 is current, at the root). Revs 1 / 2 / 4 / 7 / 10
   were recovered 2026-07-11 from the design-thread archive.
   - **rev 1 — one doc, two names (by design).** The file is `history/prospector-v1-spec-rev1-2026-07-01.md`
     (its **series** name; content keeps the *"Generator v1"* title, as it predates the "Prospector" rename). It

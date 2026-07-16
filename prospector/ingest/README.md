@@ -71,7 +71,7 @@ wired into the M5 runner, with two named-and-deferred sub-slices called out per 
 
 - Spec §3 (freeze the substrate), §2 (identity), §4c/§4d (launch corroboration, mandate-diff, SOI
   resolver), §9b/§9d (SOI target resolution + deferred corroboration retry) in
-  `docs/prospector-v1-spec-rev14-2026-07-08.md`; `ARCHITECTURE.md` §2 (module map) and §9 (built vs
+  `docs/prospector-v1-spec-rev15-2026-07-16.md`; `ARCHITECTURE.md` §2 (module map) and §9 (built vs
   deferred).
 - Decisions: `docs/decisions/2026-07-04-real-holdings-xlsx-and-blank-sectors.md`,
   `2026-07-04-soi-derived-sector-concentration.md`, `2026-07-03-launch-corroboration-existence-proof.md`,

@@ -38,6 +38,6 @@ wide typed-metric columns to the events table (the inversion to a JSON payload w
 ## See also
 
 - Spec §1 (§1a atomic write, §1c WAL-safe backup) in
-  `docs/prospector-v1-spec-rev14-2026-07-08.md`; `ARCHITECTURE.md` §2 (module map, rows for
+  `docs/prospector-v1-spec-rev15-2026-07-16.md`; `ARCHITECTURE.md` §2 (module map, rows for
   `primitives/atomic.py` and `primitives/sqlite_backup.py`) and its vendoring note.
 - The vendoring policy in the repo constitution (`CLAUDE.md` → "Vendored store provenance").
