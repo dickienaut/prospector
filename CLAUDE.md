@@ -3,7 +3,7 @@
 This repo is **Project Prospector**, the offensive twin of the thesis smoke detector. It watches
 the ETF universe for structural novelty and proposes **reading, never orders**.
 
-The canonical spec is `docs/prospector-v1-spec-rev14-2026-07-08.md` (rev14; earlier revs kept in
+The canonical spec is `docs/prospector-v1-spec-rev15-2026-07-16.md` (rev15; rev14 and earlier revs kept in
 `docs/history/`). Read it before changing anything load-bearing. Rev12 folds the launch corroboration hook
 (§4c) to **built** (the M4 capstone) and records its finding at deflated strength — the live lag is
 bounded by holdings coverage, an **existence proof, not a rate** — plus the fixture-provenance honesty.

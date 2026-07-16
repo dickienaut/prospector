@@ -82,7 +82,7 @@ rev14). One distinction governs the whole package: **`xcorr` is the primary live
 
 ## See also
 
-- Spec §4 in `docs/prospector-v1-spec-rev14-2026-07-08.md`; `ARCHITECTURE.md` §2/§4/§9 and the runner
+- Spec §4 in `docs/prospector-v1-spec-rev15-2026-07-16.md`; `ARCHITECTURE.md` §2/§4/§9 and the runner
   state map at `prospector/runner/runner.py:15-21` (the authoritative wired-vs-slot source).
 - `docs/decisions/`: `2026-07-03-{dispersion-payload-generous,rebalance-accretion-and-routing,
   mandate-diff-targeted-section,launch-corroboration-existence-proof}.md`,

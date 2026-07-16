@@ -1,7 +1,6 @@
 # Project Prospector
 
-The **offensive twin** of a thesis smoke detector. Where the detector watches a portfolio for
-fragility, Prospector watches the ETF universe for **structural novelty** — new baskets, fracturing
+Prospector watches the ETF universe for **structural novelty** — new baskets, fracturing
 correlations, decoupling sectors — and proposes **reading, never orders**. It is a deterministic,
 append-only, fully-offline-testable pipeline that turns public primary sources into a fossil record of
 *leads* a human reads and adjudicates.
@@ -104,8 +103,8 @@ environment (never committed); tests need neither.
 - **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — the module map and the built-vs-deferred status.
 - **[`CLAUDE.md`](CLAUDE.md)** — the repo constitution (the firewall, CONTRACT-vs-DEFAULT, the
   append-only and identity rules).
-- **[`docs/prospector-v1-spec-rev14-2026-07-08.md`](docs/prospector-v1-spec-rev14-2026-07-08.md)** —
-  the canonical spec (rev14; earlier revs kept as history).
+- **[`docs/prospector-v1-spec-rev15-2026-07-16.md`](docs/prospector-v1-spec-rev15-2026-07-16.md)** —
+  the canonical spec (rev15; rev14 and earlier revs kept as history).
 - **`docs/decisions/`** — every load-bearing CONTRACT amendment, next to its `config.changed` fossil.
 - **[`ops/README.md`](ops/README.md)** — the M7 autonomy core: scheduling the runner on launchd + the
   fossil-store backup, and the on-Mini activation runbook.

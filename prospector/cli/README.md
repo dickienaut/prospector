@@ -32,6 +32,6 @@ and invoke one cadence tick. **Built.** The command tree itself is pinned by tes
 ## See also
 
 - Spec §8c (operator surface), §9 (the `run` tick), §2 (identity), §10 test 5 (backtest) in
-  `docs/prospector-v1-spec-rev14-2026-07-08.md`.
+  `docs/prospector-v1-spec-rev15-2026-07-16.md`.
 - `ARCHITECTURE.md` §7 (the CLI table) and §9 (built vs deferred).
 - `docs/decisions/2026-07-02-crash-flags-guidance-rev2.md` §8.4 (the verdict vocabulary).
