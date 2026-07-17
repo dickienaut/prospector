@@ -1,9 +1,19 @@
 # QA config snapshot — PROSPECTOR_QA profile + prospector-branch-qa skill
 
-The QA seat's **agent profile** and **skill** live only on the Claude Science platform, not in
-this repo. If they drift or are edited by mistake, there is no undo unless a known-good copy exists
+> **Source-of-truth update (2026-07-17).** The **skill** (`prospector-branch-qa`:
+> `SKILL.md` + `kernel.py`) is now sourced from **`tools/qa-skill/`**, where it is
+> reviewed and CI-tested — the repo is the source, publishing to the platform is the
+> deploy. Treat `tools/qa-skill/` as authoritative for the skill; the skill copy in
+> this directory is a convenience mirror only and may lag. This directory remains the
+> **home for the `PROSPECTOR_QA` profile** (`*.profile.json` / `*.system_prompt.md`),
+> which has no other repo home, and a one-stop restore bundle. See
+> `tools/qa-skill/README.md` for the source/deploy discipline.
+
+The QA seat's **agent profile** and **skill** originate on the Claude Science platform.
+If they drift or are edited by mistake, there is no undo unless a known-good copy exists
 somewhere durable. This directory is that copy — the same "anchor the record outside itself"
-discipline METHOD.md applies to the code, pointed at the QA infrastructure.
+discipline METHOD.md applies to the code, pointed at the QA infrastructure. (As of the update
+above, the skill's authoritative copy is `tools/qa-skill/`, not this snapshot.)
 
 **Snapshot taken:** see `MANIFEST.json` (`snapshot_utc`). **Captured from:** the live platform via
 `host.agents` / `host.skills`.
