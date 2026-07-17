@@ -50,12 +50,9 @@ Operating Discipline, §4.1–4.7) are unchanged — the premise, the consensus 
 ETF-as-thesis instrument, the three streams, the wall/scarce-oracle, the firewall, the fossil record, the M3
 findings, and the seven operating disciplines are all stable. Carry them forward verbatim from rev 5/6.*
 
-**§2.9 "What is deferred," updated for rev 8 (walked item-by-item; rebalance and the M7 core have closed):**
+**§2.9 "What is deferred," updated for rev 8 (walked item-by-item; rebalance, the M7 core, and M6 capture have closed):**
 
 > ## 2.9 What is deferred
-> - **Milestone 6 (discourse capture + budget guard) — front-loaded to v2.** The one milestone deliberately
->   not built for v1: raw, frozen, uninterpreted capture at structural hits, hard budget caps, fault-on-breach.
->   §6 states the CONTRACT; nothing consumes it in v1.
 > - **M7-hardening remainder.** The M7 autonomy core (launchd scheduling, the single-writer lock, the
 >   fail-loud HDD backup) is **built** — the runner leaves manual `pros run`, and the §8a **dead-man arms** on
 >   activation; the hardening tail stays deferred: the SOI-corroboration cadence gate, the read-only-media
@@ -81,7 +78,7 @@ findings, and the seven operating disciplines are all stable. Carry them forward
 
 ## 5.1 Where the 17-year arc stands
 
-v1 is **build-complete.** Milestones 1–5, the SOI resolver, and the M7 autonomy core are built; both
+v1 is **build-complete.** Milestones 1–6, the SOI resolver, and the M7 autonomy core are built; both
 structural spawners are live; the runner can now run *itself*. Where it stands:
 
 - **Two live spawners, both producing real data.** Excess-correlation (§4a) pages and counts toward the
@@ -123,14 +120,20 @@ structural spawners are live; the runner can now run *itself*. Where it stands:
   store-durability backup (local-HDD mirror, fail-loud, health on the one fault→heartbeat channel —
   `store-durability-backup` + `backup-health-one-fault-channel`). Built; **awaits a one-time on-Mini
   activation** (below).
+- ***NEW — M6 discourse capture (DEFERRED→BUILT).*** `ingest/capture.py` (`4739b52`, "the last v1 build
+  slice"), the runner's phase 5 — K deterministic-templated queries → Anthropic `web_search` (forces our
+  verbatim query; the model's prose is never persisted — the wall) → our httpx fetch of the top-M URLs →
+  frozen under `captures/{lead}/{ts}/` (the one un-backfillable tree); a hard weekly/monthly budget cap
+  pauses + faults on breach. **Ships disabled — same register as M7:** the owner arms it by setting
+  `capture.monthly_budget_usd` + `ANTHROPIC_API_KEY`, behind the one-time **CAP-DRIFT armed byte-compare**
+  (`query-drift-byte-exact`) that runs before capture is armed. Write-only — nothing in v1 reads a capture.
+  (Anthropic `web_search` + $10/mo budget ratified per the M6 build note.)
 
 **QUEUED (named, next):**
 - **The on-Mini activation** — *not a build, a deploy action:* install the launchd job, bless the backup
   drives, run the first scheduled tick. Flips v1 from build-complete to *running*. (`ops/README.md`.)
 
 **DEFERRED (named, with reason):**
-- **M6** (discourse capture + budget guard) — front-loaded to v2; §6 states the CONTRACT, nothing consumes it
-  in v1.
 - **M7-hardening remainder** — the SOI cadence gate, the WAL-checkpoint-out, offsite S3 (live durability is
   local-disk + HDD; S3 dormant).
 - **Milestone 3b** (dispersion PIT calibration + NPORT-P parser) — data-gated; live burn-in substitutes.
@@ -144,7 +147,8 @@ structural spawners are live; the runner can now run *itself*. Where it stands:
   generous dispersion payload (confirmed accruing in the live XLI/XLP firings), so **nothing to build, keep
   capturing.** It stays walled off — a re-synthesis is exactly when an item like this drifts into a plan, and
   it must not.
-- The **discourse-interpretation** program (v2).
+- The **discourse-interpretation** program (v2) — the *interpretation* only; the capture that feeds it is
+  built and ships-disabled (BUILT, above). v1 banks the substrate; v2 reads it.
 
 **The load-bearing honesty line:** everything under BUILT is *built and running*, not *validated*. **The
 instrument is done; the measurement hasn't started.** v1 is a complete, self-running monitor — but dispersion
@@ -166,7 +170,7 @@ v1 is build-complete, so what remains is **not builds** — it is activation, th
 3. **Dispersion's 90-day burn-in completes**, then a *human* promotes it to paging (a `config.changed` flip) —
    calendar-bound.
 
-Beyond v1: **M6** (discourse capture, v2) and the named coverage gaps as they bite. None of these gate v1's
+Beyond v1: the **discourse interpretation** (v2 — the capture that feeds it is built and ships-disabled, §5.2 BUILT) and the named coverage gaps as they bite. None of these gate v1's
 *meaning* — only the run does.
 
 **The shift to internalize:** the whole arc to here built the instrument. That is done. Everything that answers
