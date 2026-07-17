@@ -36,8 +36,8 @@ reorg — only relocated (`docs/decisions/2026-07-11-docs-reorganization.md`).
 ```
 docs/
   INDEX.md                                       ← you are here
-  prospector-v1-spec-rev15-2026-07-16.md         ← CURRENT build spec
-  project-prospector-state-of-project-rev8-2026-07-16.md   ← CURRENT status rollup
+  spec.md                                        ← CURRENT build spec (rev 15, in header)
+  state.md                                       ← CURRENT status rollup (rev 8, in header)
   decisions/   dated fossils — every load-bearing decision, chronological, never rewritten
   bugs/        the bug archive — README.md (doctrine: classes + how-to), INDEX.md (searchable register), qa/ (records)
   history/     superseded revs of the build spec + the state-of-project doc
@@ -46,8 +46,12 @@ docs/
   deferred/    parked v2 designs — captured, not queued (walled off from v1)
 ```
 
-**Advancing a canonical rev** is a fixed ritual: drop the new rev at the `docs/` root, `git mv` the superseded
-one into `history/`, and update this index + the pointers in `CLAUDE.md` / `ARCHITECTURE.md`.
+**Advancing a canonical rev** (the build spec or state doc) is now an **in-place amendment**: edit `docs/spec.md`
+/ `docs/state.md` under amend-never-regenerate (surgical diff, everything else verbatim), bump the **rev in the
+header**, and add its changelog entry — the PR diff *is* the surgical-diff check. Update this index + the pointers
+in `CLAUDE.md` / `ARCHITECTURE.md` only when a *path* changes, not on every rev. (Before 2026-07-17 a rev was a
+new dated file `git mv`-ed into `history/`; the pre-rev16 revs remain there as dated fossils — see
+`docs/decisions/2026-07-17-rolling-docs-stable-named.md`.)
 
 ---
 
@@ -76,18 +80,21 @@ one into `history/`, and update this index + the pointers in `CLAUDE.md` / `ARCH
   *Contract — amended only.*
 
 ### The live docs (at the `docs/` root)
-- **Build spec — CURRENT: `prospector-v1-spec-rev15-2026-07-16.md`** — *current* (the §9e / §8b / §10
-  CONTRACT fold). Section-numbered CONTRACTs + defaults; the IN / OUT scope; the milestones; **Appendix A**
-  (LTEE archive port map) + **Appendix B** (proto-clusters, the v2 constituent-substrate design note).
-  *Contract — amended only.*
-- **State-of-project — CURRENT: `project-prospector-state-of-project-rev8-2026-07-16.md`**
-  (supersedes rev 7, rev 6). Status, registers, marching orders. *Rollup — re-synthesized each rev.*
+- **Build spec — CURRENT: `docs/spec.md`** (rev 15 in its header — the §9e / §8b / §10 CONTRACT fold).
+  Section-numbered CONTRACTs + defaults; the IN / OUT scope; the milestones; **Appendix A** (LTEE archive port
+  map) + **Appendix B** (proto-clusters, the v2 constituent-substrate design note). *Contract — amended in place.*
+- **State-of-project — CURRENT: `docs/state.md`** (rev 8 in its header; supersedes rev 7, rev 6). Status,
+  registers, marching orders. *Rollup — re-synthesized each rev.*
 
 ### Superseded revs — `history/`
-*The prior revs of the two rolling docs, carried for provenance. The current rev always lives at the root; the
-whole series is the change-history.*
-- Build spec: `prospector-v1-spec-rev1` through `rev14` (rev 15 is current, at the root). Revs 1 / 2 / 4 / 7 / 10
-  were recovered 2026-07-11 from the design-thread archive.
+*The prior revs of the two rolling docs, carried for provenance.* **Transition (2026-07-17):** `history/` holds
+the **pre-2026-07-17 dated revs** and stops growing — from rev 16 the spec and state are **amended in place** at
+`docs/spec.md` / `docs/state.md` (rev in the header; `git log --follow docs/spec.md` for the full series).
+**Redirect for old citations:** **`prospector-v1-spec-rev15-2026-07-16.md` → `docs/spec.md`** and
+**`project-prospector-state-of-project-rev8-2026-07-16.md` → `docs/state.md`** — a live-yesterday citation to
+either dated path now resolves to the stable name. See `docs/decisions/2026-07-17-rolling-docs-stable-named.md`.
+- Build spec: `prospector-v1-spec-rev1` through `rev14` in `history/` (rev 15 is current, as `docs/spec.md`).
+  Revs 1 / 2 / 4 / 7 / 10 were recovered 2026-07-11 from the design-thread archive.
   - **rev 1 — one doc, two names (by design).** The file is `history/prospector-v1-spec-rev1-2026-07-01.md`
     (its **series** name; content keeps the *"Generator v1"* title, as it predates the "Prospector" rename). It
     is **also known as `generator-v1-spec-2026-07-01.md`** — its **born** name, under which the pre-rename docs

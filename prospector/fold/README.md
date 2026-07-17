@@ -48,6 +48,6 @@ test 3, property-tested).
 
 ## See also
 
-- Spec **§5** (and §8a/§8c, §4b) in `docs/prospector-v1-spec-rev15-2026-07-16.md`; `ARCHITECTURE.md`
+- Spec **§5** (and §8a/§8c, §4b) in `docs/spec.md`; `ARCHITECTURE.md`
   §2/§9. Decision: `docs/decisions/2026-07-02-crash-flags-guidance-rev2.md` (verdict vocabulary §8.4);
   shadow leads: `docs/decisions/2026-07-03-dispersion-shadow-first.md`.
