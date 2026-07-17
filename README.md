@@ -69,34 +69,79 @@ backtest/   offline calibration + the acceptance gate — writes only under back
 
 ## Status
 
-**Live, self-running, and backed up.** Milestones 1–6 — the sensors, the verdict layer, the SOI resolver,
-the M5 cadence runner, the §10 email sender, and M6 discourse capture (built, ships-disabled) — plus the §9e dispersion vertical, rebalance runner-wiring,
-the dual-HDD fossil-store backups (`pros backup`), and a CI merge-gate on `main` are all built; a real
-`pros run` has fired live `xcorr` leads on the SPDR grid. The **M7 autonomy core** — a launchd scheduled
-runner that runs `pros run && pros backup` on cadence, arming the §8a dead-man — is built and awaits a
-one-time on-Mini activation (`ops/README.md`), after which **v1 is build-complete.** **634 tests green,
-2 xfailed** (offline); every change lands only through a green-CI pull request.
+**Built, deployed, and self-running.** Milestones 1–6 — the sensors, the verdict layer, the SOI resolver,
+the M5 cadence runner, the §10 email sender, and M6 discourse capture (built, ships-disabled) — plus the §9e
+dispersion vertical, rebalance runner-wiring, the dual-HDD fossil-store backups (`pros backup`), and a CI
+merge-gate on `main` are all built. The **M7 autonomy core is live**: a launchd job runs `pros run && pros
+backup` daily on the Mac Mini, mirrors the fossil store to two blessed HDDs, and arms the §8a dead-man (a
+weekly heartbeat; silence beyond 7 days unambiguously means broken). A real `pros run` has fired live `xcorr`
+leads on the SPDR grid, dispersion runs in shadow burn-in, and the backup restores cleanly (`verify-restore`).
+**v1 is build-complete and deployed.** **~660 offline tests, network-guarded**; every change lands only
+through a green-CI pull request, and production is a tag-pinned worktree (`ops/deploy.sh`).
 
 The honest caveat the docs keep front-and-center: **live ≠ validated.** The firing is n=1, the
 false-discovery rate is unmeasured, and the edge question is open. **Falsifiability is demonstrated;
 profitability is not.** The runner exists to convert existence-proofs into a *rate* — and that long run is
-what remains once v1 is deployed. (M6 discourse capture is **built and ships disabled** — the owner arms it via budget + provider; only the discourse *interpretation* is v2.)
+what remains now that v1 is deployed. (M6 discourse capture is **built and ships disabled** — the owner arms it via budget + provider; only the discourse *interpretation* is v2.)
 
-## Quickstart
+## Running & testing
+
+**Setup + the test suite** (offline — a network guard fails any test that opens a real socket):
 
 ```sh
-uv sync
-uv run pytest                              # offline — a network guard fails any test that opens a socket
-uv run pros --help                         # the read-only CLI (verdict, lead list/show, identity, reindex)
-uv run pros run                            # one cadence tick (not a recompute-on-demand button)
-uv run pros backup                         # mirror the fossil store to blessed external drives (cadence-driven)
-
-uv sync --extra dashboard                  # optional read-only dashboard (§11)
-PROSPECTOR_STORE=./store streamlit run prospector/dashboard/app.py
+uv sync                                     # base install
+uv run pytest                               # the full offline suite (~660 tests, network-guarded)
+uv run pytest -q tests/test_capture.py      # a single module
 ```
 
-Live runs need an EDGAR user-agent (config `edgar.user_agent`) and a `TIINGO_API_TOKEN` in the
-environment (never committed); tests need neither.
+**The read-only CLI** (`pros` — folds of the event record; nothing here recomputes on demand):
+
+```sh
+uv run pros --help                          # all subcommands
+uv run pros lead list                       # live leads (the fold over each event stream)
+uv run pros lead show <lead-id>             # one lead's full fold  (pros lead --help)
+uv run pros verdict <lead-id> <verdict>     # append a verdict: yes | watch | off-thesis-real | noise
+uv run pros identity                        # the SEC series-ID retry-then-manual queue
+uv run pros store reindex                   # rebuild the index from the fossils (repair, not run-now)
+uv run pros store lock-path                 # the single-writer lockfile path
+uv run pros backtest                        # replay xcorr over history → the acceptance gate (writes only under backtest/)
+```
+
+**A cadence tick + backups** (record on cadence, push on state change — `run` is NOT a recompute button):
+
+```sh
+uv run pros run                             # config-honesty → ingest → sensors → fold → push
+uv run pros backup                          # mirror the fossil store to the blessed HDDs
+uv run pros store verify-restore <dir>      # restore a backup to a temp store + count-check
+```
+
+Live runs need `TIINGO_API_TOKEN` (and `PROSPECTOR_SMTP_PASSWORD` if email is on) in `.env`, plus an EDGAR
+user-agent (`edgar.user_agent` in config); tests need neither. Machine-local paths live in an untracked
+`config/prospector.local.yaml` overlay (never in the tracked config).
+
+**The read-only dashboard** (§11 — Streamlit; no autorefresh, no run-now):
+
+```sh
+uv sync --extra dashboard
+PROSPECTOR_STORE=./store uv run streamlit run prospector/dashboard/app.py
+```
+
+To watch the **live** system, point it at the production store — safe by design (WAL mode; read-only;
+concurrent with the scheduler):
+
+```sh
+cd ~/prospector/prod
+PROSPECTOR_STORE=~/prospector/store uv run streamlit run prospector/dashboard/app.py
+```
+
+**Operating the deployed runner** (the Mac Mini — full runbook in [`ops/README.md`](ops/README.md)):
+
+```sh
+launchctl print gui/$(id -u)/com.prospector.run   # status · next fire · last exit code
+./ops/install.sh <LOCAL_HOUR> <LOCAL_MINUTE>       # (re)install the daily schedule (local == 22:30 UTC)
+./ops/uninstall.sh                                 # stop it
+ops/deploy.sh <tag>                                # ship a release (tag-pinned, run from the dev repo)
+```
 
 ## Where to read next
 
