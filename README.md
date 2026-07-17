@@ -103,7 +103,7 @@ environment (never committed); tests need neither.
 - **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — the module map and the built-vs-deferred status.
 - **[`CLAUDE.md`](CLAUDE.md)** — the repo constitution (the firewall, CONTRACT-vs-DEFAULT, the
   append-only and identity rules).
-- **[`docs/prospector-v1-spec-rev15-2026-07-16.md`](docs/prospector-v1-spec-rev15-2026-07-16.md)** —
+- **[`docs/spec.md`](docs/spec.md)** —
   the canonical spec (rev15; rev14 and earlier revs kept as history).
 - **`docs/decisions/`** — every load-bearing CONTRACT amendment, next to its `config.changed` fossil.
 - **[`ops/README.md`](ops/README.md)** — the M7 autonomy core: scheduling the runner on launchd + the

@@ -34,6 +34,6 @@ triggers a sensor, a fetch, or a computation. Implements spec §11. **Built.**
 
 ## See also
 
-- Spec §11 in `docs/prospector-v1-spec-rev15-2026-07-16.md`; `ARCHITECTURE.md` §2 (module map)
+- Spec §11 in `docs/spec.md`; `ARCHITECTURE.md` §2 (module map)
   and §9 (built vs deferred, incl. the deferred §4b dispersion vertical).
 - `docs/decisions/2026-07-02-crash-flags-guidance-rev2.md` §8 (the macro-catalog posture).

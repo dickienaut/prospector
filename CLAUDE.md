@@ -3,7 +3,7 @@
 This repo is **Project Prospector**, the offensive twin of the thesis smoke detector. It watches
 the ETF universe for structural novelty and proposes **reading, never orders**.
 
-The canonical spec is `docs/prospector-v1-spec-rev15-2026-07-16.md` (rev15; rev14 and earlier revs kept in
+The canonical spec is `docs/spec.md` (rev 15, stated in its header; earlier revs kept in
 `docs/history/`). Read it before changing anything load-bearing. Rev12 folds the launch corroboration hook
 (§4c) to **built** (the M4 capstone) and records its finding at deflated strength — the live lag is
 bounded by holdings coverage, an **existence proof, not a rate** — plus the fixture-provenance honesty.
@@ -166,14 +166,22 @@ Every doc is **born with a leading ISO date** (`YYYY-MM-DD-…`) so versions are
 date orders it and never changes. This mostly formalizes existing practice (decision records are dated; the spec
 and state doc carry date + rev). The rule is deliberately narrow in three ways:
 - **Rev only where it versions.** A `-revN` suffix is added **only** where the doc is one of a versioned series
-  (the spec, the state-of-project doc, a decision revisited as rev 2+). A rev-bump is a **new dated file, the
-  prior moved to `history/`** — never a rename-in-place (already the practice). Date is universal; a `-rev1` on a
-  one-shot fossil (a QA finding that will only ever be rev 1) is just noise.
+  (a decision revisited as rev 2+; and the superseded spec/state revs already fossilized in `history/`). A
+  rev-bump of such a fossil series is a **new dated file, the prior moved to `history/`** — never a
+  rename-in-place. Date is universal; a `-rev1` on a one-shot fossil (a QA finding that will only ever be rev 1)
+  is just noise. **The *live* build spec and state-of-project doc are not in this class** — they are amended in
+  place under stable names (next bullet); filing them as a dated series was a misclassification, corrected
+  2026-07-17.
 - **Stable-named exceptions — because they are amended in place.** `CLAUDE.md`, `INDEX.md`, `ARCHITECTURE.md`,
-  the package `README`s, and `LICENSE` keep fixed names: they are the always-current single instance, amended in
-  place per amend-never-regenerate, their history in git + changelog — not re-fossilized as a dated series. The
-  distinction is principled, the same one that governs how each kind changes: **stable-named = amended-in-place
-  single instance; dated = point-in-time or versioned.**
+  the **build spec (`docs/spec.md`)**, the **state-of-project doc (`docs/state.md`)**, the package `README`s, and
+  `LICENSE` keep fixed names: they are the always-current single instance, amended in place per
+  amend-never-regenerate, their history in git + changelog — not re-fossilized as a dated series; the rev they
+  carry lives in the **header** (a content claim, one home), never the filename. The distinction is principled,
+  the same one that governs how each kind changes: **stable-named = amended-in-place single instance; dated =
+  point-in-time or versioned.** The spec and state doc belong here *by their own rule*: amend-never-regenerate
+  already governs them (surgical diff, everything else verbatim) — which **is** the amended-in-place contract, so
+  filing them as a dated series was the misclassification corrected 2026-07-17
+  (`docs/decisions/2026-07-17-rolling-docs-stable-named.md`).
 - **Forward-only — the load-bearing clause.** This governs **new** files (born dated); **existing filenames are
   never bulk-renamed.** The reorg's insight was *relocate, never rename* — references point at filenames, so
   byte-identical names keep ~99% of them resolvable by search; a bulk rename would break exactly those and
@@ -181,7 +189,9 @@ and state doc carry date + rev). The rule is deliberately narrow in three ways:
   cannot be edited to point at a renamed file). The escape valve mirrors amend-never-regenerate's: a **specific**
   legacy misnamed doc may be normalized as a deliberate, **reference-checked one-off** (grep its references, fix
   the fixable, document any fossil drift — the same shape as the reorg), **never a bulk rename.**
-- Ratified with the design thread: `docs/decisions/2026-07-11-doc-naming-convention.md`.
+- Ratified with the design thread: `docs/decisions/2026-07-11-doc-naming-convention.md`; the live-spec/state
+  reclassification (stable-named, amended in place — `docs/spec.md`, `docs/state.md`) added 2026-07-17,
+  `docs/decisions/2026-07-17-rolling-docs-stable-named.md`.
 
 ## Vendored store provenance
 The store/registry primitives in `prospector/primitives/` are ported from
