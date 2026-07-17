@@ -5,9 +5,10 @@
 *Precedence, so this doc can't become a second home for one rule: **`CLAUDE.md` is operative, this is
 explanatory.** If they ever disagree about what a seat must do, `CLAUDE.md` wins and this doc is the bug.*
 
-*Ratified 2026-07-16 by all four seats. Its enforced-tier mechanism claims (rules 1, 2, 6) are anchored to a
-dated verification record — `docs/notes/2026-07-16-method-mechanisms-qa-verification.md` — checked against the
-live ruleset, `CODEOWNERS`, and watched write-probes, not against memory. Prior drafts: `docs/history/`.*
+*Ratified 2026-07-16 by all four seats. Its enforced-tier mechanism claims (rules 1, 2, 6) — and the
+enforced QA sub-clause of rule 3 — are anchored to a dated verification record —
+`docs/notes/2026-07-16-method-mechanisms-qa-verification.md` — checked against the live ruleset,
+`CODEOWNERS`, the shipped skill, and watched write-probes, not against memory. Prior drafts: `docs/history/`.*
 
 ---
 
@@ -100,9 +101,17 @@ contiguous, and correct. That migration *is* rule #5's engine, made visible.
    one's ledger is per-seat; it stays aspired because only one seat is bound:
    - **QA — enforced (2026-07-16).** Pulls the repo of record by script, never the local copy; a findings PR
      cannot be delivered unless its provenance stamp equals the exact commit QA fetched and tested — a
-     mismatch fails the call before any push. A finding cannot name a commit QA never read.
+     mismatch fails the call before any push. A finding cannot name a commit QA never read. *(This is the
+     single home for the mechanism. Anchored: `docs/notes/2026-07-16-method-mechanisms-qa-verification.md`,
+     §"Rule 3 (QA sub-clause)" — CONFIRMED against the shipped `deliver_qa_findings_pr` gate, RED/GREEN with
+     meta-controls.)*
    - **Code — discipline.** The strict-status ruleset pins the merge base to current `origin/main`, but that's
-     branch freshness, not reading. The fixture-provenance scar was exactly this miss.
+     branch freshness, not reading. Three scars, one miss — reasoning from an *account* of the artifact instead
+     of the artifact itself: **fixture-provenance** (a labeled-synthetic SPDR holdings fixture carried a green the
+     real filing had not earned); **M6-CAPTURE-DRIFT** (reasoned from a stale `README.md` line's account of
+     `capture.py` rather than opening it — filed M6 "front-loaded to v2" while it was built at `4739b52`); and
+     **#88 stale-status** (reported `main`'s state from a stale local checkout, never fetched — QA caught it
+     against git). The recurrence is why the rule stays *aspired* for Code: nothing yet forces the read.
    - **Design — discipline, thinner than it looks.** It can check a claim against a stale snapshot, but nothing
      forces it. Its code-claims are caught downstream; its document-claims are not — an external briefing once
      asserted two capabilities as built that were only planned, and no seat was bound to catch it.
@@ -168,18 +177,19 @@ breakage — never to another summary.** An anchored record is the asset the who
 un-anchored one is a confident story that ages into a lie. (We have already been bitten once: a
 state-of-project doc that lagged the code and would have misled anyone who trusted it over the source.)
 
+**The reviewer's own record is anchored the same way.** That discipline has a mechanized instance in QA's own
+delivery: a findings PR is the doc-drift class wearing a QA badge — a confident record naming a commit QA never
+actually read, because the branch moved between review and delivery. Rule #3's QA sub-clause closes it by
+*binding* the provenance stamp to the fetched commit and refusing to ship on a mismatch — the mechanism is
+defined once, there. It covers QA's fetch-and-deliver path only; Build and Design reading source over a summary
+stays discipline, since no mechanism forces comprehension.
+
 **Culture that survives total turnover.** In a human org, culture lives in people and walks out the door with
 them. Here nobody stays — every seat is new every session — so the culture had to be externalized: a written
 constitution, a searchable bug register (what has bitten us, what rule was born from it), dated decision
 records, published procedures the agents load like training. A fresh agent reads them and behaves like a
 veteran. The turnover that should kill the culture instead proves it: every cold start is a test of whether
 it really lives in the record. We have built a functional Ship of Theseus.
-
-**QA verification** The gate closes the doc-drift failure class wearing a QA badge: a findings PR that confidently 
-names a commit QA never saw because the branch moved between review and delivery. Binding the stamp to the fetched 
-commit — and refusing to ship when it's absent or has drifted — makes the provenance true, not merely present. 
-Scope: this covers QA's fetch-and-deliver path; Build and Design reading source over a summary remains discipline, 
-since no mechanism forces comprehension.
 
 ## What it costs
 
