@@ -29,7 +29,7 @@ Four roles, deliberately separated. None of them remembers anything between sess
 starts cold.
 
 - **Design** — a plain chat thread. Architecture, tradeoffs, rulings. It has, at most, a **stale read-only
-  snapshot** of the code: enough to check its own factual claims before making them, never enough to verify —
+  snapshot** of the code and the record: enough to check its own factual claims before making them, never enough to verify —
   it cannot run anything, cannot enumerate, and its snapshot ages from the moment it's taken. So every claim
   it makes from that snapshot carries an as-of, and a search hit is a lead, not a verdict. Its job is judgment
   and argument; verification is not its seat.
