@@ -18,7 +18,7 @@ discipline METHOD.md applies to the code, pointed at the QA infrastructure.
 | `prospector-branch-qa/kernel.py` | The skill's kernel sidecar (the QA helper functions: `fetch_prospector_branch`, `deliver_qa_findings_pr`, `verify_red_green`, `check_diff_hygiene`, `provenance_stamp`, `qa_git_env`), verbatim. |
 | `MANIFEST.json` | sha256 + byte count of each file above — the drift detector. |
 
-**Not exported:** the 28 `anthropic`-origin skills (alphafold2, figure-style, customize, …) are
+**Not exported:** the 30 `anthropic`-origin skills (alphafold2, figure-style, customize, …) are
 platform-managed and restore themselves — they are not "our config." The profile's connector list
 is recorded in the profile JSON as `_connectors_at_snapshot` for reference only: an `unrestricted`
 profile automatically gets the full live connector set on restore, so the list is informational,
