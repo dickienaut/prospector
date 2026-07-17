@@ -253,7 +253,7 @@ def deliver_qa_findings_pr(head_branch, files, title, body,
                            base_branch="main", base_sha=None, labels=None,
                            author_name=None, author_email=None,
                            draft=False, provenance=None, reviewed_sha=None,
-                           repo_root=None):
+                           repo_root=None, transport=None):
     """Deliver a QA finding-set to dickienaut/prospector as a qa/* branch + PR.
 
     Option 2 (QA PROPOSES, implementer APPLIES): the PR carries RED-first tests
@@ -282,26 +282,31 @@ def deliver_qa_findings_pr(head_branch, files, title, body,
       * Commits authored as a distinct QA identity so history shows the seat.
 
     SAFETY — testing this offline: this function makes LIVE GitHub writes
-    (creates a branch, commit, and PR). To exercise it without touching the
-    real repo you MUST replace sys.modules["requests"] with a fake BEFORE the
-    call — patching a module attribute (e.g. `mod.requests = ...`) does NOT
-    isolate it, because the body does a local `import requests` that resolves
-    from sys.modules and escapes to api.github.com. (Learned the hard way: an
-    attribute patch once created a real branch + PR that had to be cleaned up.)
-    Better still, point base_branch/head_branch at a throwaway fork.
+    (creates a branch, commit, and PR). Pass `transport=` to exercise every
+    gate and the full request SEQUENCE without touching the network. transport
+    is a callable transport(method, path, payload) -> dict, dropped in where the
+    live HTTP `_req` would go; a fake that records its calls lets a test assert
+    that (a) the provenance/hygiene gates raise BEFORE any mutating call, and
+    (b) the accept path issues the right calls in the right order. When
+    transport is None the live `requests`-backed transport is used and real
+    GitHub writes happen — the default, for real deliveries.
+
+    This replaces the old sys.modules["requests"] monkey-patch: the body used to
+    do a local `import requests`, so an attribute patch escaped to
+    api.github.com and once created a real branch + PR that had to be cleaned up.
+    The seam is now an explicit parameter, not a global — no import to outwit.
+    (For an integration smoke test you can still point base_branch/head_branch
+    at a throwaway fork with transport=None.)
 
     files: {repo_relative_path: local_fs_path}. Read with open(rb) in THIS env.
     Returns {pr_number, pr_url, branch, commit, files, base_branch, base_sha,
              diff_hygiene}.
     """
-    import base64, requests
+    import base64
 
     if not head_branch.startswith("qa/"):
         raise ValueError("head_branch must start with 'qa/' \u2014 QA pushes review "
                          "branches only, never main or a base branch.")
-    token = os.environ.get("GITHUB_TOKEN")
-    if not token:
-        raise RuntimeError("GITHUB_TOKEN not set \u2014 cannot reach the repo.")
     author_name = author_name or "Prospector-QA"
     author_email = author_email or "prospector-qa@users.noreply.github.com"
 
@@ -317,15 +322,28 @@ def deliver_qa_findings_pr(head_branch, files, title, body,
                     "\u2014 ship a single per-file `diff -u` with a/ b/ labels, "
                     "source files only. Nothing was pushed.")
 
-    api = f"https://api.github.com/repos/{REPO}"
-    H = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
-         "X-GitHub-Api-Version": "2022-11-28"}
+    # TRANSPORT SEAM (step 5): an injected transport(method, path, payload) -> dict
+    # stands in for the live HTTP layer, so every gate and the full request
+    # SEQUENCE can be exercised offline (see tests/test_delivery_transport.py).
+    # When transport is None we build the real requests-backed transport HERE \u2014
+    # so a tokenless, transport-injected test never trips the token guard, and a
+    # local `import requests` no longer exists for a monkey-patch to escape past.
+    if transport is None:
+        import requests
+        token = os.environ.get("GITHUB_TOKEN")
+        if not token:
+            raise RuntimeError("GITHUB_TOKEN not set \u2014 cannot reach the repo.")
+        api = f"https://api.github.com/repos/{REPO}"
+        H = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+             "X-GitHub-Api-Version": "2022-11-28"}
 
-    def _req(method, path, payload=None):
-        r = requests.request(method, api + path, headers=H, json=payload, timeout=60)
-        if r.status_code >= 400:
-            raise RuntimeError(f"{method} {path} -> {r.status_code}: {r.text[:400]}")
-        return r.json() if r.text else {}
+        def _req(method, path, payload=None):
+            r = requests.request(method, api + path, headers=H, json=payload, timeout=60)
+            if r.status_code >= 400:
+                raise RuntimeError(f"{method} {path} -> {r.status_code}: {r.text[:400]}")
+            return r.json() if r.text else {}
+    else:
+        _req = transport
 
     if base_sha is None:
         base_sha = _req("GET", f"/git/ref/heads/{base_branch}")["object"]["sha"]
