@@ -1,7 +1,7 @@
 # Prospector — Architecture
 
 *A map of what's built and why. Read this to catch up; read `docs/prospector-v1-spec-rev15-2026-07-16.md`
-for the canonical "what to build," `docs/project-prospector-state-of-project-rev7-2026-07-11.md` for
+for the canonical "what to build," `docs/project-prospector-state-of-project-rev8-2026-07-16.md` for
 the status/roadmap source of truth, and `docs/decisions/` for the "why we changed our minds." Last
 updated after the **M5 runner arc + going-live (N1–N10) hardening**: the runner is built and the
 system is **live and firing** — a real `pros run` fired 5 xcorr leads on the SPDR grid — but it is
