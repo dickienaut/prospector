@@ -32,9 +32,15 @@ import kernel  # noqa: E402
 _DUMMY_SHA = "a" * 40  # a syntactically valid 40-hex base so no ref lookup fires
 
 
-def _deliver(reviewed_sha):
-    """Call the delivery gate with a fixed base_sha (network-free) and the
-    given reviewed_sha. Any real push is unreachable past the guards under test."""
+def _deliver(reviewed_sha, monkeypatch):
+    """Call the delivery gate with a fixed base_sha (so no ref lookup fires) and
+    the given reviewed_sha. A DUMMY GITHUB_TOKEN is set because the function's
+    first action is a connectivity check that raises if the token is unset — and
+    CI runs the suite OFFLINE with no secrets, so without this the guards under
+    test would never be reached (the failure that green-locally / red-in-CI
+    exposed: the local env had a real token, CI does not). The dummy token is
+    never used: all three rejection paths raise before any network request."""
+    monkeypatch.setenv("GITHUB_TOKEN", "dummy-token-not-used-past-the-guards")
     return kernel.deliver_qa_findings_pr(
         head_branch="qa/does-not-exist",
         files={"docs/notes/_x.md": "x"},
@@ -46,24 +52,24 @@ def _deliver(reviewed_sha):
     )
 
 
-def test_omitted_reviewed_sha_is_refused_not_pushed():
+def test_omitted_reviewed_sha_is_refused_not_pushed(monkeypatch):
     """Absence is a hard refusal: a findings PR cannot stamp a commit it never
     bound to. The message must say the delivery did not happen."""
     with pytest.raises(ValueError) as ei:
-        _deliver(reviewed_sha=None)
+        _deliver(None, monkeypatch)
     assert "reviewed_sha is REQUIRED" in str(ei.value)
 
 
-def test_malformed_reviewed_sha_is_refused():
+def test_malformed_reviewed_sha_is_refused(monkeypatch):
     """A non-40-hex reviewed_sha cannot be a commit; refuse before pushing."""
     with pytest.raises(ValueError) as ei:
-        _deliver(reviewed_sha="not-a-real-sha")
+        _deliver("not-a-real-sha", monkeypatch)
     assert "40-hex" in str(ei.value)
 
 
-def test_reviewed_sha_not_matching_base_is_refused():
+def test_reviewed_sha_not_matching_base_is_refused(monkeypatch):
     """Valid hex but != base head: the branch moved between review and delivery,
     so the stamp would name a commit QA never saw. Refuse (provenance mismatch)."""
     with pytest.raises(RuntimeError) as ei:
-        _deliver(reviewed_sha="b" * 40)
+        _deliver("b" * 40, monkeypatch)
     assert "PROVENANCE MISMATCH" in str(ei.value)
