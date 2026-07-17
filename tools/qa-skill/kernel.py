@@ -83,6 +83,70 @@ def provenance_stamp(fetch_result, branch=None, commit_sha=None):
             f"from and verified against this exact commit.")
 
 
+def procedure_stamp(repo_root, catalog_dir=None):
+    """Render the QA-PROCEDURE drift block: per-file sha256 of the QA skill's
+    operative files (SKILL.md + kernel.py) as they run in THIS session (the
+    'catalog' copy the seat loaded) vs the repo SOURCE at tools/qa-skill/ in the
+    reviewed tree. Returns a markdown blockquote to append to the provenance
+    block, or "" if neither copy can be read.
+
+    Warn-loud, NEVER block. The skill is the review membrane; refusing to
+    deliver on drift would mean a drifted skill = no QA run and the fix needs a
+    publish (friction on the wrong side). A DRIFT line instead makes it visible
+    where review already happens (the PR body).
+
+    SKILL.md and kernel.py are hashed SEPARATELY and on purpose: a kernel.py
+    drift means the RED/GREEN + provenance gates that produced the finding you
+    are reading were themselves unreviewed \u2014 distrust the FINDING, not just the
+    skill \u2014 whereas a SKILL.md prose drift is comparatively benign. Every defect
+    this skill ever shipped was kernel gate-logic, not prose.
+
+    catalog_dir defaults to the directory THIS kernel.py runs from (resolved via
+    a sibling function's source file, which works whether or not __file__ is set
+    on a kernel plugin). repo_root is a fetch_prospector_branch()['dest']; the
+    source is read from <repo_root>/tools/qa-skill/. Pure file reads + hashlib \u2014
+    network-free, so it is CI-testable exactly like the membrane controls.
+    """
+    import hashlib, inspect
+    if catalog_dir is None:
+        catalog_dir = os.path.dirname(os.path.abspath(
+            inspect.getsourcefile(provenance_stamp)))
+    repo_dir = os.path.join(repo_root, "tools", "qa-skill")
+
+    def _sha(path):
+        try:
+            return hashlib.sha256(open(path, "rb").read()).hexdigest()
+        except OSError:
+            return None
+
+    rows, drift = [], False
+    saw_any = False
+    for fname in ("SKILL.md", "kernel.py"):
+        cat = _sha(os.path.join(catalog_dir, fname))
+        repo = _sha(os.path.join(repo_dir, fname))
+        if cat is None and repo is None:
+            continue
+        saw_any = True
+        if cat and repo and cat == repo:
+            rows.append(f">   - `{fname}`: MATCH (`{cat[:12]}`)")
+        else:
+            drift = True
+            rows.append(f">   - `{fname}`: **DRIFT** \u2014 catalog "
+                        f"`{(cat or 'MISSING')[:12]}` vs repo `{(repo or 'MISSING')[:12]}`")
+    if not saw_any:
+        return ""
+
+    head = ("> **QA procedure** \u2014 the skill that produced this finding, "
+            "catalog (this session) vs repo source `tools/qa-skill/`:")
+    if drift:
+        rows.append(
+            "> \u26a0 **DRIFT: the operative QA gates were not the reviewed source.** "
+            "A `kernel.py` drift means the RED/GREEN and provenance gates that vetted "
+            "this finding are unreviewed \u2014 distrust the finding itself, not just the "
+            "skill. Reconcile via a `tools/qa-skill/` PR + republish, then re-deliver.")
+    return "\n".join([head] + rows)
+
+
 def qa_git_env():
     """os.environ copy with host global/system gitconfig neutralised, so
     `git apply` works in any sandbox (the host ~/.gitconfig is often
@@ -188,7 +252,8 @@ def verify_red_green(repo_root, test_paths, diff_path, python_bin=None,
 def deliver_qa_findings_pr(head_branch, files, title, body,
                            base_branch="main", base_sha=None, labels=None,
                            author_name=None, author_email=None,
-                           draft=False, provenance=None, reviewed_sha=None):
+                           draft=False, provenance=None, reviewed_sha=None,
+                           repo_root=None):
     """Deliver a QA finding-set to dickienaut/prospector as a qa/* branch + PR.
 
     Option 2 (QA PROPOSES, implementer APPLIES): the PR carries RED-first tests
@@ -293,6 +358,15 @@ def deliver_qa_findings_pr(head_branch, files, title, body,
     # an empty override instead of replacing it with the default.)
     if not provenance:
         provenance = provenance_stamp(None, branch=base_branch, commit_sha=base_sha)
+    # PROCEDURE DRIFT (warn-loud, never block): append the catalog-vs-repo hash
+    # block when the reviewed tree is available, so a finding produced by an
+    # unpublished/drifted skill announces that fact in the PR body. repo_root is
+    # the fetch_prospector_branch()['dest']; skipped silently if not supplied
+    # (an older caller) so delivery is never blocked on the stamp's absence.
+    if repo_root:
+        proc = procedure_stamp(repo_root)
+        if proc:
+            provenance = f"{provenance}\n>\n{proc}"
     body = f"{provenance}\n\n{body}"
 
     # create the qa/* branch off the base head (idempotent: reuse if it exists)
