@@ -12,8 +12,8 @@ the record outside itself" discipline METHOD.md applies to the code.
 > removed for exactly that reason (see `tools/qa-skill/README.md`). Restore the skill from
 > `tools/qa-skill/` (below); its live catalog-vs-repo drift check is the runtime provenance stamp.
 
-**Snapshot taken:** see `MANIFEST.json` (`snapshot_utc`). **Captured from:** the live platform via
-`host.agents`.
+**Snapshot taken:** 2026-07-17T12:47:54Z. **Captured from:** the live platform via `host.agents`.
+The authoritative record of *when each file changed* is git history, not a field in this doc.
 
 ## What is here
 
@@ -21,7 +21,12 @@ the record outside itself" discipline METHOD.md applies to the code.
 |---|---|
 | `PROSPECTOR_QA.profile.json` | The user-owned agent profile — machine-restorable (the fields `host.agents.create`/`update` take). `unrestricted: true`. |
 | `PROSPECTOR_QA.system_prompt.md` | The profile's identity/system prompt, human-readable + diffable. |
-| `MANIFEST.json` | sha256 + byte count of the two profile files above — the drift detector for the profile (which has no git-tracked source). |
+
+There is deliberately **no `MANIFEST.json`** here. These two files are git-tracked in this directory,
+so their known-good hashes are what git already computes and their change history is `git log` — a
+sha256 cached beside them would be a second home for a fact the tool computes natively (every profile
+edit obligating a manifest bump, or the manifest silently going stale). For a git-tracked artifact,
+**re-export + `git status` is the drift check**; the diff is what a mirror in git gets for free.
 
 **Not here:** the QA **skill** (git-tracked at `tools/qa-skill/`, above) and the 30 `anthropic`-origin
 skills (alphafold2, figure-style, customize, …), which are platform-managed and restore themselves.
@@ -34,11 +39,15 @@ so the list is informational, not a thing to replay.
 All snippets run in a **`repl`** cell (the control-plane kernel), from the **repo root**, as a seat
 with `host.skills`/`host.agents` available.
 
-**Profile** — diff the live `systemPrompt` against the snapshot:
+**Profile** — re-export the live copy over the snapshot file, then let git show the drift (the
+reference is the git-tracked file, not a cached hash):
 
 ```python
-# host.agents.list(), take the PROSPECTOR_QA record, diff its systemPrompt
-# against PROSPECTOR_QA.system_prompt.md (below the `---`).
+# From repo root. Re-export the live systemPrompt into the snapshot file, then `git status`/`git diff`
+# docs/qa-config/PROSPECTOR_QA.system_prompt.md — a non-empty diff IS the drift. (The .md stores the
+# systemPrompt below its `---` front-matter; write the same shape you'd restore from.)
+rec = next(a for a in host.agents.list() if a["name"] == "PROSPECTOR_QA")
+print(rec["systemPrompt"])   # compare to PROSPECTOR_QA.system_prompt.md below the `---`
 ```
 
 **Skill (interim, until the runtime stamp lands)** — the reference is the git source, not a cached
@@ -89,9 +98,9 @@ host.agents.update("PROSPECTOR_QA", patch)          # if it still exists
 ## Refresh this snapshot after an intentional profile change
 
 When you deliberately edit the profile, re-run the export so the snapshot tracks the new known-good
-state (otherwise the drift check flags your own intended change). Keep the manifest's shas in sync
-with the live copies. The **skill** needs no snapshot refresh — it is git-tracked; edit it via a PR
-into `tools/qa-skill/` and history is the record.
+state (otherwise the drift check flags your own intended change), and commit it — the commit *is* the
+new known-good, and `git log` is the record of when it changed. The **skill** needs no snapshot
+refresh either — it is git-tracked at `tools/qa-skill/`; edit it via a PR and history is the record.
 
 ---
 
