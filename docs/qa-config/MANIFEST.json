@@ -3,7 +3,7 @@
   "captured_from": "Claude Science platform (host.agents / host.skills)",
   "profile": "PROSPECTOR_QA (source=user, unrestricted)",
   "skill": "prospector-branch-qa (origin=personal)",
-  "note": "The 28 anthropic-origin skills are platform-managed and NOT exported; only user-owned artifacts are here.",
+  "note": "The 30 anthropic-origin skills are platform-managed and NOT exported; only user-owned artifacts are here.",
   "files": {
     "PROSPECTOR_QA.profile.json": {
       "sha256": "dcf8aca0d9eda74ff526d99bcfcc68a0e8e0f24f6e95138f8c4e154ad9ec0924",
