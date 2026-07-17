@@ -69,18 +69,18 @@ backtest/   offline calibration + the acceptance gate — writes only under back
 
 ## Status
 
-**Live, self-running, and backed up.** Milestones 1–5 — the sensors, the verdict layer, the SOI resolver,
-the M5 cadence runner, and the §10 email sender — plus the §9e dispersion vertical, rebalance runner-wiring,
+**Live, self-running, and backed up.** Milestones 1–6 — the sensors, the verdict layer, the SOI resolver,
+the M5 cadence runner, the §10 email sender, and M6 discourse capture (built, ships-disabled) — plus the §9e dispersion vertical, rebalance runner-wiring,
 the dual-HDD fossil-store backups (`pros backup`), and a CI merge-gate on `main` are all built; a real
 `pros run` has fired live `xcorr` leads on the SPDR grid. The **M7 autonomy core** — a launchd scheduled
 runner that runs `pros run && pros backup` on cadence, arming the §8a dead-man — is built and awaits a
-one-time on-Mini activation (`ops/README.md`), after which **v1 is build-complete.** **576 tests green,
+one-time on-Mini activation (`ops/README.md`), after which **v1 is build-complete.** **634 tests green,
 2 xfailed** (offline); every change lands only through a green-CI pull request.
 
 The honest caveat the docs keep front-and-center: **live ≠ validated.** The firing is n=1, the
 false-discovery rate is unmeasured, and the edge question is open. **Falsifiability is demonstrated;
 profitability is not.** The runner exists to convert existence-proofs into a *rate* — and that long run is
-what remains once v1 is deployed. (M6 discourse capture is front-loaded to v2.)
+what remains once v1 is deployed. (M6 discourse capture is **built and ships disabled** — the owner arms it via budget + provider; only the discourse *interpretation* is v2.)
 
 ## Quickstart
 
