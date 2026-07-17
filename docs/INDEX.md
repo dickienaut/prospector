@@ -37,7 +37,7 @@ reorg — only relocated (`docs/decisions/2026-07-11-docs-reorganization.md`).
 docs/
   INDEX.md                                       ← you are here
   prospector-v1-spec-rev15-2026-07-16.md         ← CURRENT build spec
-  project-prospector-state-of-project-rev7-2026-07-11.md   ← CURRENT status rollup
+  project-prospector-state-of-project-rev8-2026-07-16.md   ← CURRENT status rollup
   decisions/   dated fossils — every load-bearing decision, chronological, never rewritten
   bugs/        the bug archive — README.md (doctrine: classes + how-to), INDEX.md (searchable register), qa/ (records)
   history/     superseded revs of the build spec + the state-of-project doc
@@ -76,12 +76,12 @@ one into `history/`, and update this index + the pointers in `CLAUDE.md` / `ARCH
   *Contract — amended only.*
 
 ### The live docs (at the `docs/` root)
-- **Build spec — CURRENT: `prospector-v1-spec-rev15-2026-07-16.md`** — *rev 15 pending* (the §9e / §8b / §10
+- **Build spec — CURRENT: `prospector-v1-spec-rev15-2026-07-16.md`** — *current* (the §9e / §8b / §10
   CONTRACT fold). Section-numbered CONTRACTs + defaults; the IN / OUT scope; the milestones; **Appendix A**
   (LTEE archive port map) + **Appendix B** (proto-clusters, the v2 constituent-substrate design note).
   *Contract — amended only.*
-- **State-of-project — CURRENT: `project-prospector-state-of-project-rev7-2026-07-11.md`**
-  (supersedes rev 6, rev 5). Status, registers, marching orders. *Rollup — re-synthesized each rev.*
+- **State-of-project — CURRENT: `project-prospector-state-of-project-rev8-2026-07-16.md`**
+  (supersedes rev 7, rev 6). Status, registers, marching orders. *Rollup — re-synthesized each rev.*
 
 ### Superseded revs — `history/`
 *The prior revs of the two rolling docs, carried for provenance. The current rev always lives at the root; the
@@ -94,8 +94,8 @@ whole series is the change-history.*
     reference it: the `origins/` spec-punchlist, the rev 2 spec, and the archive-sort decision record. Those
     references were **not** rewritten (never change the past), so if you're chasing `generator-v1-spec`, this is
     the file — series identity in the filename, founding identity in the references.
-- State-of-project: `project-prospector-state-of-project-{2026-07-02,rev2,rev3,rev4,rev5,rev6}-*.md`
-  (rev 7 is current, at the root; note rev 1's filename carries no "rev").
+- State-of-project: `project-prospector-state-of-project-{2026-07-02,rev2,rev3,rev4,rev5,rev6,rev7}-*.md`
+  (rev 8 is current, at the root; note rev 1's filename carries no "rev").
 
 ### The decision trail — `decisions/`
 *Dated fossils, chronological, never rewritten. The full trail is the directory; the recent / load-bearing:*
