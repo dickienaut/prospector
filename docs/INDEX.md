@@ -76,7 +76,7 @@ one into `history/`, and update this index + the pointers in `CLAUDE.md` / `ARCH
   *Contract — amended only.*
 
 ### The live docs (at the `docs/` root)
-- **Build spec — CURRENT: `prospector-v1-spec-rev15-2026-07-16.md`** — *rev 15 pending* (the §9e / §8b / §10
+- **Build spec — CURRENT: `prospector-v1-spec-rev15-2026-07-16.md`** — *current* (the §9e / §8b / §10
   CONTRACT fold). Section-numbered CONTRACTs + defaults; the IN / OUT scope; the milestones; **Appendix A**
   (LTEE archive port map) + **Appendix B** (proto-clusters, the v2 constituent-substrate design note).
   *Contract — amended only.*
