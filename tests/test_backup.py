@@ -329,11 +329,23 @@ def test_verify_restore_works_from_fossils_even_with_the_registry_copy_deleted(l
 
 # -- CLI surfaces ----------------------------------------------------------------------------------
 
-def test_pros_backup_faults_nonzero_when_no_targets_configured(layout, registry, store_root):
+def test_pros_backup_faults_nonzero_when_no_targets_configured(layout, registry, store_root,
+                                                               monkeypatch, tmp_path):
     # The repo config ships backup.targets: [] — so `pros backup` must fault loudly (non-zero) until
     # the Mini's drive paths are set. (Proves the CLI wiring + the fail-loud posture; the copy logic
     # itself is covered by the library tests above.)
+    #
+    # Hermeticity (item 4, docs/notes/2026-07-18-mandate-noise-cut-next-steps.md): load the TRACKED config
+    # in ISOLATION. A dev checkout's gitignored config/prospector.local.yaml overlay injects real
+    # backup.targets (the Mini's drive paths), which load_config deep-merges over the tracked base — that
+    # would make this assertion pass only on CI (no overlay) and fail on a live machine. Copy the committed
+    # base into an overlay-free tmp dir (no sibling prospector.local.yaml) and point the CLI at it, so only
+    # the shipped defaults are read regardless of the checkout's machine config.
+    import prospector.cli.main as cli_main
     _seed(layout, registry)
+    iso = tmp_path / "prospector.yaml"
+    iso.write_bytes(cli_main._CONFIG_PATH.read_bytes())      # the tracked base, sans its machine overlay
+    monkeypatch.setattr(cli_main, "_CONFIG_PATH", iso)
     result = CliRunner().invoke(cli, ["backup", "--store", str(store_root)])
     assert result.exit_code != 0
     assert "no backup targets" in result.output.lower() or "no backup targets" in str(result.exception)
