@@ -4,13 +4,18 @@ On every run the config is hashed; if it changed, a `config.changed` event with 
 appended BEFORE any sensor runs — folds stay interpretable across threshold changes. The hash
 is over `envelope.canonical_json`, so it is stable under YAML key reordering and formatting.
 
-An optional untracked `config/prospector.local.yaml` overlay carries MACHINE-LOCAL values — the
-per-machine paths store.root and backup.targets — that must never enter the shared repo (the config
-analog of the git-ignored `.env` secrets). It is deep-merged OVER the tracked config in `load_config`,
-and the hash is over the EFFECTIVE MERGED config, so `config.changed` fossils exactly the config the
-run used — config honesty holds across the overlay. (Non-secret machine config is *recorded* here;
-true secrets stay in `.env` and never touch config.) See
-docs/decisions/2026-07-12-local-config-overlay.md.
+An optional untracked `config/prospector.local.yaml` overlay carries UNCOMMITTED, NON-SECRET config —
+values set locally that must not be committed but SHOULD fossilize when they change. The boundary is
+*uncommitted-and-non-secret*, not *per-machine*: two kinds qualify — per-machine paths (store.root,
+backup.targets — uncommitted because they differ per machine) and owner operational overrides (e.g. the M6
+arming `capture.monthly_budget_usd` — uncommitted because a live budget in tracked config would ship capture
+armed, breaking ships-disabled, and put private spend policy in git). It is deep-merged OVER the tracked
+config in `load_config`, and the hash is over the EFFECTIVE MERGED config, so `config.changed` fossils exactly
+the config the run used — config honesty holds across the overlay. Three homes: true secrets that must never
+fossilize stay in `.env` (API keys, Tiingo/SMTP); uncommitted non-secret config lives here and fossilizes; the
+shared committed contract (DEFAULTs, the ships-disabled `capture.monthly_budget_usd: null` this overrides,
+deployment identity like `edgar.user_agent`) stays in tracked config. See
+docs/decisions/2026-07-12-local-config-overlay.md and 2026-07-18-overlay-charter-uncommitted-non-secret.md.
 """
 
 from __future__ import annotations
