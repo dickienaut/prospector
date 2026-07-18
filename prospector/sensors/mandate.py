@@ -15,6 +15,12 @@ outcome:
   - extraction unreliable -> a `fault` on `_system` for manual review (NO mandate.changed — a false
                              change claim is worse than a missed one; the extraction-unreliable fallback)
   - reliable & unchanged  -> nothing
+  - supplement / SAI (not a full prospectus) -> nothing: a 497 sticker or an SAI carries no strategy
+                             section by construction, so it is not a mandate-diff event (the standing
+                             prospectus remains the fund's mandate). Skipping it is what cuts the
+                             extraction-unreliable *noise* from what was never a full prospectus, and
+                             refusing to diff AGAINST one stops a sticker-as-prior contaminating the
+                             next real diff (docs/decisions/2026-07-18-mandate-supplement-not-a-prospectus.md).
 
 Runner note (§9, M5+): `prior_accession` is the last prospectus the sensor has ON FILE for the fund —
 i.e. the most recent frozen accession — NOT necessarily the registry's `prospectus_accession` (which
@@ -26,7 +32,7 @@ from __future__ import annotations
 
 from typing import Callable, Iterable
 
-from prospector.ingest.prospectus import ProspectusIngest, diff_mandate
+from prospector.ingest.prospectus import ProspectusIngest, diff_mandate, is_prospectus_supplement
 from prospector.sensors.rebalance import watching_leads
 from prospector.store.envelope import SYSTEM_LEAD
 
@@ -61,8 +67,20 @@ def scan(series_id: str, ticker: str, cik: int,
         return {"action": "baseline", "accession": current_accession,
                 "reason": "no prior prospectus on file to diff against"}
 
-    d = diff_mandate(prospectus.load_frozen(series_id, prior_accession),
-                     prospectus.load_frozen(series_id, current_accession), cfg)
+    # A 497 sticker or an SAI is NOT a full prospectus (no strategy section by construction), so it is
+    # not a mandate-diff event: the standing prospectus remains the fund's mandate. SKIP a supplement
+    # current — flagging it extraction-unreliable was the review-advisory noise — and never diff AGAINST
+    # a supplement prior (a sticker frozen last cycle would contaminate this filing's diff). The §4d
+    # extraction-unreliable fault stays for a real full prospectus we genuinely cannot parse.
+    current_body = prospectus.load_frozen(series_id, current_accession)
+    if is_prospectus_supplement(current_body):
+        return {"action": "supplement", "accession": current_accession}
+    prior_body = prospectus.load_frozen(series_id, prior_accession)
+    if is_prospectus_supplement(prior_body):
+        return {"action": "baseline", "accession": current_accession,
+                "reason": "prior on file is a supplement, not a full prospectus"}
+
+    d = diff_mandate(prior_body, current_body, cfg)
 
     if not d["reliable"]:
         # Flag, don't diff: a false mandate.changed is worse than a missed one (§4d extraction-unreliable).

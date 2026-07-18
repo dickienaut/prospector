@@ -98,6 +98,37 @@ def _find_heading(lines: list[str], patterns: list[str], start: int = 0) -> int 
     return None
 
 
+# A 497 filing is not always a full prospectus: the SAME form covers one-page SUPPLEMENT "stickers" and
+# the STATEMENT OF ADDITIONAL INFORMATION, neither of which carries a principal-investment-strategy
+# section. Diffing one faults spuriously (the extraction-unreliable review-advisory noise), and freezing
+# one as a fund's "prior prospectus" contaminates the next real diff. These filings DECLARE themselves —
+# a sticker announces "Supplement dated…/Supplement to…", an SAI titles itself — so a structure-only,
+# ANCHORED check separates them from a full prospectus (verified against every failing filing in the
+# 2026-07-18 diagnosis). See docs/decisions/2026-07-18-mandate-supplement-not-a-prospectus.md.
+_SAI_HEADINGS = ("statement of additional information",)
+_SUPPLEMENT_HEADINGS = ("supplement dated", "supplement to")
+_DECLARE_HEAD_LINES = 45  # the opening window where a filing titles/declares its nature
+
+
+def is_prospectus_supplement(body: bytes) -> bool:
+    """True when the filing is a 497 SUPPLEMENT (sticker) or a STATEMENT OF ADDITIONAL INFORMATION, not
+    a full prospectus — the mandate-diff must SKIP it (it carries no strategy section by construction, so
+    extracting one faults spuriously; and it must never be diffed against, as a supplement frozen as a
+    "prior" contaminates the next real filing's diff). Same three-owner boundary as `extract_mandate`:
+    STRUCTURE only, anchored to a heading the filing declares itself with (a short heading-shaped line),
+    NEVER a substring buried in body prose — so a full prospectus that merely mentions "supplement" or
+    references its SAI is not tripped. A full prospectus (titles itself "Prospectus"/"485…", carries a
+    strategy section) → False, and is diffed normally."""
+    lines = html_to_text(body).split("\n")
+    # SAI titles itself near the top; a full prospectus only *references* the SAI mid-body, so anchor to
+    # the opening window.
+    if _find_heading(lines[:_DECLARE_HEAD_LINES], list(_SAI_HEADINGS)) is not None:
+        return True
+    # A sticker announces "Supplement dated…/Supplement to…" — phrases specific to a supplement's own
+    # heading (they do not appear as a heading in a full prospectus), so the whole (small) doc is scanned.
+    return _find_heading(lines, list(_SUPPLEMENT_HEADINGS)) is not None
+
+
 # --- MEANING (which section — never significance) -----------------------------------------------
 
 def extract_mandate(body: bytes, cfg: dict) -> dict:

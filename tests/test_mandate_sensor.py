@@ -10,13 +10,16 @@ Offline throughout — a realistically messy 485BPOS fixture, controlled deltas.
 from pathlib import Path
 
 from prospector.ingest.edgar import EdgarClient, latest_prospectus
-from prospector.ingest.prospectus import ProspectusIngest, diff_mandate, extract_mandate
+from prospector.ingest.prospectus import (ProspectusIngest, diff_mandate, extract_mandate,
+                                          is_prospectus_supplement)
 from prospector.sensors import mandate
 from prospector.sensors.xcorr import xcorr_lead_id
 from prospector.store.envelope import SYSTEM_LEAD
 
 FIXTURES = Path(__file__).parent / "fixtures" / "prospectus"
 BASE = (FIXTURES / "485bpos_base.html").read_bytes()
+STICKER = (FIXTURES / "497_supplement_sticker.html").read_bytes()  # a real 497 "Supplement dated…" sticker
+SAI = (FIXTURES / "497_sai.html").read_bytes()                     # a real Statement of Additional Information
 
 UA = "Prospector-tests/1.0 (lyle.e.dickie@gmail.com)"
 NOW = "2026-07-03T22:30:00Z"
@@ -201,3 +204,35 @@ def test_scan_unreliable_extraction_faults_and_emits_no_mandate_changed(layout):
     # §10: it is a REVIEW-ADVISORY routed through report_advisory (not an operational fault, not a raw emit).
     assert ev["payload"]["category"] == "review-advisory" and ev["payload"]["series_id"] == XLK
     assert not any(e["type"] == "mandate.changed" for e in events)
+
+
+# --- 497 supplement / SAI are not full prospectuses (the upstream noise-cut) -----------------------
+
+def test_is_prospectus_supplement_classifies_sticker_sai_and_full():
+    assert is_prospectus_supplement(STICKER) is True   # a 497 "Supplement dated…" sticker
+    assert is_prospectus_supplement(SAI) is True        # a Statement of Additional Information
+    assert is_prospectus_supplement(BASE) is False      # a full prospectus -> diffed normally
+
+
+def test_scan_supplement_current_is_skipped_not_faulted(layout):
+    # A new 497 sticker is not a full prospectus -> SKIP (the standing prospectus stays the mandate),
+    # never a review-advisory "extraction unreliable" fault (the noise this cut removes).
+    result, events, _ = _run(layout, {A: BASE, B: STICKER}, current=B, prior=A,
+                             active_lead_ids={xcorr_lead_id([XLK, XLU])}, prefreeze=A)
+    assert result["action"] == "supplement" and events == []
+
+
+def test_scan_sai_current_is_skipped_not_faulted(layout):
+    result, events, _ = _run(layout, {A: BASE, B: SAI}, current=B, prior=A,
+                             active_lead_ids=set(), prefreeze=A)
+    assert result["action"] == "supplement" and events == []
+
+
+def test_scan_supplement_prior_is_baselined_not_contaminated(layout):
+    # The prior on file is a sticker (a supplement frozen last cycle). Diffing a real full prospectus
+    # AGAINST it mislabels the real filing extraction-unreliable (prior-blob contamination) -> baseline
+    # from the current full prospectus instead, no advisory.
+    result, events, _ = _run(layout, {A: STICKER, B: BASE}, current=B, prior=A,
+                             active_lead_ids={xcorr_lead_id([XLK, XLU])}, prefreeze=A)
+    assert result["action"] == "baseline" and events == []
+    assert result["reason"] == "prior on file is a supplement, not a full prospectus"
