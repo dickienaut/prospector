@@ -10,7 +10,7 @@ Offline throughout — a realistically messy 485BPOS fixture, controlled deltas.
 from pathlib import Path
 
 from prospector.ingest.edgar import EdgarClient, latest_prospectus
-from prospector.ingest.prospectus import (ProspectusIngest, diff_mandate, extract_mandate,
+from prospector.ingest.prospectus import (ProspectusIngest, _is_heading, diff_mandate, extract_mandate,
                                           is_prospectus_supplement)
 from prospector.sensors import mandate
 from prospector.sensors.xcorr import xcorr_lead_id
@@ -20,6 +20,8 @@ FIXTURES = Path(__file__).parent / "fixtures" / "prospectus"
 BASE = (FIXTURES / "485bpos_base.html").read_bytes()
 STICKER = (FIXTURES / "497_supplement_sticker.html").read_bytes()  # a real 497 "Supplement dated…" sticker
 SAI = (FIXTURES / "497_sai.html").read_bytes()                     # a real Statement of Additional Information
+JPM_QA = (FIXTURES / "jpm_qa_prose_objective_synthetic.html").read_bytes()  # synthetic: a prose "Investment
+#   objectives…" line + an unmatched Q&A strategy heading (the Case D false-extraction reproduction)
 
 UA = "Prospector-tests/1.0 (lyle.e.dickie@gmail.com)"
 NOW = "2026-07-03T22:30:00Z"
@@ -80,6 +82,48 @@ def test_diff_mandate_never_judges_significance():
     # The structure/meaning/significance boundary: diff_mandate reports whether the text moved,
     # NEVER whether the move is meaningful — no significance/verdict field leaks out.
     assert set(diff_mandate(BASE, SUBSTANTIVE, CFG)) == {"changed", "reliable", "summary", "reason"}
+
+
+# --- Case D: a prose line that merely OPENS with a strategy phrase is NOT the heading -------------
+# docs/bugs/INDEX.md MANDATE-PROSE-HEADING. Bare `startswith` accepted a body line as the strategy heading
+# and returned a RELIABLE extraction on garbage -> a spurious `mandate.changed` risk on a live lead. Strict
+# heading matching (the phrase IS the heading, bar a bounded connective qualifier tail) closes it; a real
+# full prospectus we cannot parse still FAULTS (the safe path), never a false change.
+
+def test_is_heading_strict_rejects_prose_but_keeps_real_heading_variants():
+    strat = ["principal investment strateg"]          # the mid-word stem (matches strategy / strategies)
+    obj = ["investment objective"]
+    # PROSE opening with the phrase -> NOT a heading (the Case D false match, both observed shapes)
+    assert _is_heading("Investment objectives may change without shareholder approval.", obj, strict=True) is False
+    assert _is_heading("Investment objective information for each Fund appears below", obj, strict=True) is False
+    # REAL headings still match: exact, plural, connective qualifier tail, "and"-combined, stem singular
+    assert _is_heading("Investment Objective", obj, strict=True) is True
+    assert _is_heading("Investment Objectives", obj, strict=True) is True
+    assert _is_heading("Investment Objective and Principal Investment Strategies", obj, strict=True) is True
+    assert _is_heading("Principal Investment Strategies", strat, strict=True) is True
+    assert _is_heading("Principal Investment Strategy", strat, strict=True) is True
+    assert _is_heading("Principal Investment Strategies of the Fund", strat, strict=True) is True
+    # a STOP heading with a long qualifier tail is still a heading (extract_mandate scans stops the same way)
+    assert _is_heading("Principal Risks of Investing in the Fund", ["principal risk"], strict=True) is True
+
+
+def test_extract_faults_on_a_prose_investment_objective_line_no_false_section():
+    # The fund's only "investment objective" text is a body sentence; its strategy sits under an unmatched
+    # Q&A heading. Pre-fix this returned reliable:True on the text below the prose line (a false section).
+    m = extract_mandate(JPM_QA, CFG)
+    assert m["reliable"] is False                          # never a reliable extraction on a prose line
+    assert m["reason"] == "strategy heading not found"     # -> a fault for manual review (the safe path)
+    assert m["section"] is None
+
+
+def test_prose_heading_cannot_produce_a_spurious_mandate_change():
+    # Diffing the fund across a cosmetic re-file (new date only) must NOT surface a change off the prose
+    # line: extraction is unreliable both sides, so diff_mandate punts (reliable False) and scan would
+    # FAULT — never emit mandate.changed onto a live lead.
+    refiled = JPM_QA.replace(b"January&nbsp;1,&nbsp;2026", b"January&nbsp;1,&nbsp;2027")
+    d = diff_mandate(JPM_QA, refiled, CFG)
+    assert d["reliable"] is False and d["changed"] is False
+    assert d["reason"] == "strategy heading not found"
 
 
 # --- EDGAR surface: latest_prospectus + the Archives fetch URL ------------------------------------

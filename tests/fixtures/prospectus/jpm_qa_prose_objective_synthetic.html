@@ -1,0 +1,29 @@
+<!-- DECLARED SYNTHETIC (NOT a real filing; no provenance URL because it is not a recorded filing).
+     A J.P. Morgan-style Q&A summary prospectus excerpt built to reproduce the Case D false-extraction
+     (docs/bugs/INDEX.md MANDATE-PROSE-HEADING). It deliberately carries NO "Principal Investment
+     Strategies"/"Investment Objective" HEADING: the strategy sits under a Q&A "…main investment
+     strategies?" question the current patterns do not yet match (workstream 2), and a SHORT body line
+     OPENS with "Investment objectives…". Pre-fix, `_is_heading`'s bare `startswith` accepted that prose
+     line AS the strategy heading and returned a RELIABLE extraction on the text below it (garbage) — a
+     spurious `mandate.changed` risk. Post-fix strict heading matching rejects the prose line, so
+     extraction faults with "strategy heading not found" — the SAFE disposition (a fault for manual
+     review, never a false change). Realistically messy: entities, &nbsp;, inline font. -->
+<html><head><title>Prospectus</title>
+<style type="text/css">.h{font-weight:bold;font-size:11pt}</style></head>
+<body>
+<div align="center"><font size="4" style="font-weight:bold">JPMorgan Example Equity Fund</font></div>
+<p>Prospectus dated&nbsp;January&nbsp;1,&nbsp;2026</p>
+
+<p class="h">What is the Fund&rsquo;s investment objective?</p>
+<p>Investment objectives may change without shareholder approval.</p>
+<p>The Fund seeks long-term capital growth by investing primarily in the equity securities of large,
+established companies that the adviser believes are attractively valued relative to the market.</p>
+
+<p class="h">What are the Fund&rsquo;s main investment strategies?</p>
+<p>Under normal circumstances, the Fund invests at least 80% of its assets in the equity securities of
+companies across a range of industries and market sectors.</p>
+
+<p class="h">Fees and Expenses of the Fund</p>
+<p>This table describes the fees and expenses that you may pay if you buy, hold and sell shares of the
+Fund.</p>
+</body></html>
