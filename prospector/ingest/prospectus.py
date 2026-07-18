@@ -81,19 +81,56 @@ def html_to_text(body: bytes) -> str:
     return "\n".join(ln for ln in lines if ln)
 
 
-def _is_heading(line: str, patterns: list[str]) -> bool:
-    """A line reads as one of `patterns` when it IS the heading (a short line that starts with the
-    pattern, allowing a trailing 's'/':'/'.'), not a passing mention buried in body prose. SEC
-    headings sit on their own short line; a long line is prose, never a heading."""
+# A section heading's optional tail is a short QUALIFIER phrase introduced by a closed-class connective
+# ("Principal Investment Strategies OF THE Fund", "Fees AND Expenses of the Fund", "Investment Objective
+# AND Principal Investment Strategies"). A body-prose sentence that merely OPENS with the same phrase
+# runs on instead into a verb/content word ("investment objectives MAY change…", "investment objective
+# INFORMATION for each fund…"). That is the whole discriminator for `strict` heading matching below, and
+# it is STRUCTURE only (a fixed function-word set), never a judgment about what the heading MEANS.
+_HEADING_TAIL_CONNECTIVES = frozenset(
+    ("of", "and", "for", "in", "to", "the", "on", "at", "by", "with", "or", "a", "an"))
+
+
+def _is_heading(line: str, patterns: list[str], *, strict: bool = False) -> bool:
+    """True when `line` matches one of `patterns` (case-insensitive, on its own short line — a long line
+    is prose, never a heading). Two match modes, because two callers ask different things of the same test:
+
+      - **declaration** (`strict=False`, default) — the line OPENS with the phrase. Used by
+        `is_prospectus_supplement`: a sticker self-declares "Supplement dated <date>" / "Supplement to
+        <prospectus>" and an SAI titles itself — here the tail is MEANT to be free text (a date, a name).
+      - **heading** (`strict=True`) — the phrase IS the heading: it spans the line bar at most a bounded
+        connective qualifier tail ("… of the Fund", "… and Principal …"), completing the pattern's final
+        (possibly stem-truncated) word first ("principal investment strateg" → "…strategies"). Used by
+        `extract_mandate`, so a body line that merely opens with "Investment objective…" is NOT taken as
+        the strategy heading. That prose guard is load-bearing: plain `startswith` accepted a line like
+        "Investment objectives may change without shareholder approval" as the heading and returned a
+        RELIABLE extraction on garbage — a spurious `mandate.changed` risk (docs/bugs/INDEX.md
+        MANDATE-PROSE-HEADING). Structure only; never what the heading means."""
     ln = line.lower().strip().rstrip(":.")
     if not ln or len(ln) > 80:
         return False
-    return any(ln == p or ln.startswith(p) for p in patterns)
+    for p in patterns:
+        if not ln.startswith(p):
+            continue
+        if not strict:
+            return True                                   # declaration mode: the opening match is enough
+        # Heading mode: the pattern must BE the line, bar a bounded connective qualifier tail. Complete
+        # the pattern's final word first (the strategy stem is a mid-word prefix of "…strategies").
+        rest = ln[len(p):]
+        j = 0
+        while j < len(rest) and rest[j].isalpha():
+            j += 1
+        tail = rest[j:].strip()
+        if not tail or tail.split(None, 1)[0] in _HEADING_TAIL_CONNECTIVES:
+            return True
+        # else: the tail runs on into prose ("… may change …") — not a heading; keep scanning patterns.
+    return False
 
 
-def _find_heading(lines: list[str], patterns: list[str], start: int = 0) -> int | None:
+def _find_heading(lines: list[str], patterns: list[str], start: int = 0, *,
+                  strict: bool = False) -> int | None:
     for i in range(start, len(lines)):
-        if _is_heading(lines[i], patterns):
+        if _is_heading(lines[i], patterns, strict=strict):
             return i
     return None
 
@@ -145,13 +182,13 @@ def extract_mandate(body: bytes, cfg: dict) -> dict:
     # carry only the objective). First pattern that matches any heading line wins.
     start = None
     for pattern in [h.lower() for h in cfg["strategy_headings"]]:
-        start = _find_heading(lines, [pattern])
+        start = _find_heading(lines, [pattern], strict=True)   # the heading, not a prose line opening with it
         if start is not None:
             break
     if start is None:
         return {"section": None, "reliable": False, "heading": None,
                 "reason": "strategy heading not found"}
-    end = _find_heading(lines, stops, start + 1)
+    end = _find_heading(lines, stops, start + 1, strict=True)
     bounded = end is not None
     if end is None:
         end = min(len(lines), start + 1 + int(cfg.get("max_section_lines", 400)))
