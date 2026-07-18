@@ -27,6 +27,18 @@ against. v1's job is to bank the substrate richly — you cannot backfill an app
   The model echoes our templated query byte-exact, so **no normalization is needed**, and the CAP-DRIFT
   residual (`2026-07-14-query-drift-byte-exact.md`, 🟡 ratified-residual, "gated on one real armed call
   comparing bytes, performed before capture is armed") is **closed** by that call.
+
+  **Scope — the compare closed on the *pair-display* shape only; do NOT read this as "all query shapes
+  verified."** `'XLU×XLV'` is the safest string `build_queries` emits: well-controlled, one exotic character,
+  and the `×` round-tripped. The *other* shape it emits — **constituent-name queries** (`meta["constituents"]`)
+  — was **not** exercised (the gate was bounded to `query_0`, the display). Those routinely carry the
+  characters a model is most likely to normalize benignly: **ampersands** (a healthcare basket surfaces
+  *Johnson & Johnson*, *Merck & Co.*), apostrophes, hyphens, ALL-CAPS holdings strings. So CAP-DRIFT is
+  satisfied **on the pair-display shape; constituent-name shapes are guarded-live-but-unexercised.** A
+  `capture.query_drift` fault on those in the coming weeks is the **anticipated** shape, not a surprise — the
+  live byte-exact guard is the correct protection, and the ordered gate's *observe-then-minimally-normalize*
+  path stays open for the shape it hasn't met yet. This is **not** a reason to pre-normalize (the ruling forbids
+  a `strip()` against imagined behavior).
 - **Armed:** the bound removed → count cap back to the tracked `60/week`. The scheduled tick now captures the
   active (non-shadow) lead set weekly. Capture data confirmed landing: `captures/xcorr-1556fe8c2f/…` + one
   `capture.stored` event.
