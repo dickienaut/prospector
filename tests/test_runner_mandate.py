@@ -31,6 +31,7 @@ from prospector.store.fund_registry import FundEntry, FundRegistry
 CONFIG = Path("config") / "prospector.yaml"
 FIX = Path(__file__).parent / "fixtures" / "prospectus"
 BASE = (FIX / "485bpos_base.html").read_bytes()
+STICKER = (FIX / "497_supplement_sticker.html").read_bytes()  # a real 497 "Supplement dated…" sticker
 # A substantive strategy rewrite off the base (method + threshold + sector) — mirrors test_mandate_sensor.
 SUBSTANTIVE = (BASE.replace(b"employs a replication strategy",
                             b"employs a representative sampling strategy")
@@ -40,8 +41,9 @@ SUBSTANTIVE = (BASE.replace(b"employs a replication strategy",
 NOW = "2026-07-06T22:30:00Z"
 CIK = 1516212
 XLK_SID = "S000006415"
-A = "0001193125-25-280452"   # the PRIOR prospectus (held frozen)
-B = "0001193125-26-291833"   # the NEW prospectus
+A = "0001193125-25-280452"   # the PRIOR annual prospectus (held frozen)
+S = "0001193125-26-285000"   # an intervening 497 SUPPLEMENT (sticker), newer than A, older than B
+B = "0001193125-26-291833"   # the NEW annual prospectus
 DOCB = "docB.htm"
 SUBS_URL = f"https://data.sec.gov/submissions/CIK{CIK:010d}.json"
 DOCB_URL = f"https://www.sec.gov/Archives/edgar/data/{CIK}/{B.replace('-', '')}/{DOCB}"
@@ -59,6 +61,15 @@ def _subs_AB():
     return {"name": "Select Sector SPDR Trust", "filings": {"recent": {
         "form": ["485BPOS", "485BPOS"], "accessionNumber": [B, A],
         "primaryDocument": [DOCB, "docA.htm"], "filingDate": ["2026-05-01", "2025-05-01"]}}}
+
+
+def _subs_ASB():
+    # newest-first: B (annual 2026), S (497 sticker), A (annual 2025). latest_prospectus -> B (newest of the
+    # prospectus family); history -> [B, S, A]. The sticker sits BETWEEN the two annuals.
+    return {"name": "Select Sector SPDR Trust", "filings": {"recent": {
+        "form": ["485BPOS", "497", "485BPOS"], "accessionNumber": [B, S, A],
+        "primaryDocument": [DOCB, "sticker.htm", "docA.htm"],
+        "filingDate": ["2026-05-01", "2026-03-01", "2025-05-01"]}}}
 
 
 def _prefreeze(layout, accession, body):
@@ -122,6 +133,65 @@ def test_mandate_first_sight_freezes_a_baseline_and_emits_nothing(layout, regist
     def fetch(url, headers):
         if url == SUBS_URL:
             return json.dumps(_subs_AB()).encode()
+        if url == DOCB_URL:
+            return BASE
+        raise EdgarError(f"no fixture for {url}", status=404)
+
+    deps = _deps(layout, registry, event_store, fetch)
+    faults, runlog = [], RunLog(run_id="r", ts=NOW, date=NOW[:10])
+
+    _run_mandate(deps, event_store, NOW, faults, runlog, funds)
+
+    assert event_store.read_system("mandate.changed") == []
+    assert ProspectusIngest(layout, deps.edgar_client).has_frozen(XLK_SID, B)  # current frozen as baseline
+    assert faults == []
+
+
+# === §9c prior reaches back ACROSS an intervening frozen sticker to the prior annual (item 3) =======
+
+def test_mandate_prior_reaches_back_across_a_frozen_sticker_to_the_prior_annual(layout, registry):
+    # A new annual (B) with an intervening 497 sticker (S) as the MOST-RECENT frozen filing. The §9c prior
+    # must SKIP the sticker (not a full prospectus) and reach back to the prior ANNUAL (A), so the strategy
+    # change between annuals is diffed — not baselined off the sticker (which would drop the change). Decision
+    # docs/decisions/2026-07-18-mandate-supplement-not-a-prospectus.md. (Pre-item-3 the prior resolved to S,
+    # scan baselined, and this emitted nothing — so this asserts the reach-back.)
+    event_store = EventStore(layout, registry)
+    funds = FundRegistry(layout, registry, event_store)
+    funds.upsert(_entry(prospectus_accession=B))
+    _prefreeze(layout, A, BASE)        # the prior annual (a full prospectus)
+    _prefreeze(layout, S, STICKER)     # the intervening sticker — the newest frozen filing
+
+    def fetch(url, headers):
+        if url == SUBS_URL:
+            return json.dumps(_subs_ASB()).encode()
+        if url == DOCB_URL:
+            return SUBSTANTIVE
+        raise EdgarError(f"no fixture for {url}", status=404)
+
+    deps = _deps(layout, registry, event_store, fetch)
+    faults, runlog = [], RunLog(run_id="r", ts=NOW, date=NOW[:10])
+
+    _run_mandate(deps, event_store, NOW, faults, runlog, funds)
+
+    changed = event_store.read_system("mandate.changed")
+    assert len(changed) == 1
+    assert changed[0].payload["prior_accession"] == A     # reached ACROSS the sticker S to the prior annual
+    assert changed[0].payload["current_accession"] == B
+    assert changed[0].payload["summary"]
+    assert faults == [] and runlog.sensors["mandate"] == "ran"
+
+
+def test_mandate_with_only_a_frozen_sticker_prior_baselines_the_current_annual(layout, registry):
+    # The only prior on file is a sticker (no prior FULL prospectus frozen) -> the §9c prior is None ->
+    # mandate.scan baselines the current annual (freezes it), emits nothing. Not a fault, not a false diff.
+    event_store = EventStore(layout, registry)
+    funds = FundRegistry(layout, registry, event_store)
+    funds.upsert(_entry(prospectus_accession=B))
+    _prefreeze(layout, S, STICKER)     # only a sticker on file — no prior annual to diff against
+
+    def fetch(url, headers):
+        if url == SUBS_URL:
+            return json.dumps(_subs_ASB()).encode()
         if url == DOCB_URL:
             return BASE
         raise EdgarError(f"no fixture for {url}", status=404)

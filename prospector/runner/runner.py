@@ -46,7 +46,7 @@ from prospector.ingest.holdings import (MembershipSnapshot, priceable_members, p
                                          weight_covering_members)
 from prospector.ingest.prices import (CALENDAR_PER_TRADING_DAY, PriceIngestError, build_panel,
                                        guard_live_source, required_pull_start)
-from prospector.ingest.prospectus import ProspectusIngest
+from prospector.ingest.prospectus import ProspectusIngest, is_prospectus_supplement
 from prospector.ingest.soi import SoiIngest
 from prospector.runner import email_render
 from prospector.runner.fault_taxonomy import page_worthy_faults  # PAGE-WORTHY-MIRROR: the ONE §10 predicate
@@ -883,14 +883,28 @@ def _active_lead_sectors(deps: RunnerDeps, fund_registry: FundRegistry) -> dict:
 
 def _last_frozen_prospectus(prospectus: ProspectusIngest, series_id: str, subs: dict,
                             current_accession: str) -> str | None:
-    """The §9c mandate prior: the most-recent prospectus filing we hold FROZEN that isn't the current
+    """The §9c mandate prior: the most-recent FULL prospectus filing we hold FROZEN that isn't the current
     one — sourced from the blob store (`has_frozen`), NEVER the registry `prospectus_accession` field
     (an identity pass earlier in THIS run may have advanced that field to the new filing, so reading the
-    prior from it would diff the new filing against itself and miss a real change). None if we hold no
-    prior frozen (mandate.scan then baselines the current)."""
+    prior from it would diff the new filing against itself and miss a real change).
+
+    A frozen 497 SUPPLEMENT (sticker) or SAI is SKIPPED — it carries no principal-investment-strategy
+    section, so it is not a diff baseline; the walk reaches back ACROSS an intervening sticker to the prior
+    ANNUAL, so a new annual diffs against the prior annual instead of baselining off the sticker (which
+    would silently drop the real strategy change between annuals). This is the source-side of the same rule
+    mandate.scan applies at the leaf (a supplement prior → baseline): resolving the full prior here lets the
+    diff actually fire. See docs/decisions/2026-07-18-mandate-supplement-not-a-prospectus.md (the sanctioned
+    "diff annuals across intervening supplements" follow-up). The §9c invariant is unchanged — the prior is
+    still the frozen blob, never the registry field; this only refines WHICH frozen blob.
+
+    None if we hold no prior FULL prospectus frozen (mandate.scan then baselines the current)."""
     for f in prospectus_history(subs):  # newest-first
-        if f["accession"] != current_accession and prospectus.has_frozen(series_id, f["accession"]):
-            return f["accession"]
+        acc = f["accession"]
+        if acc == current_accession or not prospectus.has_frozen(series_id, acc):
+            continue
+        if is_prospectus_supplement(prospectus.load_frozen(series_id, acc)):
+            continue  # a sticker / SAI is not a full prospectus — keep reaching back to the prior annual
+        return acc
     return None
 
 
