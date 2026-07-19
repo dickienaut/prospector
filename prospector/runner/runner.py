@@ -1122,8 +1122,16 @@ def _run_capture(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog
                     fetched.append({"url": url, "status": 200,
                                     "text": deps.capture_provider.fetch_page(url)})
                 except Exception as e:  # store the partial; never kill the capture over one URL (§3c)
+                    # §8a host-split (decision 2026-07-19-capture-fetch-controlled-vs-uncontrolled.md): a
+                    # failed fetch of a CONTROLLED source (SEC, sent our declared identity — Fix A) is a real
+                    # anomaly → operational (pages); a failed fetch of the OPEN WEB (a commentary host that
+                    # owes an automated client nothing) is expected scraping friction → review-advisory
+                    # (surfaced, never pages, never DEGRADEs health — on_live_lead defaults False, and lead=
+                    # is orthogonal to paging). Capture is write-only, so an open-web miss loses only the
+                    # page-text bonus, not the search blocks. Stable key unchanged (§10 suppression).
+                    category = "operational" if capture.is_controlled_host(url) else "review-advisory"
                     _emit_fault(store, "capture.fetch", f"{url}: {e}", now, faults, lead=lead,
-                                key=f"capture.fetch:{getattr(e, 'status', None)}")
+                                category=category, key=f"capture.fetch:{getattr(e, 'status', None)}")
                     fetched.append({"url": url, "status": getattr(e, "status", None), "error": str(e)})
             capture.write_query_blob(deps.layout, lead, now, n, {
                 "query": query, "query_issued": issued, "provider": capture.PROVIDER, "ts": now,
