@@ -167,6 +167,16 @@ stay in the note.*
 |----|--------------------|-----------|-------|--------|-------|--------------------------|
 | **MANDATE-PROSE-HEADING** | `extract_mandate`'s heading match used bare `startswith`, so a short body-prose line OPENING with a strategy phrase (JPM Q&A: "Investment objectives may change…") was accepted as the strategy heading → `reliable: True` on the text below it (garbage) → a spurious `mandate.changed` could accrete onto a live lead (didn't fire only because the prior also faulted) | ingest·prospectus | spurious-fire · green-on-synthetic | ✅ (this PR) | 1,7 | `_is_heading(strict=True)`: the phrase must BE the heading (complete its final word + only a connective qualifier tail), a prose tail → no match → fault (safe); the supplement/SAI *declaration* match keeps the loose default, so the noise-cut is untouched · `test_mandate_sensor.py::test_is_heading_strict_rejects_prose_but_keeps_real_heading_variants` + `::test_extract_faults_on_a_prose_investment_objective_line_no_false_section` + `::test_prose_heading_cannot_produce_a_spurious_mandate_change` |
 
+## v1.0.4 deploy + activation gates — 2026-07-19 (`../notes/2026-07-19-v1.0.4-deploy-and-activation-gates.md`)
+
+*Found by **running a pending gate**: activation item 10 ("`deploy.sh` refuses under a held lock") had been
+untestable until the lock shipped in v1.0.3. Running it passed on **behaviour** and failed on **diagnosis** —
+the ideal gate outcome.*
+
+| ID | Symptom (one line) | Subsystem | Shape | Status | Class | Guarding test / fix site |
+|----|--------------------|-----------|-------|--------|-------|--------------------------|
+| **DEPLOY-LOCK-MSG** | `ops/deploy.sh` read `rc=$?` immediately after `if ! ( … ); then` — which captures the **negation's** status (always 0 when the branch runs), never the inner `lock-run`'s **75** — so the "a scheduled tick is in flight, retry in a few minutes" branch was **unreachable dead code**, and genuine lock contention was reported as `deploy mutation (checkout / uv sync) failed`, pointing the operator at a broken checkout instead of a running tick | deploy | — | ✅ (this PR) | one-off | capture with `\|\| rc=$?` (also errexit-safe: a command before `\|\|` does not trip `set -e`) · found by running the item-10 gate 2026-07-19; verified **RED→GREEN** by re-running the contention test (wrong message → correct STOP message, prod unmoved both times). Sibling of **BK-MSG-01** (a mislabeled fault message: right refusal, wrong cause) |
+
 ---
 
 ## §3 · Open / deferred — the live tail (refer-back while fixing)
