@@ -287,7 +287,8 @@ def run(store_path, heartbeat):
                 "it in .env or the environment (it is a secret; never put it in config). Set "
                 "capture.monthly_budget_usd: null to disable capture.")
         capture_provider = CaptureProvider(anthropic_key,
-                                           model=str(capture_cfg.get("model", "claude-haiku-4-5")))
+                                           model=str(capture_cfg.get("model", "claude-haiku-4-5")),
+                                           edgar_user_agent=str(user_agent))  # SEC identity for sec.gov fetches
     now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     tick_date = now[:10]
 

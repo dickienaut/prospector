@@ -35,6 +35,7 @@ record; the spend is capped by config (`capture.max_searches_per_week`, `capture
 from __future__ import annotations
 
 from typing import Callable
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -43,7 +44,7 @@ from prospector.primitives.atomic import write_json_atomic
 from prospector.store.envelope import parse_ts
 from prospector.store.layout import StoreLayout, ts_compact
 
-__all__ = ["CaptureError", "CaptureProvider", "CaptureBudget", "PROVIDER",
+__all__ = ["CaptureError", "CaptureProvider", "CaptureBudget", "PROVIDER", "is_controlled_host",
            "build_queries", "top_urls", "capture_prefix", "write_query_blob", "period_keys"]
 
 PROVIDER = "anthropic:web_search"
@@ -53,6 +54,23 @@ ANTHROPIC_VERSION = "2023-06-01"
 SEARCH_TOOL_VERSION = "web_search_20250305"
 _MAX_TOKENS = 1024  # the model only orchestrates one forced search; its prose is discarded
 _FETCH_UA = "Mozilla/5.0 (compatible; Prospector/1.0; discourse-capture)"
+
+# CONTROLLED sources — the hosts we fetch with a DECLARED identity (SEC/EDGAR via edgar.user_agent), so we
+# have a right to expect success. A failed fetch of a controlled source is a real operational anomaly
+# (identity sent, expectation violated → page); a failed fetch of the OPEN WEB — a commentary/discourse host
+# that owes an automated client nothing — is expected scraping friction, not a breakage (a review-advisory:
+# surfaced, never paged). This ONE predicate drives BOTH the UA choice in `_default_fetch` and the §8a fault
+# category at the runner's capture-fetch emit site. See
+# docs/decisions/2026-07-19-capture-fetch-controlled-vs-uncontrolled.md.
+_CONTROLLED_HOSTS = ("sec.gov",)
+
+
+def is_controlled_host(url: str) -> bool:
+    """True iff `url`'s host is a controlled source (SEC/EDGAR) — an exact-host or subdomain match
+    (`sec.gov` / `www.sec.gov` / `data.sec.gov`), never a look-alike (`sec.gov.evil.com` → False). A
+    malformed/hostless URL is uncontrolled: the safe default treats the unknown as open web (don't page)."""
+    host = (urlsplit(url).hostname or "").lower()
+    return any(host == h or host.endswith("." + h) for h in _CONTROLLED_HOSTS)
 
 
 class CaptureError(Exception):
@@ -202,6 +220,7 @@ class CaptureProvider:
     def __init__(self, api_key: str | None, model: str = "claude-haiku-4-5", *,
                  call: Callable[[dict], dict] | None = None,
                  fetch: Callable[[str], bytes] | None = None,
+                 edgar_user_agent: str | None = None,
                  tool_version: str = SEARCH_TOOL_VERSION, max_tokens: int = _MAX_TOKENS):
         self._api_key = _Secret(api_key)
         self.model = model
@@ -209,6 +228,9 @@ class CaptureProvider:
         self.max_tokens = max_tokens
         self._call = call if call is not None else self._default_call
         self._fetch = fetch if fetch is not None else self._default_fetch
+        # The SEC/EDGAR declared identity (edgar.user_agent), sent ONLY to controlled hosts by
+        # `_default_fetch` (SEC 403s an undeclared client). None in tests that inject `fetch`.
+        self._edgar_user_agent = edgar_user_agent
 
     # -- web_search -----------------------------------------------------------
 
@@ -271,8 +293,13 @@ class CaptureProvider:
         return html_to_text(self._fetch(url))
 
     def _default_fetch(self, url: str) -> bytes:
+        # Controlled sources (SEC/EDGAR) 403 an undeclared client, so send the SAME declared identity the
+        # EdgarClient uses (edgar.user_agent) to those hosts; the open web gets the generic discourse-capture
+        # UA. One seam (`is_controlled_host`) picks the UA here and the fault category in the runner
+        # (decision 2026-07-19-capture-fetch-controlled-vs-uncontrolled.md).
+        ua = self._edgar_user_agent if (self._edgar_user_agent and is_controlled_host(url)) else _FETCH_UA
         try:
-            resp = httpx.get(url, headers={"User-Agent": _FETCH_UA}, timeout=30.0,
+            resp = httpx.get(url, headers={"User-Agent": ua}, timeout=30.0,
                              follow_redirects=True)
         except httpx.HTTPError as e:
             raise CaptureError(f"fetch {url} failed: {type(e).__name__}") from None

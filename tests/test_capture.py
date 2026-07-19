@@ -14,8 +14,9 @@ from types import SimpleNamespace
 
 from prospector.fold.fold import fold
 from prospector.fold.snapshots import write_snapshot
-from prospector.ingest.capture import (CaptureBudget, CaptureProvider, build_queries, capture_prefix,
-                                        period_keys, top_urls)
+from prospector.ingest.capture import (CaptureBudget, CaptureError, CaptureProvider, build_queries,
+                                        capture_prefix, is_controlled_host, period_keys, top_urls)
+from prospector.runner.fault_taxonomy import page_worthy_faults
 from prospector.runner.runlog import RunLog
 from prospector.runner.runner import _capture_due, _capture_meta, _run_capture
 from prospector.store.backup import DEFAULT_MARKER, backup_store
@@ -238,6 +239,81 @@ def test_query_drift_is_byte_exact_a_cosmetic_normalization_still_faults(tmp_pat
     faults: list = []
     _run_capture(_deps(layout, registry, _provider(call=_normalizing_call), _cfg()), store, NOW, faults, runlog)
     assert any(f.get("key") == "capture.query_drift" for f in faults)   # byte-exact: cosmetic ≠ verbatim
+
+
+# --- host-split fetch disposition: SEC identity (Fix A) + operational-vs-advisory (Fix B) ---------
+# decision docs/decisions/2026-07-19-capture-fetch-controlled-vs-uncontrolled.md
+
+def test_is_controlled_host_classifies_sec_vs_open_web():
+    for u in ("https://sec.gov/x", "https://www.sec.gov/Archives/y_424b5.htm",
+              "https://data.sec.gov/submissions/z.json", "https://efts.sec.gov/LATEST/search?q=a"):
+        assert is_controlled_host(u) is True, u
+    for u in ("https://www.etf.com/XLC", "https://aiolux.com/contrasts?symbol_arr=XLC,XLY",
+              "https://ex.com/a", "https://sec.gov.evil.com/x", "https://evil-sec.gov/x", "not a url", ""):
+        assert is_controlled_host(u) is False, u
+
+
+def test_default_fetch_sends_edgar_identity_to_sec_and_generic_to_open_web(monkeypatch):
+    # Fix A: the real fetcher (_default_fetch, which the injected-fetch tests bypass) must send the DECLARED
+    # SEC identity (edgar.user_agent) to sec.gov — which 403s an undeclared client — and the generic
+    # discourse-capture UA to the open web. Monkeypatch httpx so no socket opens (offline guard).
+    import prospector.ingest.capture as capmod
+    seen: dict = {}
+
+    class _Resp:
+        status_code = 200
+        content = b"<html><body><p>ok</p></body></html>"
+
+    def _fake_get(url, headers, **kw):
+        seen[url] = headers["User-Agent"]
+        return _Resp()
+
+    monkeypatch.setattr(capmod.httpx, "get", _fake_get)
+    edgar_ua = "Prospector/1.0 (lyle@alphalabsengineering.com)"
+    p = CaptureProvider("k", edgar_user_agent=edgar_ua)          # real _default_fetch (no injected fetch)
+    p.fetch_page("https://www.sec.gov/Archives/edgar/data/1/x_424b5.htm")
+    p.fetch_page("https://www.etf.com/XLC")
+
+    assert seen["https://www.sec.gov/Archives/edgar/data/1/x_424b5.htm"] == edgar_ua    # SEC: declared identity
+    open_web_ua = seen["https://www.etf.com/XLC"]
+    assert open_web_ua != edgar_ua and "discourse-capture" in open_web_ua               # open web: generic UA
+
+
+def test_open_web_fetch_403_is_advisory_but_sec_403_stays_operational(tmp_path):
+    # Fix B (§8a host-split): a 403 from the OPEN WEB is expected scraping friction → review-advisory
+    # (surfaced, NOT page-worthy, does not DEGRADE health); a 403 from a CONTROLLED source (sec.gov, sent
+    # our identity) is a real anomaly → operational (page-worthy).
+    layout, registry, store = _store(tmp_path)
+    _seed_lead(layout, registry, store, "ld1")
+    sec_url = "https://www.sec.gov/Archives/edgar/data/1/x_424b5.htm"
+    etf_url = "https://www.etf.com/XLC"
+
+    def _call_two_urls(body: dict) -> dict:
+        query = body["messages"][0]["content"].splitlines()[1]
+        return {"content": [
+            {"type": "server_tool_use", "id": "s", "name": "web_search", "input": {"query": query}},
+            {"type": "web_search_tool_result", "tool_use_id": "s", "content": [
+                {"type": "web_search_result", "title": "t", "url": sec_url, "encrypted_content": "E"},
+                {"type": "web_search_result", "title": "t", "url": etf_url, "encrypted_content": "E"}]}]}
+
+    def _fetch_403(url: str) -> bytes:
+        raise CaptureError(f"fetch {url} -> HTTP 403", status=403)
+
+    faults: list = []
+    runlog = RunLog(run_id="r", ts=NOW, date=NOW[:10])
+    _run_capture(_deps(layout, registry, _provider(call=_call_two_urls, fetch=_fetch_403), _cfg(k_queries=1)),
+                 store, NOW, faults, runlog)
+
+    cap = [f for f in faults if f["subsystem"] == "capture.fetch"]
+    sec = [f for f in cap if "sec.gov" in f["message"]]
+    etf = [f for f in cap if "etf.com" in f["message"]]
+    assert sec and all(f["category"] == "operational" for f in sec)            # controlled → operational
+    assert etf and all(f["category"] == "review-advisory" for f in etf)        # open web → advisory
+    # page-worthiness: the SEC anomaly pages; the open-web advisory (on_live_lead False) does not.
+    pw = page_worthy_faults(cap)
+    assert any("sec.gov" in f["message"] for f in pw)
+    assert not any("etf.com" in f["message"] for f in pw)
+    assert all(f["key"] == "capture.fetch:403" for f in cap)                   # stable §10 suppression key kept
 
 
 def test_shadow_leads_never_capture(tmp_path):
