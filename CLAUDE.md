@@ -261,6 +261,15 @@ leaves a `config.changed` fossil — never by a self-updating rule:
   **silently revert an already-merged change** — the diff shows the sibling's merged work as *deletions*.
   **Diff against `origin/main` before opening the PR**; that catch is the last guard. (Born from exactly that
   near-miss — see `docs/decisions/2026-07-11-branch-off-fresh-main.md`.)
+- **Verify git/PR state before acting on it — `main` moves, and that is its default.** Code opens PRs; the
+  **owner** merges them asynchronously (often from a phone), so *"is this PR open / is this branch merged /
+  where is `origin/main`"* is never something Code knows — only something it last observed. Before amending or
+  force-pushing a branch, check `gh pr view <n> --json state,mergedAt`: **never amend a merged branch** — the
+  change is orphaned and **silently does not land**; put it on a fresh branch off `origin/main` instead. Before
+  reporting a change as landed, verify against the remote (`git merge-base --is-ancestor <sha> origin/main`),
+  never against local state or memory. The hazard is not the force-push (harmless) — it is **believing a fix
+  landed when it did not**, the fail-silent class wearing a git hat. (Born from exactly that:
+  `docs/notes/2026-07-19-verify-git-state-before-assuming.md`.)
 - `uv sync` to set up; `uv run pytest` to test; `uv run pros --help` for the CLI.
 - Tests are offline: a network guard fails any test that opens a real socket. Recorded fixtures
   live in `tests/fixtures/`.
