@@ -66,19 +66,56 @@ class ProspectusIngest:
 
 # --- STRUCTURE (bs4's job ends here) ------------------------------------------------------------
 
+# Tags that END a line. Everything else — b, i, span, font, a, sup, ix:nonNumeric … — is INLINE and
+# must NOT break the text. This list is the whole of `html_to_text`'s structural judgment.
+_BLOCK_TAGS = frozenset((
+    "p", "div", "br", "hr", "table", "tr", "td", "th", "caption",
+    "ul", "ol", "li", "dl", "dt", "dd",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "section", "article", "header", "footer", "aside", "nav", "main",
+    "blockquote", "pre", "address", "center", "figure", "figcaption",
+    "form", "fieldset", "tbody", "thead", "tfoot",
+))
+
+# A sentinel marking a line break WE derived from block structure, so it survives the whitespace
+# collapse below that erases every break the SOURCE bytes happened to contain. NUL cannot occur in
+# the extracted text, so it can never be confused with document content.
+_BREAK = "\x00"
+
+
 def html_to_text(body: bytes) -> str:
     """SEC prospectus HTML -> plain text. Uses bs4's stdlib `html.parser` backend (no lxml). Block
     structure becomes newlines so section HEADINGS stay on their own lines and remain findable; runs
     of whitespace (incl. non-breaking spaces) collapse; entities are unescaped. Deliberately dumb: it
-    turns markup into navigable text and stops — it never decides what any text MEANS."""
+    turns markup into navigable text and stops — it never decides what any text MEANS.
+
+    LINE BREAKS COME FROM STRUCTURE, NEVER FROM SOURCE WHITESPACE. A newline inside HTML *text* is
+    insignificant whitespace — it renders as a space, not a break — so only a block-level tag (or
+    `<br>`) ends a line. Getting this backwards was the mandate sensor's largest fault source: the
+    prior version split on every tag boundary AND kept the source's own newlines, which
+      - **split headings**, because filers hard-wrap them mid-phrase
+        (`<b>Principal\\nInvestment Strategies of the Fund</b>` -> two lines, so the phrase was never
+        visible on one line and the section was reported "heading not found"); and
+      - **split PROSE into heading-shaped fragments** — the more dangerous half, because a chopped
+        risk sentence yielded the short line `principal investment strategy to do so`, which passed
+        the `strict=True` guard (its tail "to do so" opens with a connective) and returned a RELIABLE
+        extraction of risk text as the strategy — a spurious-`mandate.changed` risk of exactly the
+        MANDATE-PROSE-HEADING class (docs/bugs/INDEX.md). Reflowing prose back onto one line puts it
+        over the 80-char heading bar, so the guard sees prose as prose.
+    See docs/decisions/2026-07-19-mandate-extraction-structural-lines.md."""
     soup = BeautifulSoup(body, "html.parser")
     for tag in soup(["script", "style"]):
         tag.decompose()
-    text = soup.get_text(separator="\n")
-    # Collapse horizontal whitespace (incl. non-breaking spaces from &nbsp;, which \s matches) to
-    # one space per line; keep line breaks so headings stay findable; drop blank lines.
-    lines = [re.sub(r"[^\S\n]+", " ", ln).strip() for ln in text.splitlines()]
-    return "\n".join(ln for ln in lines if ln)
+    for tag in soup.find_all(list(_BLOCK_TAGS)):
+        tag.insert_before(_BREAK)
+        tag.insert_after(_BREAK)
+    # separator=" " so inline tags JOIN with a space rather than run words together
+    # ("Principal" + "Investment" must not become "PrincipalInvestment").
+    text = soup.get_text(separator=" ")
+    # Collapse ALL whitespace (incl. source newlines and the non-breaking spaces from &nbsp;, which
+    # \s matches) to one space; the surviving breaks are exactly the structural ones.
+    text = re.sub(r"\s+", " ", text)
+    return "\n".join(ln for ln in (p.strip() for p in text.split(_BREAK)) if ln)
 
 
 # A section heading's optional tail is a short QUALIFIER phrase introduced by a closed-class connective
@@ -91,7 +128,12 @@ _HEADING_TAIL_CONNECTIVES = frozenset(
     ("of", "and", "for", "in", "to", "the", "on", "at", "by", "with", "or", "a", "an"))
 
 
-def _is_heading(line: str, patterns: list[str], *, strict: bool = False) -> bool:
+_HEADING_MAX_CHARS = 80       # a heading is a SHORT line; longer is prose
+_DECLARATION_MAX_CHARS = 240  # a self-declaration is one line but a long one — see `max_chars` below
+
+
+def _is_heading(line: str, patterns: list[str], *, strict: bool = False,
+                max_chars: int = _HEADING_MAX_CHARS) -> bool:
     """True when `line` matches one of `patterns` (case-insensitive, on its own short line — a long line
     is prose, never a heading). Two match modes, because two callers ask different things of the same test:
 
@@ -105,9 +147,19 @@ def _is_heading(line: str, patterns: list[str], *, strict: bool = False) -> bool
         the strategy heading. That prose guard is load-bearing: plain `startswith` accepted a line like
         "Investment objectives may change without shareholder approval" as the heading and returned a
         RELIABLE extraction on garbage — a spurious `mandate.changed` risk (docs/bugs/INDEX.md
-        MANDATE-PROSE-HEADING). Structure only; never what the heading means."""
+        MANDATE-PROSE-HEADING). Structure only; never what the heading means.
+
+    `max_chars` is the short-line bar, and the two modes need DIFFERENT bars now that `html_to_text`
+    reflows a paragraph onto one structural line. A heading stays short (80). A sticker's
+    self-declaration is a single long line — "Supplement dated July 15, 2026 to the Pictet AI &
+    Automation ETF's and Pictet Cleaner Planet ETF's currently effective Prospectus…" is 98 chars, and
+    the old splitter only kept it under 80 by chopping it mid-phrase. Holding declarations to the
+    heading bar silently reclassified 11 real 497 stickers as full prospectuses, which would have
+    re-created the very advisory noise the 2026-07-18 supplement cut removed. The looser bar is safe
+    precisely because declaration mode is ANCHORED at the start of the line: a full prospectus that
+    merely *mentions* a supplement mid-sentence still cannot match."""
     ln = line.lower().strip().rstrip(":.")
-    if not ln or len(ln) > 80:
+    if not ln or len(ln) > max_chars:
         return False
     for p in patterns:
         if not ln.startswith(p):
@@ -128,9 +180,9 @@ def _is_heading(line: str, patterns: list[str], *, strict: bool = False) -> bool
 
 
 def _find_heading(lines: list[str], patterns: list[str], start: int = 0, *,
-                  strict: bool = False) -> int | None:
+                  strict: bool = False, max_chars: int = _HEADING_MAX_CHARS) -> int | None:
     for i in range(start, len(lines)):
-        if _is_heading(lines[i], patterns, strict=strict):
+        if _is_heading(lines[i], patterns, strict=strict, max_chars=max_chars):
             return i
     return None
 
@@ -159,11 +211,15 @@ def is_prospectus_supplement(body: bytes) -> bool:
     lines = html_to_text(body).split("\n")
     # SAI titles itself near the top; a full prospectus only *references* the SAI mid-body, so anchor to
     # the opening window.
-    if _find_heading(lines[:_DECLARE_HEAD_LINES], list(_SAI_HEADINGS)) is not None:
+    if _find_heading(lines[:_DECLARE_HEAD_LINES], list(_SAI_HEADINGS),
+                     max_chars=_DECLARATION_MAX_CHARS) is not None:
         return True
     # A sticker announces "Supplement dated…/Supplement to…" — phrases specific to a supplement's own
     # heading (they do not appear as a heading in a full prospectus), so the whole (small) doc is scanned.
-    return _find_heading(lines, list(_SUPPLEMENT_HEADINGS)) is not None
+    # The declaration bar (not the 80-char heading bar) applies: a real sticker names every fund it
+    # amends on that one line, which routinely runs past 80 characters.
+    return _find_heading(lines, list(_SUPPLEMENT_HEADINGS),
+                         max_chars=_DECLARATION_MAX_CHARS) is not None
 
 
 # --- MEANING (which section — never significance) -----------------------------------------------
@@ -176,31 +232,50 @@ def extract_mandate(body: bytes, cfg: dict) -> dict:
     diffing it. Decides ONLY which text is the section; never whether a change to it is meaningful."""
     lines = html_to_text(body).split("\n")
     stops = [h.lower() for h in cfg["stop_headings"]]
+    min_chars = int(cfg.get("min_section_chars", 80))
+    max_lines = int(cfg.get("max_section_lines", 400))
 
     # `strategy_headings` is a PRIORITY list: prefer the detailed "Principal Investment Strategies"
     # section, fall back to "Investment Objective" only when the richer one is absent (some filings
-    # carry only the objective). First pattern that matches any heading line wins.
-    start = None
+    # carry only the objective). First pattern that yields a section wins.
+    #
+    # CONTINUE-SCAN PAST A NON-SECTION MATCH. Taking the FIRST heading-shaped line and failing on it
+    # let a **table of contents** shadow the real section: a TOC lists "PRINCIPAL INVESTMENT STRATEGY"
+    # (a perfectly heading-shaped line), then the page number, then the next TOC entry — which is a
+    # stop heading. So the "section" was the string "2" and the filing was reported unreliable while
+    # its real strategy section sat 140 lines below. A candidate is the heading only if it yields a
+    # section-shaped extraction; otherwise keep scanning. This is STRUCTURE, not meaning — it asks
+    # "did this heading bound a section?", never "is this the important one."
+    #
+    # The unreliable REASON reported is the FIRST candidate's, not the last: it names the thing a human
+    # opening the filing sees first, and a doc with no candidate at all still reports "heading not found".
+    first_reason, first_heading = None, None
     for pattern in [h.lower() for h in cfg["strategy_headings"]]:
-        start = _find_heading(lines, [pattern], strict=True)   # the heading, not a prose line opening with it
-        if start is not None:
-            break
-    if start is None:
+        at = 0
+        while True:
+            start = _find_heading(lines, [pattern], at, strict=True)  # a heading, not a prose line
+            if start is None:
+                break
+            at = start + 1
+            end = _find_heading(lines, stops, start + 1, strict=True)
+            bounded = end is not None
+            if end is None:
+                end = min(len(lines), start + 1 + max_lines)
+            section = "\n".join(lines[start + 1:end]).strip()
+
+            if len(section) < min_chars:
+                reason = "section too short to be the strategy"
+            elif not bounded:
+                reason = "no section boundary before cap (runaway extraction)"
+            else:
+                return {"section": section, "reliable": True, "heading": lines[start], "reason": "ok"}
+            if first_reason is None:
+                first_reason, first_heading = reason, lines[start]
+
+    if first_reason is None:
         return {"section": None, "reliable": False, "heading": None,
                 "reason": "strategy heading not found"}
-    end = _find_heading(lines, stops, start + 1, strict=True)
-    bounded = end is not None
-    if end is None:
-        end = min(len(lines), start + 1 + int(cfg.get("max_section_lines", 400)))
-    section = "\n".join(lines[start + 1:end]).strip()
-
-    if len(section) < int(cfg.get("min_section_chars", 80)):
-        return {"section": None, "reliable": False, "heading": lines[start],
-                "reason": "section too short to be the strategy"}
-    if not bounded:
-        return {"section": None, "reliable": False, "heading": lines[start],
-                "reason": "no section boundary before cap (runaway extraction)"}
-    return {"section": section, "reliable": True, "heading": lines[start], "reason": "ok"}
+    return {"section": None, "reliable": False, "heading": first_heading, "reason": first_reason}
 
 
 def _normalize(section: str) -> str:
@@ -210,12 +285,23 @@ def _normalize(section: str) -> str:
     return re.sub(r"\s+", " ", section).strip()
 
 
+# Sentence-ish boundaries. The diff unit must NOT be the source's own line wrapping: once
+# `html_to_text` reflows a paragraph onto one structural line (as it must — see its docstring), a
+# line-diff reports the WHOLE paragraph as changed and the 800-char bound then truncates away the
+# very words that moved. Splitting on sentence ends restores a granular diff and, unlike line
+# wrapping, is stable across re-files. Structure only — it never weighs which sentence matters.
+_SENTENCE_END = re.compile(r"(?<=[.;:])\s+")
+
+
 def _summarize(prior_section: str, current_section: str, max_chars: int = 800) -> str:
-    """A compact, human-readable unified line-diff of the strategy section — the go-look content for
-    the human's cosmetic-vs-substantive verdict. Bounded so the event payload stays small."""
+    """A compact, human-readable unified diff of the strategy section, sentence by sentence — the
+    go-look content for the human's cosmetic-vs-substantive verdict. Bounded so the event payload
+    stays small. Diffs the NORMALIZED text, matching the change decision in `diff_mandate`, so the
+    summary can never disagree with the `changed` flag it accompanies."""
+    prior = _SENTENCE_END.split(_normalize(prior_section))
+    current = _SENTENCE_END.split(_normalize(current_section))
     diff = "\n".join(difflib.unified_diff(
-        prior_section.splitlines(), current_section.splitlines(),
-        fromfile="prior", tofile="current", lineterm=""))
+        prior, current, fromfile="prior", tofile="current", lineterm=""))
     return diff[:max_chars] + ("…" if len(diff) > max_chars else "")
 
 

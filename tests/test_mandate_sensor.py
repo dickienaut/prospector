@@ -11,7 +11,7 @@ from pathlib import Path
 
 from prospector.ingest.edgar import EdgarClient, latest_prospectus
 from prospector.ingest.prospectus import (ProspectusIngest, _is_heading, diff_mandate, extract_mandate,
-                                          is_prospectus_supplement)
+                                          html_to_text, is_prospectus_supplement)
 from prospector.sensors import mandate
 from prospector.sensors.xcorr import xcorr_lead_id
 from prospector.store.envelope import SYSTEM_LEAD
@@ -22,6 +22,12 @@ STICKER = (FIXTURES / "497_supplement_sticker.html").read_bytes()  # a real 497 
 SAI = (FIXTURES / "497_sai.html").read_bytes()                     # a real Statement of Additional Information
 JPM_QA = (FIXTURES / "jpm_qa_prose_objective_synthetic.html").read_bytes()  # synthetic: a prose "Investment
 #   objectives…" line + an unmatched Q&A strategy heading (the Case D false-extraction reproduction)
+SPLIT_HEADING = (FIXTURES / "497_split_heading_tema.html").read_bytes()   # real: heading hard-wrapped
+#   mid-phrase inside one text node ("Principal\nInvestment Strategies of the Fund")
+TOC_SHADOW = (FIXTURES / "497_toc_shadows_section_vpff.html").read_bytes()  # real: a table-of-contents
+#   entry precedes the real section, so the FIRST heading match bounded only a page number
+LONG_STICKER = (FIXTURES / "497_supplement_long_declaration_pictet.html").read_bytes()  # real: a sticker
+#   whose self-declaration names both funds it amends and so runs to 98 chars
 
 UA = "Prospector-tests/1.0 (lyle.e.dickie@gmail.com)"
 NOW = "2026-07-03T22:30:00Z"
@@ -280,3 +286,110 @@ def test_scan_supplement_prior_is_baselined_not_contaminated(layout):
                              active_lead_ids={xcorr_lead_id([XLK, XLU])}, prefreeze=A)
     assert result["action"] == "baseline" and events == []
     assert result["reason"] == "prior on file is a supplement, not a full prospectus"
+
+
+# --- lines come from block STRUCTURE, never from source whitespace (workstream-2 parser gaps) -----
+#
+# Both fixtures are RECORDED-REAL trimmed excerpts of filings that faulted in production on
+# 2026-07-19; each carries a provenance header and was verified to reproduce the pre-fix failure.
+# See docs/decisions/2026-07-19-mandate-extraction-structural-lines.md.
+
+def test_html_to_text_keeps_a_hard_wrapped_heading_on_one_line():
+    # The filer wrapped the heading INSIDE one text node: `<b>Principal\nInvestment Strategies of
+    # the Fund</b>`. A newline in HTML text is insignificant whitespace (it renders as a space), so
+    # the heading must survive as ONE line — splitting it there is what hid the section entirely.
+    lines = html_to_text(SPLIT_HEADING).split("\n")
+    assert "Principal Investment Strategies of the Fund" in lines
+    assert "Principal" not in lines  # the fragment the old splitter produced
+
+
+def test_html_to_text_still_breaks_lines_on_block_tags():
+    # The other half of the contract: block structure MUST still break, or every heading would be
+    # swallowed into the surrounding paragraph and nothing would be findable.
+    out = html_to_text(b"<p>Principal Investment Strategies</p><p>The Fund invests.</p>"
+                       b"<div>A<br>B</div><table><tr><td>C</td><td>D</td></tr></table>")
+    assert out.split("\n") == ["Principal Investment Strategies", "The Fund invests.", "A", "B", "C", "D"]
+
+
+def test_html_to_text_joins_inline_tags_with_a_space_not_a_break():
+    # Inline tags must neither break the line nor run the words together.
+    assert html_to_text(b"<p><b>Principal</b> <b>Investment Strategies</b> <i>of the Fund</i></p>") \
+        == "Principal Investment Strategies of the Fund"
+
+
+def test_extract_recovers_the_section_from_a_hard_wrapped_heading():
+    r = extract_mandate(SPLIT_HEADING, CFG)
+    assert r["reliable"] is True
+    assert r["heading"] == "Principal Investment Strategies of the Fund"
+    assert "actively managed exchange-traded fund" in r["section"]
+
+
+def test_extract_scans_past_a_table_of_contents_entry_to_the_real_section():
+    # The TOC lists "PRINCIPAL INVESTMENT STRATEGY", then the page number, then the next TOC entry
+    # (a stop heading) — a perfectly heading-shaped line bounding a one-character "section". Taking
+    # the FIRST match and failing on it reported the whole filing unreliable while the real section
+    # sat further down. A candidate is the heading only if it bounds a section-shaped extraction.
+    r = extract_mandate(TOC_SHADOW, CFG)
+    assert r["reliable"] is True
+    assert r["heading"] == "PRINCIPAL INVESTMENT STRATEGY"
+    assert "80% of its net assets" in r["section"]
+    assert len(r["section"]) > 1000          # the real section, not the page number
+
+
+def test_continue_scan_still_faults_when_no_candidate_bounds_a_section():
+    # The continue-scan must not become a "keep looking until something sticks" loosening: a filing
+    # whose only heading-shaped candidates bound nothing is STILL unreliable (flag, never mis-diff),
+    # and the reason reported is the FIRST candidate's, not the last.
+    toc_only = (b"<p>PRINCIPAL INVESTMENT STRATEGY</p><p>2</p><p>PRINCIPAL RISKS</p><p>3</p>"
+                b"<p>PRINCIPAL INVESTMENT STRATEGY</p><p>7</p><p>PERFORMANCE</p><p>9</p>")
+    r = extract_mandate(toc_only, CFG)
+    assert r["reliable"] is False
+    assert r["reason"] == "section too short to be the strategy"
+    assert r["section"] is None
+
+
+def test_reflowed_prose_cannot_pose_as_a_heading():
+    # The dangerous half of the split-lines bug: source newlines chopped a RISK sentence into
+    # heading-shaped fragments, and `principal investment strategy to do so` passed the strict guard
+    # (its tail opens with the connective "to") — returning a RELIABLE extraction of risk prose as
+    # the strategy, the spurious-`mandate.changed` MANDATE-PROSE-HEADING class. Reflowed onto one
+    # line the sentence is far over the 80-char heading bar, so the guard sees prose as prose.
+    prose = (b"<p>Cash Transactions Risk. The Fund may, under certain circumstances, effect a portion\n"
+             b"of its creations and redemptions for cash rather than in kind\n, but it is not a\n"
+             b"principal investment strategy to do so\n. Partial cash creations are not a principal\n"
+             b"risk of the Fund.</p>")
+    assert "principal investment strategy to do so" not in html_to_text(prose).split("\n")
+    assert extract_mandate(prose, CFG)["reliable"] is False
+
+
+def test_split_heading_filing_diffs_instead_of_faulting(layout):
+    # End to end: the filing that produced a real 2026-07-19 review-advisory now extracts, so a
+    # substantive rewrite of its strategy is a `mandate.changed` rather than a manual-review punt.
+    rewritten = SPLIT_HEADING.replace(b"at least 80%", b"at least 55%")
+    d = diff_mandate(SPLIT_HEADING, rewritten, CFG)
+    assert d["reliable"] is True and d["changed"] is True
+    assert "55%" in d["summary"]
+
+
+def test_a_sticker_declaring_itself_over_the_heading_bar_is_still_a_supplement():
+    # NEAR-REGRESSION PIN. A heading is short (<=80 chars), but a sticker's self-declaration is one
+    # LONG line — this real filing's is 98 ("Supplement dated July 15, 2026 to the Pictet AI &
+    # Automation ETF's and Pictet Cleaner Planet ETF's currently effective Prospectus…"). The old
+    # splitter only kept it under the bar by chopping it mid-phrase; once html_to_text reflows it,
+    # holding declarations to the heading bar reclassified 11 real stickers as full prospectuses —
+    # re-creating exactly the advisory noise the 2026-07-18 supplement cut removed.
+    (decl,) = [ln for ln in html_to_text(LONG_STICKER).split("\n")
+               if ln.lower().startswith("supplement dated")][:1]
+    assert len(decl) > 80                                  # the bar the heading mode would apply
+    assert is_prospectus_supplement(LONG_STICKER) is True
+
+
+def test_the_looser_declaration_bar_does_not_admit_prose_mentioning_a_supplement():
+    # The looser bar is safe only because declaration mode is ANCHORED at the start of the line: a
+    # full prospectus that merely mentions a supplement mid-sentence must NOT be reclassified.
+    prose = (b"<p>Principal Investment Strategies</p><p>The Fund invests in equity securities of "
+             b"issuers in the information technology sector, as described more fully in any "
+             b"supplement to this Prospectus that the Trust may file from time to time.</p>"
+             b"<p>Principal Risks</p><p>You may lose money.</p>")
+    assert is_prospectus_supplement(prose) is False
+    assert extract_mandate(prose, CFG)["reliable"] is True  # still diffed normally
