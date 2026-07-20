@@ -58,12 +58,18 @@ fi
 #     feature); on the Mini, dev and prod share the ONE external store, so the lock path the dev derives
 #     matches the prod runner's. The checkout + `uv sync` run TOGETHER under one hold. On contention: refuse
 #     and retry, never wait silently (`lock-run` exits 75 = EX_TEMPFAIL).
-if ! ( cd "$REPO" && uv run pros store lock-run -- \
-        bash -euo pipefail -c '
-          git -C "$0" checkout --quiet --detach "$1"
-          cd "$0" && uv sync --locked
-        ' "$PROD" "$TAG" ); then
-  rc=$?
+# Capture the status with `|| rc=$?`, NOT `if ! (…); then rc=$?` — after a negated compound, `$?` is the
+# NEGATION's status (always 0 when the branch runs), so the 75 test below never matched and real lock
+# contention was reported as a broken checkout. Proven live by the item-10 gate run, 2026-07-19
+# (docs/bugs/INDEX.md DEPLOY-LOCK-MSG). `|| rc=$?` is also errexit-safe: a command before `||` does not
+# trip `set -e`.
+rc=0
+( cd "$REPO" && uv run pros store lock-run -- \
+    bash -euo pipefail -c '
+      git -C "$0" checkout --quiet --detach "$1"
+      cd "$0" && uv sync --locked
+    ' "$PROD" "$TAG" ) || rc=$?
+if [ "$rc" -ne 0 ]; then
   if [ "$rc" -eq 75 ]; then
     echo "STOP: a scheduled tick is in flight (single-writer lock held) — retry the deploy in a few minutes." >&2
   else
