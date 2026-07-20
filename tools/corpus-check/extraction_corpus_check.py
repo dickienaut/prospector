@@ -45,6 +45,15 @@ WHAT IT REPORTS — and why each column earned its place
   4. SECTION TEXT CHANGED. Documents reliable both ways whose extracted section MOVED. Usually
      the most interesting section: it means the same filing would now diff differently.
   5. REMAINING UNRELIABLE, BY REASON. The residual work, grouped — the shape, not the row count.
+  6. PAIRS — WHAT THE SENSOR WOULD ACTUALLY DO. Sections 1-5 judge documents ONE AT A TIME. The
+     sensor does not: it diffs a PAIR (prior frozen filing, current filing) and emits
+     `mandate.changed` from the comparison. A change can improve every document individually and
+     still make the sensor emit garbage — which is not a hypothetical. On 2026-07-19 a candidate
+     fix scored "6 newly reliable, 0 regressions, 0 flips" here and would have emitted **3 false
+     `mandate.changed` events**, because the two accessions being compared were the prospectuses of
+     two DIFFERENT FUNDS (bug B1 — the prospectus resolves at trust level, so several series point
+     at one filing). Per-document metrics are blind to that by construction. This section closes it,
+     and flags the B1 smell directly: an accession frozen under more than one series.
 
 USAGE
 -----
@@ -213,15 +222,75 @@ def main() -> int:
                   f"  (candidate heading: {r['head_heading']!r})")
     print("=" * 100)
 
+    # 6 — the pair the sensor actually diffs. See the module docstring: per-document metrics are
+    # structurally blind to a change that makes the sensor emit a FALSE corroboration.
+    diff_head = __import__("prospector.ingest.prospectus", fromlist=["diff_mandate"]).diff_mandate
+    diff_base = base.get("diff_mandate")
+    print("\n6. PAIRS — WHAT THE SENSOR WOULD ACTUALLY DO   (accession ordering approximated by"
+          " freeze time;\n   the runner walks EDGAR submission order, which is unavailable offline)")
+
+    # The B1 smell: one accession frozen under several series means those series share a document,
+    # so at most one of them legitimately owns it. Any change fired off such a pair is suspect.
+    acc_series: dict[str, set] = collections.defaultdict(set)
+    for p in blobs:
+        acc_series[p.parts[-2]].add(p.parts[-3])
+    shared = {a for a, ss in acc_series.items() if len(ss) > 1}
+
+    pair_rows, newly_firing = [], []
+    for series in sorted({b.parts[-3] for b in blobs}):
+        # Model `_last_frozen_prospectus`: newest first, skipping supplements/SAI (not diff baselines).
+        docs = sorted((root / "ingest" / "prospectus" / series).glob("*/index.html"),
+                      key=lambda q: q.stat().st_mtime, reverse=True)
+        full = [q for q in docs if not is_supp_head(q.read_bytes())]
+        if len(full) < 2:
+            continue
+        cur_p, prior_p = full[0], full[1]
+        cur_b, prior_b = cur_p.read_bytes(), prior_p.read_bytes()
+        h = diff_head(prior_b, cur_b, cfg)
+        b = diff_base(prior_b, cur_b, cfg) if diff_base else None
+
+        def verdict(d):
+            if d is None:
+                return "n/a"
+            return "fault" if not d["reliable"] else ("CHANGED" if d["changed"] else "unchanged")
+
+        vb, vh = verdict(b), verdict(h)
+        row = dict(series=series, prior=prior_p.parts[-2], current=cur_p.parts[-2],
+                   baseline=vb, head=vh,
+                   shared_accession=bool({prior_p.parts[-2], cur_p.parts[-2]} & shared))
+        pair_rows.append(row)
+        if vh == "CHANGED" and vb != "CHANGED":
+            newly_firing.append(row)
+
+    fires = sum(1 for r in pair_rows if r["head"] == "CHANGED")
+    print(f"     {len(pair_rows)} diffable pairs · would emit mandate.changed at HEAD: {fires}"
+          f" (baseline: {sum(1 for r in pair_rows if r['baseline'] == 'CHANGED')})")
+    print(f"\n   NEWLY FIRING `mandate.changed` (read every one): {len(newly_firing)}")
+    for r in newly_firing:
+        warn = "  ⚠ SHARED ACCESSION (B1: several series point at one filing —" \
+               " this diff may be comparing two different funds)" if r["shared_accession"] else ""
+        print(f"     {r['series']}  {r['baseline']} -> {r['head']}   {r['prior']} -> {r['current']}{warn}")
+    if any(r["shared_accession"] for r in newly_firing):
+        print("     ^ a shared accession means the prior and current may not be the same FUND's")
+        print("       prospectus. A `mandate.changed` from such a pair is a FALSE corroboration.")
+    if args.verbose:
+        print("\n   all pairs:")
+        for r in pair_rows:
+            print(f"     {r['series']}  {r['baseline']:>9} -> {r['head']:<9}"
+                  f"{'  [shared accession]' if r['shared_accession'] else ''}")
+    print("=" * 100)
+
     if args.json_out:
         pathlib.Path(args.json_out).write_text(json.dumps(
             dict(store=str(root), baseline=args.baseline, blobs=len(blobs), flips=flips,
                  regressions=regressions, newly_reliable=newly, section_changed=textdiff,
-                 remaining=remaining, documents=rows), indent=2))
+                 remaining=remaining, documents=rows,
+                 pairs=pair_rows, newly_firing=newly_firing), indent=2))
         print(f"\nJSON report -> {args.json_out}")
 
-    if args.strict and (flips or regressions):
-        print("\nSTRICT: regressions or classification flips present -> exit 1")
+    suspect = [r for r in newly_firing if r["shared_accession"]]
+    if args.strict and (flips or regressions or suspect):
+        print("\nSTRICT: regressions, classification flips, or suspect new firings -> exit 1")
         return 1
     return 0
 

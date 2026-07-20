@@ -31,6 +31,9 @@ Takes ~2 minutes on ~150 blobs. `--store` if the store isn't at `~/prospector/st
 
 **Run it on every change to `prospector/ingest/prospectus.py`.** That is the whole discipline.
 
+**Read section 6 before believing sections 1–5.** They answer different questions, and only section 6
+answers the one that matters: *what would the sensor emit?*
+
 ## What it reports, and why each section is there
 
 | # | Section | Why |
@@ -40,6 +43,7 @@ Takes ~2 minutes on ~150 blobs. `--store` if the store isn't at `~/prospector/st
 | 3 | **Newly reliable** | What the change bought, per document. |
 | 4 | **Section text changed** | Reliable both ways but the extracted section *moved* — the same filing would now diff differently. Often the most interesting section. |
 | 5 | **Remaining unreliable, by reason** | The residual work grouped by **shape**, not row count. |
+| 6 | **Pairs — what the sensor would actually do** | Sections 1–5 judge documents *one at a time*; the sensor diffs a **pair**. A change can improve every document individually and still make the sensor emit garbage. On 2026-07-19 a candidate fix scored "6 newly reliable, 0 regressions, 0 flips" above and would have emitted **3 false `mandate.changed`** — the two accessions were different funds' prospectuses (B1). Also flags the structural tell: **an accession frozen under more than one series**. |
 
 ## Why a tool and not a test
 
