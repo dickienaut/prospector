@@ -199,6 +199,9 @@ provenance. Several were recovered 2026-07-11 from the design-thread archive.*
   co-movement be found **blind**, and is that a sellable feature?
 - `idea-note-tunable-pattern-finder-2026-07-03.md` — the tunable pattern-finder: Prospector-as-a-product, and
   the one thing that would make it real rather than dangerous.
+- `2026-07-19-idea-the-twenty-year-working-surface.md` — **living/additive**: the surface the *owner* works on,
+  as distinct from the record the machine writes. The fossil record and the working surface are different
+  artifacts with different laws, and only the first exists today. Carries a **backlog table to append to.**
 
 ### Code-level docs — in the tree, next to what they describe
 - **`ARCHITECTURE.md`** (repo root) — module map, the three-part spine, built-vs-deferred, the CLI table, the
