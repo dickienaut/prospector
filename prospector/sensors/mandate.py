@@ -101,6 +101,23 @@ def scan(series_id: str, ticker: str, cik: int,
     payload = {"series_id": series_id, "ticker": ticker,
                "prior_accession": prior_accession, "current_accession": current_accession,
                "summary": d["summary"]}
+
+    # MARK A CORROBORATION WE CANNOT ATTRIBUTE TO ONE FUND — do not suppress it (§4d, 2026-07-20).
+    # A prospectus resolves at REGISTRANT level (bug B1), so a trust's combined filing is frozen under
+    # each of its series and every one of them diffs the SAME (first) strategy section this extractor
+    # can bound. Where the filing really carries one section per fund, at most one of those series is
+    # right: on 2026-07-19 two series sharing a Goldman Sachs 485APOS emitted BYTE-IDENTICAL
+    # `mandate.changed` events. Marking keeps the recall (the change is real for SOME fund, and this is
+    # a silent corroboration a human adjudicates anyway) while refusing to state it as clean — the
+    # honest middle between suppressing (which would re-inflate the advisory noise the supplement cut
+    # removed) and the real fix, per-fund block isolation, which needs B1's series->block tie.
+    # Fault behaviour is deliberately UNCHANGED: this adds provenance to the payload, nothing decides
+    # differently. See docs/notes/2026-07-19-mandate-pair-blindness-and-multifund-sections.md.
+    sharing = sorted({s for acc in (current_accession, prior_accession)
+                      for s in prospectus.series_sharing(acc)})
+    if len(sharing) > 1:
+        payload["shared_accession"] = True
+        payload["sharing_series"] = sharing
     for lead in leads:
         emit({"ts": now, "lead": lead, "type": "mandate.changed", "payload": payload, "schema": 1})
 
