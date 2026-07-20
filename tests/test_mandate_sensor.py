@@ -393,3 +393,57 @@ def test_the_looser_declaration_bar_does_not_admit_prose_mentioning_a_supplement
              b"<p>Principal Risks</p><p>You may lose money.</p>")
     assert is_prospectus_supplement(prose) is False
     assert extract_mandate(prose, CFG)["reliable"] is True  # still diffed normally
+
+
+# --- an unattributable corroboration is MARKED, never suppressed (B1 / multi-fund, 2026-07-20) -----
+
+OTHER = "S000000002"   # a second series holding the SAME filing — the B1 shape
+
+
+def test_series_sharing_lists_every_series_holding_an_accession(layout):
+    # The structural tell for "several series point at one filing": the same accession frozen under
+    # more than one series. Read from the BLOB STORE, never the registry field (the §9c invariant).
+    ingest = ProspectusIngest(layout, FakeEdgar({A: BASE}))
+    ingest.pull(XLK, CIK, A, "d.htm")
+    ingest.pull(OTHER, CIK, A, "d.htm")
+    assert ingest.series_sharing(A) == sorted([XLK, OTHER])
+
+
+def test_series_sharing_is_a_single_series_for_a_normal_filing(layout):
+    ingest = ProspectusIngest(layout, FakeEdgar({A: BASE}))
+    ingest.pull(XLK, CIK, A, "d.htm")
+    assert ingest.series_sharing(A) == [XLK]
+    assert ingest.series_sharing("0000000000-00-000000") == []   # nothing frozen -> empty, never an error
+
+
+def test_shared_accession_marks_the_change_and_still_emits_it(layout):
+    # MARK, DON'T SUPPRESS. The change is real for SOME fund, so it still fires (recall kept, and it is
+    # a silent corroboration a human adjudicates anyway) — but the payload states plainly that we cannot
+    # attribute it to one fund, so no reader is handed a clean-looking claim we can't stand behind.
+    ProspectusIngest(layout, FakeEdgar({B: SUBSTANTIVE})).pull(OTHER, CIK, B, "d.htm")
+    result, events, _ = _run(layout, {A: BASE, B: SUBSTANTIVE}, current=B, prior=A,
+                             active_lead_ids=set(), prefreeze=A)
+    (ev,) = [e for e in events if e["type"] == "mandate.changed"]
+    assert result["action"] == "mandate_changed"          # NOT suppressed
+    assert ev["payload"]["shared_accession"] is True
+    assert ev["payload"]["sharing_series"] == sorted([XLK, OTHER])
+    assert ev["payload"]["summary"]                       # the diff is still carried
+
+
+def test_an_unshared_filing_carries_no_marking_keys(layout):
+    # The normal case stays byte-clean — no marking noise on every event.
+    _, events, _ = _run(layout, {A: BASE, B: SUBSTANTIVE}, current=B, prior=A,
+                        active_lead_ids=set(), prefreeze=A)
+    (ev,) = [e for e in events if e["type"] == "mandate.changed"]
+    assert "shared_accession" not in ev["payload"]
+    assert "sharing_series" not in ev["payload"]
+
+
+def test_marking_does_not_change_fault_behaviour(layout):
+    # The guard adds PROVENANCE only. An unreliable extraction on a SHARED filing still faults and still
+    # emits no mandate.changed — §4d's decision surface is untouched.
+    ProspectusIngest(layout, FakeEdgar({B: UNRELIABLE})).pull(OTHER, CIK, B, "d.htm")
+    result, events, _ = _run(layout, {A: BASE, B: UNRELIABLE}, current=B, prior=A,
+                             active_lead_ids=set(), prefreeze=A)
+    assert result["action"] == "flagged_unreliable"
+    assert not any(e["type"] == "mandate.changed" for e in events)

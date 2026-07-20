@@ -63,6 +63,26 @@ class ProspectusIngest:
         and re-derivable, so a later, better extractor re-reads old filings with no stored staleness)."""
         return self._layout.prospectus_path(series_id, accession, _FROZEN_NAME).read_bytes()
 
+    def series_sharing(self, accession: str) -> list[str]:
+        """Every series that holds THIS accession frozen, sorted. More than one means several series
+        point at a single filing — so at most one of them legitimately owns it.
+
+        WHY IT MATTERS: a fund's prospectus resolves at REGISTRANT (trust) level, not series level
+        (bug B1), so a trust's combined filing is frozen under each of its series. `extract_mandate`
+        then takes the first strategy section it can bound, and every one of those series diffs the
+        SAME (first) fund's strategy. Observed live: a Goldman Sachs ETF Trust 485APOS carrying TWO
+        strategy sections is claimed by two series, which on 2026-07-19 emitted two BYTE-IDENTICAL
+        `mandate.changed` events — exactly one of which can be right.
+
+        Read from the BLOB STORE, never the registry's `prospectus_accession` — same §9c invariant
+        the mandate prior obeys: the sensor's state is its frozen blobs, and an identity pass earlier
+        in the same run may have moved the registry field. See
+        `docs/notes/2026-07-19-mandate-pair-blindness-and-multifund-sections.md`."""
+        # .../ingest/prospectus/{series_id}/{accession}/index.html -> parents[2] is the prospectus root.
+        # Derived from the layout rather than rebuilt by hand, so a path change can't silently orphan this.
+        base = self._layout.prospectus_path("_", accession, _FROZEN_NAME).parents[2]
+        return sorted(p.parent.parent.name for p in base.glob(f"*/{accession}/{_FROZEN_NAME}"))
+
 
 # --- STRUCTURE (bs4's job ends here) ------------------------------------------------------------
 
