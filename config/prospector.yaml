@@ -94,6 +94,9 @@ mandate:
   # fault for manual review rather than diffing the wrong thing. bs4 owns the HTML structure only.
   strategy_headings:        # the section that carries the thesis (case-insensitive, heading-line match)
     - principal investment strateg    # "Principal Investment Strategy/Strategies"
+    - what are the fund's main investment strateg   # J.P. Morgan-style Q&A summary heading (a question;
+    #   the "?" + smart apostrophe are normalized by _is_heading). Safe only after block isolation: on a
+    #   multi-fund JPM filing each covered series now isolates its OWN Q&A block (2026-07-21, PR3).
     - investment objective
   stop_headings:            # the strategy section ends at the next of these (the diff scope boundary)
     - principal risk

@@ -272,7 +272,12 @@ def _is_heading(line: str, patterns: list[str], *, strict: bool = False,
     re-created the very advisory noise the 2026-07-18 supplement cut removed. The looser bar is safe
     precisely because declaration mode is ANCHORED at the start of the line: a full prospectus that
     merely *mentions* a supplement mid-sentence still cannot match."""
-    ln = line.lower().strip().rstrip(":.")
+    # Terminal heading punctuation includes "?" — a Q&A-format summary prospectus titles its sections as
+    # QUESTIONS ("What are the Fund's main investment strategies?"), so the "?" is punctuation, not a prose
+    # tail. And filings render apostrophes as smart quotes (’ from &rsquo;), so normalize them to a plain '
+    # so a config pattern can carry a plain apostrophe. Both are terminal-form only and do not loosen the
+    # prose guard: a prose sentence still runs on into a content word after the pattern (verified).
+    ln = line.lower().strip().replace("’", "'").replace("‘", "'").rstrip(":.?")
     if not ln or len(ln) > max_chars:
         return False
     for p in patterns:
