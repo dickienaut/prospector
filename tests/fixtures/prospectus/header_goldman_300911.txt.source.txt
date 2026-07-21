@@ -1,0 +1,24 @@
+Fixture provenance — RECORDED-REAL (not synthetic). See the fixture-provenance discipline in CLAUDE.md.
+
+file:          header_goldman_300911.txt
+what:          the SGML SUBMISSION HEADER (<SEC-HEADER>…</SEC-HEADER>) of a real EDGAR 485APOS filing — the
+               <SERIES-AND-CLASSES-CONTRACTS-DATA> block that says which SERIES the filing covers, with each
+               series' fund NAME and class TICKER.
+filing:        accession 0001193125-26-300911 (form 485APOS), CIK 1479026 (Goldman Sachs ETF Trust)
+covers:        SERIES S000106340 — "Goldman Sachs Core Plus Bond ETF" (ticker GCPB), AND
+               SERIES S000106341 — "Goldman Sachs Income ETF"        (ticker GINC).
+               A GENUINELY MULTI-FUND filing (two funds, two strategy sections in the body).
+source_url:    https://www.sec.gov/Archives/edgar/data/1479026/000119312526300911/0001193125-26-300911.txt
+               (fetched via an HTTP Range request for the header prefix; trimmed to the closing </SEC-HEADER>)
+retrieved_at:  2026-07-21
+retrieved_by:  the build (Claude), with a declared SEC User-Agent. No secret is involved (EDGAR is public).
+why frozen:    THE SHAPE-B (multi-fund) PROOF and the source of the per-series fund NAME the block-isolation
+               fix (PR2) anchors on. This is the 2026-07-19 pair: GCPB and GINC both froze this one filing and
+               (pre-fix) both diffed the FIRST fund's (Core Plus Bond) section → byte-identical false
+               `mandate.changed`. The header gives each series its own fund name (Core Plus Bond vs Income),
+               which is the anchor for isolating each fund's block. In PR1 it supplies authoritative coverage
+               (both series ARE covered → the guard proceeds, unlike the JPM case). Consumed by
+               tests/test_mandate_sensor.py + the corpus-check coverage model.
+do not edit:   frozen substrate. NEVER refreshed by fetch code (drop-and-freeze for tests; fetch-on-cadence is
+               the runner's job — the two never conflate). If EDGAR's header format changes, freeze a NEW
+               dated file; never edit this.

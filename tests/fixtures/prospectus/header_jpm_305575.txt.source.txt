@@ -1,0 +1,21 @@
+Fixture provenance — RECORDED-REAL (not synthetic). See the fixture-provenance discipline in CLAUDE.md.
+
+file:          header_jpm_305575.txt
+what:          the SGML SUBMISSION HEADER (<SEC-HEADER>…</SEC-HEADER>) of a real EDGAR 497 filing — the
+               <SERIES-AND-CLASSES-CONTRACTS-DATA> block that says which SERIES the filing actually covers.
+filing:        accession 0001193125-26-305575 (form 497), CIK 1485894 (J.P. Morgan Exchange-Traded Fund Trust)
+covers:        SERIES S000108870 — "JPMorgan All Country Research Enhanced Equity ETF" (ONE series, no ticker
+               yet — a preliminary filing carries a placeholder class ticker).
+source_url:    https://www.sec.gov/Archives/edgar/data/1485894/000119312526305575/0001193125-26-305575.txt
+               (fetched via an HTTP Range request for the header prefix; trimmed to the closing </SEC-HEADER>)
+retrieved_at:  2026-07-21
+retrieved_by:  the build (Claude), with a declared SEC User-Agent. No secret is involved (EDGAR is public).
+why frozen:    THE B1 OVER-ATTRIBUTION PROOF. In the live registry this accession is frozen under three
+               UNRELATED series — S000101505/06/27 (LGDS/JPRF/JLVP) — because `latest_prospectus` returns the
+               trust's newest filing for every series of the CIK (B1). This header proves it covers ONLY
+               S000108870, so the mandate over-attribution guard skips the diff for the three mis-attributed
+               series. Consumed by tests/test_mandate_sensor.py (parse_series_classes + the guard) and the
+               corpus-check coverage model.
+do not edit:   frozen substrate. NEVER refreshed by fetch code (drop-and-freeze for tests; fetch-on-cadence is
+               the runner's job — the two never conflate). If EDGAR's header format changes, freeze a NEW
+               dated file; never edit this.

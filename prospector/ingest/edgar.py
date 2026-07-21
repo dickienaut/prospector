@@ -57,6 +57,13 @@ _BACKOFF_BASE_SECONDS = 1.0
 # (EdgarError status None — the httpx.HTTPError catch) is retried too. Anything else is a real error.
 _RETRY_STATUSES = (429, 403, 500, 502, 503, 504)
 
+# filing_header fetches only the SGML SUBMISSION HEADER prefix of a filing's full-submission .txt (the
+# <SEC-HEADER> ... </SEC-HEADER> block, which carries the SERIES/CLASS coverage map). Escalate the Range
+# until the closing sentinel is present, so a big omnibus trust's header isn't silently truncated; a
+# still-truncated header is detected downstream (parse_series_classes) and FAULTS, never guesses coverage.
+_HEADER_END_SENTINEL = b"</SEC-HEADER>"
+_HEADER_RANGES = ("bytes=0-49999", "bytes=0-262143")  # then, if still short, one unranged GET
+
 
 class EdgarError(Exception):
     """Typed EDGAR failure: a non-2xx HTTP status (`status` set when known), including 429/403
@@ -130,7 +137,10 @@ class EdgarClient:
             resp = httpx.get(url, headers=headers, timeout=30.0, follow_redirects=True)
         except httpx.HTTPError as e:
             raise EdgarError(f"GET {url} failed: {type(e).__name__}") from None
-        if resp.status_code != 200:
+        # 206 Partial Content is success for a Range request (filing_header fetches only the SGML header
+        # prefix, not the whole multi-MB submission). A server that ignores Range answers 200 with the
+        # full body — also fine; the caller reads only up to the </SEC-HEADER> sentinel.
+        if resp.status_code not in (200, 206):
             raise EdgarError(f"GET {url} -> HTTP {resp.status_code}", status=resp.status_code)
         return resp.content
 
@@ -146,8 +156,10 @@ class EdgarClient:
                 now = max(self._clock(), due)
         self._last_start = now
 
-    def _get(self, url: str, name: str) -> bytes:
+    def _get(self, url: str, name: str, range_header: str | None = None) -> bytes:
         headers = {"User-Agent": self.user_agent}
+        if range_header is not None:
+            headers["Range"] = range_header  # bytes=lo-hi — see filing_header (SGML-header-only fetch)
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             self._throttle()
             try:
@@ -193,6 +205,30 @@ class EdgarClient:
         acc = accession.replace("-", "")
         url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc}/index.json"
         return json.loads(self._get(url, f"{acc}_index.json"))
+
+    def filing_header(self, cik: int, accession: str) -> bytes:
+        """Fetch a filing's SGML SUBMISSION HEADER — the `<SEC-HEADER>…</SEC-HEADER>` block that carries
+        `<SERIES-AND-CLASSES-CONTRACTS-DATA>`, the per-filing map of WHICH series (and their fund names +
+        class tickers) the filing actually covers. This is the primary-source answer to B1 (a prospectus
+        resolves at registrant/CIK level, so `latest_prospectus` hands the trust's newest filing to every
+        series — but the header says which series it truly covers). Rate-limited and frozen via `persist`
+        (§3) like `filing_index`. Returns raw header bytes; `parse_series_classes` (ingest/prospectus.py)
+        turns them into coverage (and detects a truncated header).
+
+        Fetched by a **Range GET** of the full-submission `.txt` (the header sits at the top; the body is
+        multi-MB). The archive path is `edgar/data/{cik}/{acc_nodash}/{acc_dashed}.txt` — note the file is
+        the DASHED accession (unlike `filing_text`, whose file is the primary document). Escalate the range
+        until the `</SEC-HEADER>` sentinel is present so an omnibus trust's long header isn't truncated;
+        the final unranged GET is the backstop (SEC caps the response — a still-truncated header FAULTS
+        downstream, never a coverage guess off partial bytes)."""
+        acc = accession.replace("-", "")
+        url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc}/{accession}.txt"
+        name = f"{acc}_header.txt"
+        for rng in _HEADER_RANGES:
+            body = self._get(url, name, range_header=rng)
+            if _HEADER_END_SENTINEL in body:
+                return body
+        return self._get(url, name)  # unranged backstop; parse detects if still truncated
 
 
 def latest_prospectus(submissions: dict) -> dict | None:

@@ -226,6 +226,26 @@ def main() -> int:
     # structurally blind to a change that makes the sensor emit a FALSE corroboration.
     diff_head = __import__("prospector.ingest.prospectus", fromlist=["diff_mandate"]).diff_mandate
     diff_base = base.get("diff_mandate")
+    # HEAD's B1 over-attribution guard: the SGML SERIES/CLASS header says which series a filing covers.
+    # Modeled from FROZEN headers only (offline — no fetch); accessions with no frozen header degrade to
+    # "unknown" and are reported, so a partial run never reads as a clean full-corpus proof. Backfill the
+    # headers first (tools/corpus-check/backfill_headers.py) to exercise this over the whole store.
+    parse_series_classes = __import__(
+        "prospector.ingest.prospectus", fromlist=["parse_series_classes"]).parse_series_classes
+
+    def _guard(series: str, accession: str) -> str:
+        """The mandate over-attribution verdict for (series, current accession) from its frozen header:
+        'covered' | 'not_covered' | 'review' (truncated) | 'no-series-block' | 'no-header' (not backfilled)."""
+        hp = root / "ingest" / "prospectus_headers" / accession / "header.txt"
+        if not hp.exists():
+            return "no-header"
+        cov = parse_series_classes(hp.read_bytes())
+        if not cov["complete"]:
+            return "review"
+        if cov["has_series_block"]:
+            return "covered" if series in cov["series"] else "not_covered"
+        return "no-series-block"
+
     print("\n6. PAIRS — WHAT THE SENSOR WOULD ACTUALLY DO   (accession ordering approximated by"
           " freeze time;\n   the runner walks EDGAR submission order, which is unavailable offline)")
 
@@ -235,8 +255,9 @@ def main() -> int:
     for p in blobs:
         acc_series[p.parts[-2]].add(p.parts[-3])
     shared = {a for a, ss in acc_series.items() if len(ss) > 1}
+    headers_have = sum(1 for a in acc_series if (root / "ingest" / "prospectus_headers" / a / "header.txt").exists())
 
-    pair_rows, newly_firing = [], []
+    pair_rows, newly_firing, guard_skips = [], [], []
     for series in sorted({b.parts[-3] for b in blobs}):
         # Model `_last_frozen_prospectus`: newest first, skipping supplements/SAI (not diff baselines).
         docs = sorted((root / "ingest" / "prospectus" / series).glob("*/index.html"),
@@ -255,28 +276,44 @@ def main() -> int:
             return "fault" if not d["reliable"] else ("CHANGED" if d["changed"] else "unchanged")
 
         vb, vh = verdict(b), verdict(h)
+        guard = _guard(series, cur_p.parts[-2])
+        # The guard runs BEFORE the diff: not_covered -> the pair is skipped (nothing emitted); a truncated
+        # header -> review advisory. Both mean HEAD does NOT fire mandate.changed, whatever the diff says.
+        effective = "skipped" if guard == "not_covered" else ("review" if guard == "review" else vh)
         row = dict(series=series, prior=prior_p.parts[-2], current=cur_p.parts[-2],
-                   baseline=vb, head=vh,
+                   baseline=vb, head=vh, guard=guard, effective=effective,
                    shared_accession=bool({prior_p.parts[-2], cur_p.parts[-2]} & shared))
         pair_rows.append(row)
-        if vh == "CHANGED" and vb != "CHANGED":
+        if guard in ("not_covered", "review") and vh == "CHANGED":
+            guard_skips.append(row)   # a diff the guard now prevents from firing (Shape-A over-attribution)
+        if effective == "CHANGED" and vb != "CHANGED":
             newly_firing.append(row)
 
-    fires = sum(1 for r in pair_rows if r["head"] == "CHANGED")
+    fires = sum(1 for r in pair_rows if r["effective"] == "CHANGED")
     print(f"     {len(pair_rows)} diffable pairs · would emit mandate.changed at HEAD: {fires}"
           f" (baseline: {sum(1 for r in pair_rows if r['baseline'] == 'CHANGED')})")
+    print(f"     coverage guard modeled from frozen headers for {headers_have}/{len(acc_series)} accessions"
+          f"{'   <- run backfill_headers.py; missing headers are unmodeled (guard=no-header)' if headers_have < len(acc_series) else ''}")
+
+    print(f"\n   GUARD SKIPS — a diff the B1 guard now PREVENTS from firing: {len(guard_skips)}")
+    for r in guard_skips:
+        print(f"     {r['series']}  {r['head']} -> {r['effective']} ({r['guard']})   {r['prior']} -> {r['current']}")
+    if guard_skips:
+        print("     ^ these are the Shape-A over-attribution firings the header guard removes.")
+
     print(f"\n   NEWLY FIRING `mandate.changed` (read every one): {len(newly_firing)}")
     for r in newly_firing:
         warn = "  ⚠ SHARED ACCESSION (B1: several series point at one filing —" \
                " this diff may be comparing two different funds)" if r["shared_accession"] else ""
-        print(f"     {r['series']}  {r['baseline']} -> {r['head']}   {r['prior']} -> {r['current']}{warn}")
+        gw = f"  [guard={r['guard']}]" if r["guard"] not in ("covered",) else ""
+        print(f"     {r['series']}  {r['baseline']} -> {r['head']}   {r['prior']} -> {r['current']}{warn}{gw}")
     if any(r["shared_accession"] for r in newly_firing):
-        print("     ^ a shared accession means the prior and current may not be the same FUND's")
-        print("       prospectus. A `mandate.changed` from such a pair is a FALSE corroboration.")
+        print("     ^ a shared accession that the guard did NOT skip (covered, or header not backfilled).")
+        print("       If guard=no-header, backfill and re-run before trusting this as a real firing.")
     if args.verbose:
         print("\n   all pairs:")
         for r in pair_rows:
-            print(f"     {r['series']}  {r['baseline']:>9} -> {r['head']:<9}"
+            print(f"     {r['series']}  {r['baseline']:>9} -> {r['effective']:<9} (guard={r['guard']})"
                   f"{'  [shared accession]' if r['shared_accession'] else ''}")
     print("=" * 100)
 
@@ -284,10 +321,12 @@ def main() -> int:
         pathlib.Path(args.json_out).write_text(json.dumps(
             dict(store=str(root), baseline=args.baseline, blobs=len(blobs), flips=flips,
                  regressions=regressions, newly_reliable=newly, section_changed=textdiff,
-                 remaining=remaining, documents=rows,
-                 pairs=pair_rows, newly_firing=newly_firing), indent=2))
+                 remaining=remaining, documents=rows, headers_modeled=headers_have,
+                 pairs=pair_rows, guard_skips=guard_skips, newly_firing=newly_firing), indent=2))
         print(f"\nJSON report -> {args.json_out}")
 
+    # A shared-accession firing the guard did NOT resolve is suspect. Once headers are backfilled the guard
+    # should skip the over-attributed ones; a residual suspect (covered, or still no-header) needs a human.
     suspect = [r for r in newly_firing if r["shared_accession"]]
     if args.strict and (flips or regressions or suspect):
         print("\nSTRICT: regressions, classification flips, or suspect new firings -> exit 1")

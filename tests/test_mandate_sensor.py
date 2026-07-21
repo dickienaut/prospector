@@ -11,7 +11,7 @@ from pathlib import Path
 
 from prospector.ingest.edgar import EdgarClient, latest_prospectus
 from prospector.ingest.prospectus import (ProspectusIngest, _is_heading, diff_mandate, extract_mandate,
-                                          html_to_text, is_prospectus_supplement)
+                                          html_to_text, is_prospectus_supplement, parse_series_classes)
 from prospector.sensors import mandate
 from prospector.sensors.xcorr import xcorr_lead_id
 from prospector.store.envelope import SYSTEM_LEAD
@@ -28,6 +28,10 @@ TOC_SHADOW = (FIXTURES / "497_toc_shadows_section_vpff.html").read_bytes()  # re
 #   entry precedes the real section, so the FIRST heading match bounded only a page number
 LONG_STICKER = (FIXTURES / "497_supplement_long_declaration_pictet.html").read_bytes()  # real: a sticker
 #   whose self-declaration names both funds it amends and so runs to 98 chars
+HDR_JPM = (FIXTURES / "header_jpm_305575.txt").read_bytes()      # real SGML header: covers ONLY S000108870
+#   (the B1 over-attribution proof — this 497 is frozen under three UNRELATED series in the live registry)
+HDR_GS = (FIXTURES / "header_goldman_300911.txt").read_bytes()  # real SGML header: covers S000106340 (GCPB)
+#   AND S000106341 (GINC) — a genuinely multi-fund filing, each series with its own fund name + ticker
 
 UA = "Prospector-tests/1.0 (lyle.e.dickie@gmail.com)"
 NOW = "2026-07-03T22:30:00Z"
@@ -171,24 +175,51 @@ A = "0001193125-25-280452"   # prior filing
 B = "0001193125-26-291833"   # new filing
 
 
+def _hdr(*series_ids, complete=True):
+    """A DECLARED-SYNTHETIC SGML submission header covering the given series (used for the edge cases;
+    the real filing shapes come from HDR_JPM / HDR_GS). `complete=False` drops the </SEC-HEADER> sentinel
+    to model a truncated header (coverage unverifiable)."""
+    body = "<SEC-HEADER>\n<SERIES-AND-CLASSES-CONTRACTS-DATA>\n"
+    for sid in series_ids:
+        body += f"<SERIES>\n<SERIES-ID>{sid}\n<SERIES-NAME>Fund {sid}\n"
+    body += "</SERIES-AND-CLASSES-CONTRACTS-DATA>\n"
+    if complete:
+        body += "</SEC-HEADER>\n"
+    return body.encode()
+
+
 class FakeEdgar:
     """A stand-in EdgarClient whose filing_text serves fixture bytes per accession, recording calls
-    (so a test can assert no fetch happened)."""
+    (so a test can assert no fetch happened). filing_header serves the SGML SERIES/CLASS header the B1
+    over-attribution guard consults (recorded separately, so body-fetch assertions are unaffected)."""
 
-    def __init__(self, by_accession):
+    def __init__(self, by_accession, headers_by_accession=None):
         self.by_accession = by_accession
+        self.headers_by_accession = headers_by_accession or {}
         self.calls = []
+        self.header_calls = []
 
     def filing_text(self, cik, accession, primary_doc):
         self.calls.append((cik, accession, primary_doc))
         return self.by_accession[accession]
 
+    def filing_header(self, cik, accession):
+        self.header_calls.append((cik, accession))
+        return self.headers_by_accession[accession]
 
-def _run(layout, by_accession, current, prior, active_lead_ids, *, prefreeze=None):
-    edgar = FakeEdgar(by_accession)
+
+def _run(layout, by_accession, current, prior, active_lead_ids, *, prefreeze=None,
+         headers=None, series_id=XLK):
+    # Default: every accession's SGML header COVERS the scanned series, so the B1 over-attribution guard
+    # PROCEEDS (the common single-fund case). A guard test overrides `headers` to model a filing that does
+    # not cover this series (not_covered), a truncated header (review), or a multi-fund filing.
+    hdrs = {acc: _hdr(series_id) for acc in by_accession}
+    if headers:
+        hdrs.update(headers)
+    edgar = FakeEdgar(by_accession, hdrs)
     prospectus = ProspectusIngest(layout, edgar)
     if prefreeze:  # seed the prior filing's blob (as a prior run's baseline would have)
-        prospectus.pull(XLK, CIK, prefreeze, "prior.htm")
+        prospectus.pull(series_id, CIK, prefreeze, "prior.htm")
         edgar.calls.clear()
     events = []
 
@@ -200,7 +231,7 @@ def _run(layout, by_accession, current, prior, active_lead_ids, *, prefreeze=Non
                        "payload": {"subsystem": subsystem, "message": message, "series_id": series_id,
                                    "category": "review-advisory", **(extra or {})}})
 
-    result = mandate.scan(XLK, "XLK", CIK, current, "cur.htm", prior, UNIVERSE, active_lead_ids,
+    result = mandate.scan(series_id, "XLK", CIK, current, "cur.htm", prior, UNIVERSE, active_lead_ids,
                           prospectus, CFG, NOW, events.append, report_advisory)
     return result, events, edgar
 
@@ -286,6 +317,88 @@ def test_scan_supplement_prior_is_baselined_not_contaminated(layout):
                              active_lead_ids={xcorr_lead_id([XLK, XLU])}, prefreeze=A)
     assert result["action"] == "baseline" and events == []
     assert result["reason"] == "prior on file is a supplement, not a full prospectus"
+
+
+# --- the B1 over-attribution guard: the SGML SERIES/CLASS header says which series a filing covers ----
+# docs/bugs/INDEX.md B1 + MANDATE-MULTIFUND-SECTION. A prospectus resolves at REGISTRANT (CIK) level, so
+# latest_prospectus hands the trust's newest filing to EVERY series of the CIK — including filings that do
+# not cover a given fund. The filing's SGML header is the primary-source answer to WHICH series it covers.
+
+def test_parse_series_classes_real_headers_report_true_coverage():
+    jpm = parse_series_classes(HDR_JPM)
+    assert jpm["complete"] and jpm["has_series_block"]
+    assert set(jpm["series"]) == {"S000108870"}            # ONLY the All Country ETF's own new series...
+    for claimed in ("S000101505", "S000101506", "S000105027"):
+        assert claimed not in jpm["series"]                # ...NOT the 3 series the live registry attaches it to (B1)
+    gs = parse_series_classes(HDR_GS)
+    assert set(gs["series"]) == {"S000106340", "S000106341"}   # a GENUINELY multi-fund filing (GCPB + GINC)
+    assert gs["series"]["S000106340"]["tickers"] == ["GCPB"]
+    assert gs["series"]["S000106341"]["name"] == "Goldman Sachs Income ETF"
+
+
+def test_parse_series_classes_three_distinct_signals_never_collapsed():
+    # 1) TRUNCATED (the </SEC-HEADER> sentinel never arrives) -> complete False (coverage UNKNOWN -> fault)
+    t = parse_series_classes(HDR_GS[: HDR_GS.find(b"</SEC-HEADER>")])
+    assert t["complete"] is False
+    # 2) complete but NO series block (older / non-fund form) -> benign "no series data", not "not covered"
+    n = parse_series_classes(b"<SEC-HEADER>\n<ACCESSION-NUMBER>x\n</SEC-HEADER>\n")
+    assert n["complete"] is True and n["has_series_block"] is False and n["series"] == {}
+    # 3) malformed junk never crashes -> a dict with the three keys
+    assert set(parse_series_classes(b"\x00 not sgml \xff")) == {"series", "complete", "has_series_block"}
+
+
+def test_scan_over_attribution_filing_not_covering_this_series_is_skipped_no_freeze(layout):
+    # THE B1 FIX: latest_prospectus handed us B (the trust's newest), but B's real SGML header covers a
+    # DIFFERENT series (the J.P. Morgan 497 covers only S000108870). Scanning for XLK -> not_covered: do
+    # not freeze B under XLK (no new pollution), do not diff, no fault (the expected B1 state, not an error).
+    result, events, edgar = _run(layout, {A: BASE, B: SUBSTANTIVE}, current=B, prior=A,
+                                 active_lead_ids={xcorr_lead_id([XLK, XLU])}, prefreeze=A,
+                                 headers={B: HDR_JPM})
+    assert result["action"] == "not_covered"
+    assert events == []
+    assert (CIK, B, "cur.htm") not in edgar.calls              # B was never fetched/frozen under XLK
+    assert not ProspectusIngest(layout, edgar).has_frozen(XLK, B)
+
+
+def test_scan_truncated_header_flags_for_review_never_diffs(layout):
+    # A header we cannot verify (truncated) -> coverage UNKNOWN -> review-advisory, never a diff (§4d:
+    # a false mandate.changed is worse than a missed one).
+    result, events, _ = _run(layout, {A: BASE, B: SUBSTANTIVE}, current=B, prior=A,
+                             active_lead_ids=set(), prefreeze=A, headers={B: _hdr(XLK, complete=False)})
+    assert result["action"] == "flagged_unreliable"
+    (ev,) = events
+    assert ev["type"] == "fault" and ev["payload"]["category"] == "review-advisory"
+    assert "manual review" in ev["payload"]["message"]
+    assert not any(e["type"] == "mandate.changed" for e in events)
+
+
+def test_scan_covered_multifund_filing_still_diffs_in_pr1(layout):
+    # A genuinely multi-fund filing that DOES cover our series proceeds to the normal (whole-doc) diff:
+    # coverage alone does not suppress a covered diff. (Isolating the per-fund block is PR2; PR1 only
+    # guards attribution.) Proves the guard is a COVERAGE gate, not a "multi-fund -> refuse" gate.
+    result, events, _ = _run(layout, {A: BASE, B: SUBSTANTIVE}, current=B, prior=A,
+                             active_lead_ids={xcorr_lead_id([XLK, XLU])}, prefreeze=A,
+                             headers={B: _hdr(XLK, "S000000099")})
+    assert result["action"] == "mandate_changed"
+
+
+def test_scan_no_series_header_lone_claimant_proceeds(layout):
+    # An older / non-fund form with no series block, claimed by only this series -> proceed (today's
+    # whole-doc behaviour). Absence of a series block is "no series data", never exclusion.
+    result, events, _ = _run(layout, {A: BASE, B: SUBSTANTIVE}, current=B, prior=A,
+                             active_lead_ids=set(), prefreeze=A, headers={B: _hdr()})
+    assert result["action"] == "mandate_changed"
+
+
+def test_scan_no_series_header_shared_by_multiple_series_is_flagged(layout):
+    # No series block AND the accession is frozen under >1 series -> we cannot attribute it -> review
+    # (the series_sharing tripwire is the safe floor when the header can't disambiguate).
+    ProspectusIngest(layout, FakeEdgar({B: BASE})).pull(XLU, CIK, B, "x.htm")  # a 2nd claimant, first...
+    ProspectusIngest(layout, FakeEdgar({B: BASE})).pull(XLK, CIK, B, "x.htm")  # ...and us -> sharing == 2
+    result, events, _ = _run(layout, {A: BASE, B: BASE}, current=B, prior=A, active_lead_ids=set(),
+                             prefreeze=A, headers={B: _hdr()})
+    assert result["action"] == "flagged_unreliable"
+    assert events and "cannot attribute" in events[0]["payload"]["message"]
 
 
 # --- lines come from block STRUCTURE, never from source whitespace (workstream-2 parser gaps) -----

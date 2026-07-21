@@ -43,7 +43,22 @@ answers the one that matters: *what would the sensor emit?*
 | 3 | **Newly reliable** | What the change bought, per document. |
 | 4 | **Section text changed** | Reliable both ways but the extracted section *moved* — the same filing would now diff differently. Often the most interesting section. |
 | 5 | **Remaining unreliable, by reason** | The residual work grouped by **shape**, not row count. |
-| 6 | **Pairs — what the sensor would actually do** | Sections 1–5 judge documents *one at a time*; the sensor diffs a **pair**. A change can improve every document individually and still make the sensor emit garbage. On 2026-07-19 a candidate fix scored "6 newly reliable, 0 regressions, 0 flips" above and would have emitted **3 false `mandate.changed`** — the two accessions were different funds' prospectuses (B1). Also flags the structural tell: **an accession frozen under more than one series**. |
+| 6 | **Pairs — what the sensor would actually do** | Sections 1–5 judge documents *one at a time*; the sensor diffs a **pair**. A change can improve every document individually and still make the sensor emit garbage. On 2026-07-19 a candidate fix scored "6 newly reliable, 0 regressions, 0 flips" above and would have emitted **3 false `mandate.changed`** — the two accessions were different funds' prospectuses (B1). Also flags the structural tell: **an accession frozen under more than one series**. **Now also models the B1 over-attribution guard** from frozen SGML headers and reports the **guard skips** (Shape-A firings the guard removes) — but only for accessions whose header is frozen; run `backfill_headers.py` first, else the guard reads `no-header` (reported honestly, never as a clean pass). |
+
+## Backfill headers first (one-time, for section 6's guard modeling)
+
+Section 6 models the B1 over-attribution guard from frozen SGML SERIES/CLASS headers
+(`ingest/prospectus_headers/{accession}/header.txt`). The live store predates that freeze, so run the
+one-off backfill ONCE before trusting the guard columns:
+
+```sh
+uv run python tools/corpus-check/backfill_headers.py --dry-run   # list what would be fetched
+uv run python tools/corpus-check/backfill_headers.py             # fetch + freeze missing headers
+```
+
+This is the **only** networked piece of the toolchain — SEC-polite (rate-limited), freeze-once,
+idempotent, and writes only frozen substrate under `ingest/prospectus_headers/`. It is deliberately a
+**separate** script so the harness itself stays offline-only.
 
 ## Why a tool and not a test
 
