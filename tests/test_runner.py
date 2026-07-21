@@ -331,15 +331,8 @@ def test_compute_push_is_pinned_to_state_change_or_fault():
 
 # -- guards: the firewall and the runs_path shape -------------------------------------------
 
-def test_runner_firewall_never_reads_portfolio():
-    # The wall (CLAUDE.md): the runner never reaches into the portfolio system. Guard the specific
-    # forbidden read across the whole package source.
-    import prospector.runner.deps as deps_mod
-    import prospector.runner.notify as notify_mod
-    import prospector.runner.runlog as runlog_mod
-    import prospector.runner.runner as runner_mod
-    for mod in (runner_mod, deps_mod, notify_mod, runlog_mod):
-        assert "portfolio.yaml" not in Path(mod.__file__).read_text(encoding="utf-8")
+# The runner's firewall guard moved to `tests/test_firewall.py`, which sweeps the WHOLE package
+# (this one listed 4 modules by hand; 48 others were unguarded). One rule, one home.
 
 
 def test_runs_path_shape(layout):
