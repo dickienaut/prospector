@@ -34,15 +34,19 @@ from prospector.identity.resolution import ResolutionMachine
 
 
 NOW = "2026-07-14T22:30:00Z"
-LAST_SENT_8D = "2026-07-06T22:30:00Z"   # 8 days before NOW
+LAST_SENT_8D = "2026-07-06T22:30:00Z"   # 8 days before NOW (for the export test, which passes NOW explicitly)
 
 
-def _seed_8d_heartbeat_and_run(layout, registry):
-    """A real store: a heartbeat.sent 8 days ago + one completed run today (runner-faithful seed)."""
+def _seed_8d_heartbeat_and_run(layout, registry, *, last_sent=LAST_SENT_8D, run_ts=NOW):
+    """A real store: a heartbeat.sent at `last_sent` + one completed run at `run_ts` (runner-faithful seed).
+    The export test passes a fixed `NOW` into the render, so the fixed defaults give a deterministic 8-day
+    silence. The Streamlit APP test cannot inject a clock — app.py reads the REAL wall clock (`_now()`) — so
+    it MUST seed relative to that real now (below), else a fixed past date drifts and the test becomes a
+    calendar time-bomb (8-day silence when authored; >14 days weeks later → false BROKEN)."""
     store = EventStore(layout, registry)
-    store.append({"ts": LAST_SENT_8D, "lead": SYSTEM_LEAD, "type": "heartbeat.sent",
+    store.append({"ts": last_sent, "lead": SYSTEM_LEAD, "type": "heartbeat.sent",
                   "payload": {"trigger": "cadence"}, "schema": 1})
-    write_run_log(layout, registry, RunLog(run_id="r1", ts=NOW, date=NOW[:10], pushed=True))
+    write_run_log(layout, registry, RunLog(run_id="r1", ts=run_ts, date=run_ts[:10], pushed=True))
 
 
 def _write_cfg(tmp_path, cadence_days):
@@ -85,7 +89,14 @@ def test_dashboard_app_heartbeat_honors_configured_cadence(layout, registry, mon
     # runner-faithful: build the resolution tables while writable (N1), then seed the fossils
     from prospector.identity.resolution import ResolutionMachine
     ResolutionMachine(registry, EventStore(layout, registry), None, None)
-    _seed_8d_heartbeat_and_run(layout, registry)
+    # app.py computes silence against the REAL wall clock (_now()), so seed RELATIVE to now — a fixed past
+    # date would drift and turn this into a calendar time-bomb (it was authored 2026-07-14 with a 2026-07-06
+    # seed = 8d silent; once real-now passed 2026-07-20 the same seed read >14d → false BROKEN).
+    from datetime import datetime, timedelta, timezone
+    _now = datetime.now(timezone.utc).replace(microsecond=0)
+    _iso = lambda d: d.isoformat().replace("+00:00", "Z")
+    _seed_8d_heartbeat_and_run(layout, registry,
+                               last_sent=_iso(_now - timedelta(days=8)), run_ts=_iso(_now))
     cfg_path = _write_cfg(tmp_path, 14)
     monkeypatch.setenv("PROSPECTOR_STORE", str(layout.root))
     monkeypatch.setenv("PROSPECTOR_CONFIG", str(cfg_path))   # N5: config path is env-overridable
