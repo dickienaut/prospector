@@ -1,0 +1,31 @@
+Fixture provenance — RECORDED-REAL CONTENT, re-wrapped for size. See the fixture-provenance discipline in CLAUDE.md.
+
+file:          goldman_multifund_body_300911.html
+what:          the front matter (cover + table of contents + BOTH fund-summary blocks + the shared
+               additional-information restatement) of a real GENUINELY MULTI-FUND prospectus — the two
+               funds whose byte-identical `mandate.changed` on 2026-07-19 is the MANDATE-MULTIFUND-SECTION
+               bug this fixture proves fixed.
+filing:        accession 0001193125-26-300911 (form 485APOS), CIK 1479026 (Goldman Sachs ETF Trust);
+               covers SERIES S000106340 "Goldman Sachs Core Plus Bond ETF" (GCPB) AND S000106341
+               "Goldman Sachs Income ETF" (GINC).
+source_url:    https://www.sec.gov/Archives/edgar/data/1479026/000119312526300911/0001193125-26-300911.txt
+retrieved_at:  2026-07-21
+retrieved_by:  the build (Claude), with a declared SEC User-Agent. Public EDGAR filing; no secret involved.
+
+HOW IT WAS MADE (read this — the markup is NOT the filing's):
+   The filing's raw HTML is machine-generated with per-word tags and entities (the rendered heading
+   "PRINCIPAL INVESTMENT STRATEGIES" is not even a contiguous byte string in the source), so a byte-range
+   trim is fragile and the whole 2.2 MB body is too large to commit. Instead this fixture is the filing's
+   REAL RENDERED TEXT — the exact output of `prospector.ingest.prospectus.html_to_text` — for lines 60–414
+   (cover through GINC's additional-information section), with each rendered line re-wrapped as its own
+   `<p>` so `html_to_text` reproduces those same lines. Every heading, ticker line, table-of-contents entry
+   (with its page number), and strategy-section paragraph is the FILING'S OWN TEXT, verbatim; only the
+   enclosing `<p>` tags are synthetic. The mandate extractor operates on `html_to_text` output, so the
+   isolate-then-scan stages under test see exactly what they would on the full filing. (The `html_to_text`
+   stage itself — per-word tags, hard-wrapped headings — is proven separately by the fully-real
+   `497_split_heading_tema.html` / `497_toc_shadows_section_vpff.html` fixtures.)
+why frozen:    the SHAPE-B (genuine multi-fund) isolation proof: `extract_mandate(anchor="…Core Plus Bond
+               ETF")` and `extract_mandate(anchor="…Income ETF")` isolate DIFFERENT sections (bonds vs
+               fixed income), where the whole-doc extractor returns the first (Core Plus) for both. Also
+               exercises the table-of-contents filter (the TOC's "{Name} – Summary" copies at the top).
+do not edit:   frozen substrate. If the filing's structure changes, freeze a NEW dated file; never edit this.

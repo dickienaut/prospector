@@ -32,6 +32,9 @@ HDR_JPM = (FIXTURES / "header_jpm_305575.txt").read_bytes()      # real SGML hea
 #   (the B1 over-attribution proof — this 497 is frozen under three UNRELATED series in the live registry)
 HDR_GS = (FIXTURES / "header_goldman_300911.txt").read_bytes()  # real SGML header: covers S000106340 (GCPB)
 #   AND S000106341 (GINC) — a genuinely multi-fund filing, each series with its own fund name + ticker
+GS_BODY = (FIXTURES / "goldman_multifund_body_300911.html").read_bytes()  # real rendered text of that
+#   filing's two fund-summary blocks (re-wrapped one line per <p> for size — see the provenance sidecar)
+GS_NAMES = ["Goldman Sachs Core Plus Bond ETF", "Goldman Sachs Income ETF"]  # its two covered fund names
 
 UA = "Prospector-tests/1.0 (lyle.e.dickie@gmail.com)"
 NOW = "2026-07-03T22:30:00Z"
@@ -182,6 +185,18 @@ def _hdr(*series_ids, complete=True):
     body = "<SEC-HEADER>\n<SERIES-AND-CLASSES-CONTRACTS-DATA>\n"
     for sid in series_ids:
         body += f"<SERIES>\n<SERIES-ID>{sid}\n<SERIES-NAME>Fund {sid}\n"
+    body += "</SERIES-AND-CLASSES-CONTRACTS-DATA>\n"
+    if complete:
+        body += "</SEC-HEADER>\n"
+    return body.encode()
+
+
+def _hdr_named(*pairs, complete=True):
+    """A DECLARED-SYNTHETIC SGML header with explicit (series_id, fund_name) pairs — for multi-fund
+    isolation tests where the SERIES-NAME must match a real body's fund-summary heading."""
+    body = "<SEC-HEADER>\n<SERIES-AND-CLASSES-CONTRACTS-DATA>\n"
+    for sid, name in pairs:
+        body += f"<SERIES>\n<SERIES-ID>{sid}\n<SERIES-NAME>{name}\n"
     body += "</SERIES-AND-CLASSES-CONTRACTS-DATA>\n"
     if complete:
         body += "</SEC-HEADER>\n"
@@ -372,14 +387,16 @@ def test_scan_truncated_header_flags_for_review_never_diffs(layout):
     assert not any(e["type"] == "mandate.changed" for e in events)
 
 
-def test_scan_covered_multifund_filing_still_diffs_in_pr1(layout):
-    # A genuinely multi-fund filing that DOES cover our series proceeds to the normal (whole-doc) diff:
-    # coverage alone does not suppress a covered diff. (Isolating the per-fund block is PR2; PR1 only
-    # guards attribution.) Proves the guard is a COVERAGE gate, not a "multi-fund -> refuse" gate.
+def test_scan_multifund_header_without_a_matching_body_block_faults_safely(layout):
+    # The header says the filing covers >1 fund, but the body has no fund-summary block matching our series
+    # (a header/body mismatch, or a fund whose name we can't tie to a block — name drift). Block isolation
+    # FAULTS -> review-advisory, never a wrong diff (§4d). The successful-isolation path is proven on the
+    # REAL Goldman body in test_extract_isolates_* below.
     result, events, _ = _run(layout, {A: BASE, B: SUBSTANTIVE}, current=B, prior=A,
                              active_lead_ids={xcorr_lead_id([XLK, XLU])}, prefreeze=A,
                              headers={B: _hdr(XLK, "S000000099")})
-    assert result["action"] == "mandate_changed"
+    assert result["action"] == "flagged_unreliable"
+    assert not any(e["type"] == "mandate.changed" for e in events)
 
 
 def test_scan_no_series_header_lone_claimant_proceeds(layout):
@@ -508,55 +525,99 @@ def test_the_looser_declaration_bar_does_not_admit_prose_mentioning_a_supplement
     assert extract_mandate(prose, CFG)["reliable"] is True  # still diffed normally
 
 
-# --- an unattributable corroboration is MARKED, never suppressed (B1 / multi-fund, 2026-07-20) -----
+# --- multi-fund block isolation (Shape B) — the target fund's OWN block, not the first (2026-07-21) ---
+# MANDATE-MULTIFUND-SECTION: a combined prospectus carries one strategy section PER FUND; the extractor took
+# the FIRST, so every covered series diffed the first fund's strategy (2026-07-19: two Goldman series emitted
+# BYTE-IDENTICAL mandate.changed). Isolation ties each series to ITS block by the SGML SERIES-NAME, then runs
+# the ordinary strategy finder inside. Proven on the REAL Goldman body (GS_BODY) below.
 
-OTHER = "S000000002"   # a second series holding the SAME filing — the B1 shape
+OTHER = "S000000002"   # a second series holding the SAME filing in the store — the B1 shape
+GS_A, GS_B = "S000106340", "S000106341"                        # the two covered Goldman series
+GS_HDR = _hdr_named((GS_A, GS_NAMES[0]), (GS_B, GS_NAMES[1]))  # a header covering both, with real names
+GS_CP75 = GS_BODY.replace(b"at least 80% of its net assets",   # move Core Plus's threshold ONLY (first hit)
+                          b"at least 75% of its net assets", 1)
 
 
-def test_series_sharing_lists_every_series_holding_an_accession(layout):
-    # The structural tell for "several series point at one filing": the same accession frozen under
-    # more than one series. Read from the BLOB STORE, never the registry field (the §9c invariant).
+def test_series_sharing_still_lists_every_series_holding_an_accession(layout):
+    # series_sharing survives as the no-series-header fallback tripwire in the guard. The structural tell:
+    # the same accession frozen under >1 series. Read from the BLOB STORE, never the registry field (§9c).
     ingest = ProspectusIngest(layout, FakeEdgar({A: BASE}))
     ingest.pull(XLK, CIK, A, "d.htm")
     ingest.pull(OTHER, CIK, A, "d.htm")
     assert ingest.series_sharing(A) == sorted([XLK, OTHER])
-
-
-def test_series_sharing_is_a_single_series_for_a_normal_filing(layout):
-    ingest = ProspectusIngest(layout, FakeEdgar({A: BASE}))
-    ingest.pull(XLK, CIK, A, "d.htm")
-    assert ingest.series_sharing(A) == [XLK]
     assert ingest.series_sharing("0000000000-00-000000") == []   # nothing frozen -> empty, never an error
 
 
-def test_shared_accession_marks_the_change_and_still_emits_it(layout):
-    # MARK, DON'T SUPPRESS. The change is real for SOME fund, so it still fires (recall kept, and it is
-    # a silent corroboration a human adjudicates anyway) — but the payload states plainly that we cannot
-    # attribute it to one fund, so no reader is handed a clean-looking claim we can't stand behind.
-    ProspectusIngest(layout, FakeEdgar({B: SUBSTANTIVE})).pull(OTHER, CIK, B, "d.htm")
-    result, events, _ = _run(layout, {A: BASE, B: SUBSTANTIVE}, current=B, prior=A,
-                             active_lead_ids=set(), prefreeze=A)
+def test_extract_isolates_each_funds_own_block_on_the_real_goldman_body():
+    cp = extract_mandate(GS_BODY, CFG, fund_anchor=GS_NAMES[0], fund_names=GS_NAMES)
+    inc = extract_mandate(GS_BODY, CFG, fund_anchor=GS_NAMES[1], fund_names=GS_NAMES)
+    assert cp["reliable"] and inc["reliable"]
+    assert cp["section"] != inc["section"]                       # each fund gets ITS OWN section...
+    whole = extract_mandate(GS_BODY, CFG)                         # ...where the whole-doc extractor returns
+    assert whole["reliable"] and whole["section"] == cp["section"]  # the FIRST fund (Core Plus) for BOTH
+
+
+def test_extract_single_fund_or_no_anchor_is_whole_doc_unchanged():
+    # Regression gate: a single covered name, or no anchor, is byte-identical to the pre-isolation path.
+    base = extract_mandate(BASE, CFG)
+    assert extract_mandate(BASE, CFG, fund_anchor="Tech Select", fund_names=["Tech Select"]) == base
+    assert extract_mandate(BASE, CFG, fund_anchor=None, fund_names=GS_NAMES) == base
+
+
+def test_extract_faults_when_the_anchor_matches_no_block():
+    r = extract_mandate(GS_BODY, CFG, fund_anchor="Vanguard Nonexistent ETF",
+                        fund_names=GS_NAMES + ["Vanguard Nonexistent ETF"])
+    assert r["reliable"] is False and "not found for anchor" in r["reason"]
+
+
+def test_extract_faults_when_the_anchor_is_a_substring_of_another_covered_name():
+    # A name that is a PREFIX of another covered name — "Goldman Sachs Income ETF" ⊂ "Goldman Sachs Income
+    # ETF Institutional Shares" — is a real substring, so the tie is unresolvable -> fault (the SOI
+    # anti-ambiguity rule), never a guess by document order.
+    names = GS_NAMES + ["Goldman Sachs Income ETF Institutional Shares"]
+    r = extract_mandate(GS_BODY, CFG, fund_anchor="Goldman Sachs Income ETF", fund_names=names)
+    assert r["reliable"] is False and "ambiguous" in r["reason"]
+
+
+def test_diff_isolates_per_side_no_byte_identical_cross_fund_fire():
+    # The 2026-07-19 failure, fixed. GS_CP75 (Core Plus at 75%) vs GS_BODY (Core Plus at 80%): isolated to
+    # Core Plus -> a real change; isolated to Income (identical both sides) -> NO change (no cross-fund bleed).
+    d_cp = diff_mandate(GS_CP75, GS_BODY, CFG, prior_anchor=GS_NAMES[0], prior_names=GS_NAMES,
+                        current_anchor=GS_NAMES[0], current_names=GS_NAMES)
+    d_inc = diff_mandate(GS_CP75, GS_BODY, CFG, prior_anchor=GS_NAMES[1], prior_names=GS_NAMES,
+                         current_anchor=GS_NAMES[1], current_names=GS_NAMES)
+    assert d_cp["reliable"] and d_cp["changed"] is True          # Core Plus moved...
+    assert d_inc["reliable"] and d_inc["changed"] is False       # ...Income did not
+
+
+def _run_gs(layout, series_id, prior_body, current_body):
+    return _run(layout, {A: prior_body, B: current_body}, current=B, prior=A, active_lead_ids=set(),
+                prefreeze=A, headers={A: GS_HDR, B: GS_HDR}, series_id=series_id)
+
+
+def test_scan_multifund_isolates_the_target_block_and_stamps_covered_series(layout):
+    # Scanning Core Plus (GS_A): its OWN section moved (75%->80%) -> mandate.changed, and the payload carries
+    # neutral header-derived covered_series (NOT #122's shared_accession/sharing_series hedge, now removed).
+    result, events, _ = _run_gs(layout, GS_A, prior_body=GS_CP75, current_body=GS_BODY)
+    assert result["action"] == "mandate_changed"
     (ev,) = [e for e in events if e["type"] == "mandate.changed"]
-    assert result["action"] == "mandate_changed"          # NOT suppressed
-    assert ev["payload"]["shared_accession"] is True
-    assert ev["payload"]["sharing_series"] == sorted([XLK, OTHER])
-    assert ev["payload"]["summary"]                       # the diff is still carried
+    assert ev["payload"]["covered_series"] == sorted([GS_A, GS_B])
+    assert "shared_accession" not in ev["payload"] and "sharing_series" not in ev["payload"]
+    assert ev["payload"]["summary"]
 
 
-def test_an_unshared_filing_carries_no_marking_keys(layout):
-    # The normal case stays byte-clean — no marking noise on every event.
+def test_scan_multifund_the_other_fund_is_unchanged_no_cross_fire(layout):
+    # Scanning Income (GS_B) on the SAME pair: Income's section is identical both sides -> unchanged, no
+    # event. Pre-isolation both series diffed Core Plus and fired byte-identical events.
+    result, events, _ = _run_gs(layout, GS_B, prior_body=GS_CP75, current_body=GS_BODY)
+    assert result["action"] == "unchanged"
+    assert not any(e["type"] == "mandate.changed" for e in events)
+
+
+def test_scan_single_fund_filing_carries_no_provenance_marking(layout):
+    # The normal single-fund case stays byte-clean — no covered_series (and never the old shared keys).
     _, events, _ = _run(layout, {A: BASE, B: SUBSTANTIVE}, current=B, prior=A,
                         active_lead_ids=set(), prefreeze=A)
     (ev,) = [e for e in events if e["type"] == "mandate.changed"]
-    assert "shared_accession" not in ev["payload"]
-    assert "sharing_series" not in ev["payload"]
-
-
-def test_marking_does_not_change_fault_behaviour(layout):
-    # The guard adds PROVENANCE only. An unreliable extraction on a SHARED filing still faults and still
-    # emits no mandate.changed — §4d's decision surface is untouched.
-    ProspectusIngest(layout, FakeEdgar({B: UNRELIABLE})).pull(OTHER, CIK, B, "d.htm")
-    result, events, _ = _run(layout, {A: BASE, B: UNRELIABLE}, current=B, prior=A,
-                             active_lead_ids=set(), prefreeze=A)
-    assert result["action"] == "flagged_unreliable"
-    assert not any(e["type"] == "mandate.changed" for e in events)
+    assert "covered_series" not in ev["payload"]
+    assert "shared_accession" not in ev["payload"] and "sharing_series" not in ev["payload"]

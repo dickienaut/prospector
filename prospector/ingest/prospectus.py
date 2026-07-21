@@ -336,33 +336,71 @@ def is_prospectus_supplement(body: bytes) -> bool:
                          max_chars=_DECLARATION_MAX_CHARS) is not None
 
 
+# --- MULTI-FUND BLOCK ISOLATION (which fund's block — mirrors soi._fund_blocks selection) --------
+# A combined prospectus (a trust filing SEVERAL funds in one document) carries one strategy section PER
+# FUND. Scanning for the FIRST strategy section makes every covered series diff the FIRST fund's strategy
+# (bug MANDATE-MULTIFUND-SECTION: on 2026-07-19 two Goldman series emitted byte-identical `mandate.changed`
+# from one 485APOS). When the SGML SERIES/CLASS header (see `series_classes`) says a filing covers >1
+# series, the sensor hands `extract_mandate` the target fund's NAME (`fund_anchor`) + all covered names
+# (`fund_names`); we isolate the target's block by its name — the SAME exact/unique-substring/else-FAULT
+# discipline the SOI reader uses (ingest/soi.py `extract_soi_sectors`) — then run the ordinary strategy
+# finder INSIDE that block. bs4 owns structure, this owns which block, the human owns significance.
+
+def _norm_name(s: str) -> str:
+    """Normalize a fund name for matching (mirrors `soi._norm`): uppercase, `&`→`AND`, every run of
+    non-alphanumerics collapsed to one space. So the header's SERIES-NAME matches the body's summary
+    heading across the em-dash/affix punctuation — "Goldman Sachs Income ETF" ⊂ the heading
+    "Goldman Sachs Income ETF—Summary" once both normalize."""
+    return re.sub(r"[^A-Z0-9]+", " ", s.upper().replace("&", " AND ")).strip()
+
+
+_FUND_SUMMARY_TOKEN = "SUMMARY"  # a fund's summary block opens with a "{Name} … Summary"/"Fund Summary" heading
+
+
+def _fund_summary_blocks(lines: list[str], fund_names: list[str]) -> list[tuple[list[str], int]]:
+    """Every candidate fund-SUMMARY block-start, as `(matched_norm_names, line_index)`. A candidate is a
+    heading-shaped line (short enough to be a heading, not prose) whose normalized text carries a SUMMARY
+    token AND contains at least one covered fund name (normalized substring). The fund NAME is the block
+    delimiter — the strategy heading is NOT (it recurs 2-3× per fund: summary, statutory, SAI, which is
+    exactly the "take the first" bug). Table-of-contents and cover-page copies of a name are candidates
+    too (they also read "{Name} … Summary"); they are filtered downstream by "does this block bound a real
+    strategy section?" (a TOC entry's region is just a page number)."""
+    norm_names = [_norm_name(n) for n in fund_names if n]
+    out: list[tuple[list[str], int]] = []
+    for i, line in enumerate(lines):
+        if len(line) > _DECLARATION_MAX_CHARS:      # a heading is short; longer is prose (as _is_heading)
+            continue
+        nl = _norm_name(line)
+        if _FUND_SUMMARY_TOKEN not in nl:
+            continue
+        hits = [nn for nn in norm_names if nn and nn in nl]
+        if hits:
+            out.append((hits, i))
+    return out
+
+
 # --- MEANING (which section — never significance) -----------------------------------------------
 
-def extract_mandate(body: bytes, cfg: dict) -> dict:
-    """Locate and return the principal-investment-strategy / investment-objective section text.
-    Returns `{section, reliable, heading, reason}`. `reliable` is False (and `section` None) when the
-    strategy heading isn't found, the section is trivially short, or no stop-heading boundary is hit
-    before a hard cap (a runaway to EOF) — the caller flags an unreliable extraction rather than
-    diffing it. Decides ONLY which text is the section; never whether a change to it is meaningful."""
-    lines = html_to_text(body).split("\n")
+def _scan_strategy(lines: list[str], cfg: dict) -> dict:
+    """Scan `lines` for the principal-investment-strategy / investment-objective section, returning
+    `{section, reliable, heading, reason}` (the shared core of `extract_mandate`, run over the whole
+    document or over a single isolated fund block).
+
+    `strategy_headings` is a PRIORITY list: prefer the detailed "Principal Investment Strategies" section,
+    fall back to "Investment Objective" only when the richer one is absent. First pattern that yields a
+    section wins.
+
+    CONTINUE-SCAN PAST A NON-SECTION MATCH. Taking the FIRST heading-shaped line and failing on it let a
+    **table of contents** shadow the real section: a TOC lists "PRINCIPAL INVESTMENT STRATEGY" (a perfectly
+    heading-shaped line), then the page number, then the next TOC entry — which is a stop heading. So the
+    "section" was the string "2" and the filing was reported unreliable while its real strategy section sat
+    140 lines below. A candidate is the heading only if it yields a section-shaped extraction; otherwise
+    keep scanning. STRUCTURE, not meaning — it asks "did this heading bound a section?", never "is this the
+    important one." (This TOC-skip is also what filters a name-block's own table-of-contents copy during
+    multi-fund isolation.) The unreliable REASON reported is the FIRST candidate's."""
     stops = [h.lower() for h in cfg["stop_headings"]]
     min_chars = int(cfg.get("min_section_chars", 80))
     max_lines = int(cfg.get("max_section_lines", 400))
-
-    # `strategy_headings` is a PRIORITY list: prefer the detailed "Principal Investment Strategies"
-    # section, fall back to "Investment Objective" only when the richer one is absent (some filings
-    # carry only the objective). First pattern that yields a section wins.
-    #
-    # CONTINUE-SCAN PAST A NON-SECTION MATCH. Taking the FIRST heading-shaped line and failing on it
-    # let a **table of contents** shadow the real section: a TOC lists "PRINCIPAL INVESTMENT STRATEGY"
-    # (a perfectly heading-shaped line), then the page number, then the next TOC entry — which is a
-    # stop heading. So the "section" was the string "2" and the filing was reported unreliable while
-    # its real strategy section sat 140 lines below. A candidate is the heading only if it yields a
-    # section-shaped extraction; otherwise keep scanning. This is STRUCTURE, not meaning — it asks
-    # "did this heading bound a section?", never "is this the important one."
-    #
-    # The unreliable REASON reported is the FIRST candidate's, not the last: it names the thing a human
-    # opening the filing sees first, and a doc with no candidate at all still reports "heading not found".
     first_reason, first_heading = None, None
     for pattern in [h.lower() for h in cfg["strategy_headings"]]:
         at = 0
@@ -392,6 +430,59 @@ def extract_mandate(body: bytes, cfg: dict) -> dict:
     return {"section": None, "reliable": False, "heading": first_heading, "reason": first_reason}
 
 
+def _extract_isolated(lines: list[str], fund_anchor: str, fund_names: list[str], cfg: dict) -> dict:
+    """Isolate the target fund's block in a multi-fund filing, then scan only that block. Mirrors
+    `soi.extract_soi_sectors`'s selection: the anchor picks its block-start(s) by unique substring, and
+    ANY unresolvable case FAULTS (`reliable: False`) rather than guessing which fund owns the section —
+    §4d: a false `mandate.changed` is worse than a missed one."""
+    def fault(reason: str) -> dict:
+        return {"section": None, "reliable": False, "heading": None, "reason": reason}
+
+    anchor = _norm_name(fund_anchor)
+    if not anchor:
+        return fault("no fund anchor given")
+    # The anchor must not be a substring of ANOTHER covered fund's name — the tie would be unresolvable
+    # (the SOI anti-ambiguity rule, applied to the name set rather than the block titles).
+    others = [n for n in (_norm_name(x) for x in fund_names) if n and n != anchor]
+    if any(anchor in o for o in others):
+        return fault(f"fund anchor {fund_anchor!r} is ambiguous — a substring of another covered fund name")
+
+    blocks = _fund_summary_blocks(lines, fund_names)
+    starts = sorted(i for _, i in blocks)
+    anchor_starts = [i for hits, i in blocks if anchor in hits]
+    if not anchor_starts:
+        return fault(f"target fund block not found for anchor {fund_anchor!r}")
+    # For each anchor block-start (document order), bound it by the NEXT block-start of ANY fund and try to
+    # scan a strategy section inside. The FIRST that yields a reliable section wins; a TOC/cover copy of the
+    # name yields none (its region is a page number) and is skipped to the real block.
+    for s in anchor_starts:
+        after = [i for i in starts if i > s]
+        window = lines[s:(after[0] if after else len(lines))]
+        result = _scan_strategy(window, cfg)
+        if result["reliable"]:
+            return result
+    return fault(f"no bounded strategy section in the {fund_anchor!r} block")
+
+
+def extract_mandate(body: bytes, cfg: dict, *,
+                    fund_anchor: str | None = None, fund_names: list[str] | None = None) -> dict:
+    """Locate and return the principal-investment-strategy / investment-objective section text.
+    Returns `{section, reliable, heading, reason}`. `reliable` is False (and `section` None) when the
+    strategy heading isn't found, the section is trivially short, or no stop-heading boundary is hit
+    before a hard cap (a runaway to EOF) — the caller flags an unreliable extraction rather than
+    diffing it. Decides ONLY which text is the section; never whether a change to it is meaningful.
+
+    MULTI-FUND ISOLATION (MANDATE-MULTIFUND-SECTION). When the filing covers MORE THAN ONE fund and the
+    caller supplies the target fund's `fund_anchor` (its SGML SERIES-NAME) + all covered `fund_names`, the
+    target's block is isolated FIRST (else the first fund's strategy is returned for every covered series).
+    A single-fund filing (`fund_names` ≤ 1) or no anchor → the whole document, byte-identical to before —
+    so the single-fund majority path is unchanged."""
+    lines = html_to_text(body).split("\n")
+    if fund_anchor and fund_names and len(fund_names) > 1:
+        return _extract_isolated(lines, fund_anchor, fund_names, cfg)
+    return _scan_strategy(lines, cfg)
+
+
 def _normalize(section: str) -> str:
     """Collapse ALL whitespace to single spaces for the change decision, so a pure formatting/date
     re-flow does not read as a change. Case is preserved (a real wording edit shows; the human, not
@@ -419,16 +510,22 @@ def _summarize(prior_section: str, current_section: str, max_chars: int = 800) -
     return diff[:max_chars] + ("…" if len(diff) > max_chars else "")
 
 
-def diff_mandate(prior_body: bytes, current_body: bytes, cfg: dict) -> dict:
+def diff_mandate(prior_body: bytes, current_body: bytes, cfg: dict, *,
+                 prior_anchor: str | None = None, prior_names: list[str] | None = None,
+                 current_anchor: str | None = None, current_names: list[str] | None = None) -> dict:
     """Diff the strategy section across two prospectus filings. PURE, and deliberately narrow:
     returns `{changed, reliable, summary, reason}` — whether the section TEXT differs, never whether
     the difference is meaningful. If either extraction is unreliable, the whole diff is
     `reliable: False` (the caller flags it, emits no change). Otherwise the whitespace-normalized
     sections are compared: a formatting/date/fee re-file normalizes identical -> `changed: False`; a
     wording change -> `changed: True` with a bounded unified-diff `summary`. Cosmetic-vs-substantive
-    is NOT decided here — that is the human's verdict (mandate.changed is a silent corroboration)."""
-    prior = extract_mandate(prior_body, cfg)
-    current = extract_mandate(current_body, cfg)
+    is NOT decided here — that is the human's verdict (mandate.changed is a silent corroboration).
+
+    MULTI-FUND: each side is isolated with ITS OWN filing's anchor + covered names (keyed on the stable
+    series_id, so a fund NAME never crosses from one filing into the other — name drift is un-weaponizable).
+    All-None → whole-document extraction, unchanged (single-fund path)."""
+    prior = extract_mandate(prior_body, cfg, fund_anchor=prior_anchor, fund_names=prior_names)
+    current = extract_mandate(current_body, cfg, fund_anchor=current_anchor, fund_names=current_names)
     if not (prior["reliable"] and current["reliable"]):
         reason = prior["reason"] if not prior["reliable"] else current["reason"]
         return {"changed": False, "reliable": False, "summary": None, "reason": reason}

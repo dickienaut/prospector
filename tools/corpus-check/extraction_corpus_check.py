@@ -53,7 +53,9 @@ WHAT IT REPORTS — and why each column earned its place
      `mandate.changed` events**, because the two accessions being compared were the prospectuses of
      two DIFFERENT FUNDS (bug B1 — the prospectus resolves at trust level, so several series point
      at one filing). Per-document metrics are blind to that by construction. This section closes it,
-     and flags the B1 smell directly: an accession frozen under more than one series.
+     and flags the B1 smell directly: an accession frozen under more than one series. It now also
+     models the B1 over-attribution GUARD and per-fund block ISOLATION from the frozen SGML headers
+     (backfill them first — see below), so `head` reflects the sensor's real behaviour, not whole-doc.
 
 USAGE
 -----
@@ -246,6 +248,19 @@ def main() -> int:
             return "covered" if series in cov["series"] else "not_covered"
         return "no-series-block"
 
+    def _isolation(series: str, accession: str):
+        """HEAD's block-isolation args `(fund_anchor, fund_names)` for (series, accession) from its frozen
+        header — only when the filing covers >1 fund AND lists this series (else `(None, None)` = whole-doc,
+        matching the sensor). Modeled from frozen headers only; a header-less accession → whole-doc."""
+        hp = root / "ingest" / "prospectus_headers" / accession / "header.txt"
+        if not hp.exists():
+            return None, None
+        cov = parse_series_classes(hp.read_bytes())
+        sc = cov["series"]
+        if not cov["complete"] or len(sc) <= 1 or series not in sc:
+            return None, None
+        return sc[series]["name"], [v["name"] for v in sc.values()]
+
     print("\n6. PAIRS — WHAT THE SENSOR WOULD ACTUALLY DO   (accession ordering approximated by"
           " freeze time;\n   the runner walks EDGAR submission order, which is unavailable offline)")
 
@@ -267,7 +282,11 @@ def main() -> int:
             continue
         cur_p, prior_p = full[0], full[1]
         cur_b, prior_b = cur_p.read_bytes(), prior_p.read_bytes()
-        h = diff_head(prior_b, cur_b, cfg)
+        # HEAD isolates each side's per-fund block (PR2) when the filing is multi-fund; baseline is whole-doc.
+        ca, cn = _isolation(series, cur_p.parts[-2])
+        pa, pn = _isolation(series, prior_p.parts[-2])
+        h = diff_head(prior_b, cur_b, cfg, prior_anchor=pa, prior_names=pn,
+                      current_anchor=ca, current_names=cn)
         b = diff_base(prior_b, cur_b, cfg) if diff_base else None
 
         def verdict(d):
