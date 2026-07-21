@@ -205,6 +205,12 @@ the ideal gate outcome.*
 
 ---
 
+## Dashboard heartbeat test — a calendar time-bomb — 2026-07-21 (state-of-health sweep follow-up)
+
+| ID | Symptom (one line) | Subsystem | Shape | Status | Class | Guarding test / fix site |
+|----|--------------------|-----------|-------|--------|-------|--------------------------|
+| **DASH-HB-CLOCKDRIFT** | `test_dashboard_app_heartbeat_honors_configured_cadence` seeds a **FIXED** `heartbeat.sent` at `2026-07-06` ("8 days before" a fixed `NOW=2026-07-14`), but the test drives the REAL `app.py`, which reads the **live wall clock** (`_now()`, `app.py:40`) — so the seeded silence GROWS with the calendar. Authored 2026-07-14 (8d < 14d cadence → OK); once real-now passed 2026-07-20 the same seed read **15d > 14d → false BROKEN** → **CI red by calendar**, on a green codebase. **Invisible to the local sweep** because streamlit isn't installed in the dev venv, so `importorskip` SKIPS the app test locally — it runs only in CI (a dev/CI parity blind spot). The sibling export test is immune: it passes `NOW` explicitly into the render. | dashboard·heartbeat·tests | test-passes-wrong-reason · green-on-synthetic | ✅ | 4 | seed the APP test **relative to real now** (`last_sent = now − 8d`, `run_ts = now`) so the silence is a constant 8d regardless of the date; the export test keeps the fixed `NOW` (deterministic — it injects the clock). Cadence still genuinely honored (verified: 8d/7d → BROKEN, 8d/14d → OK). `tests/test_dashboard_heartbeat_cadence.py`. **Lesson: a test that drives a real-wall-clock consumer must seed relative to now, never a literal date — and streamlit-gated tests need a QA/CI eye the local suite can't give.** |
+
 ## §3 · Open / deferred — the live tail (refer-back while fixing)
 
 - 💤 **N9** (SOI cadence gate → M7) and **E2** (flapping-fault window) — both pinned by `xfail(strict=True)`
