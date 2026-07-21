@@ -62,6 +62,17 @@ def _coverage_verdict(coverage: dict, series_id: str, prospectus: ProspectusInge
     return "proceed", ""
 
 
+def _isolation_args(coverage: dict | None, series_id: str) -> tuple[str | None, list[str] | None]:
+    """From a filing's SERIES/CLASS `coverage`, the `(fund_anchor, fund_names)` for block isolation — but
+    ONLY when the filing covers MORE THAN ONE fund (a single-fund filing needs no isolation; the extractor
+    reads the whole document, unchanged). Returns `(None, None)` when isolation does not apply: ≤1 covered
+    series, the series is absent from the coverage, or the header was not authoritative."""
+    series = (coverage or {}).get("series") or {}
+    if len(series) <= 1 or series_id not in series:
+        return None, None
+    return series[series_id]["name"], [v["name"] for v in series.values()]
+
+
 def scan(series_id: str, ticker: str, cik: int,
          current_accession: str | None, current_doc: str | None, prior_accession: str | None,
          universe_series_ids: Iterable[str], active_lead_ids: Iterable[str],
@@ -85,9 +96,10 @@ def scan(series_id: str, ticker: str, cik: int,
     # our UNCHANGED baseline was vetted when first seen, and re-vetting a stable no-series-header baseline
     # would cry-wolf a review advisory every tick.
     have_current = prospectus.has_frozen(series_id, current_accession)
+    current_coverage = None
     if not have_current or current_accession != prior_accession:
-        verdict, reason = _coverage_verdict(
-            prospectus.series_classes(cik, current_accession), series_id, prospectus, current_accession)
+        current_coverage = prospectus.series_classes(cik, current_accession)
+        verdict, reason = _coverage_verdict(current_coverage, series_id, prospectus, current_accession)
         if verdict == "not_covered":
             # Not this fund's filing — nothing to freeze, nothing to diff, no fault (the expected B1 state).
             return {"action": "not_covered", "accession": current_accession, "reason": reason}
@@ -126,7 +138,15 @@ def scan(series_id: str, ticker: str, cik: int,
         return {"action": "baseline", "accession": current_accession,
                 "reason": "prior on file is a supplement, not a full prospectus"}
 
-    d = diff_mandate(prior_body, current_body, cfg)
+    # Multi-fund block isolation (MANDATE-MULTIFUND-SECTION): when a filing covers >1 fund, isolate each
+    # side's block by the target fund's SGML SERIES-NAME so the diff is THIS fund's strategy, not the first
+    # fund's. Each side uses ITS OWN filing's names (keyed on the stable series_id — name drift can't cross
+    # filings). A single-fund filing passes (None, None) → whole-doc extraction, unchanged.
+    cur_anchor, cur_names = _isolation_args(current_coverage, series_id)
+    pri_anchor, pri_names = _isolation_args(prospectus.series_classes(cik, prior_accession), series_id)
+    d = diff_mandate(prior_body, current_body, cfg,
+                     prior_anchor=pri_anchor, prior_names=pri_names,
+                     current_anchor=cur_anchor, current_names=cur_names)
 
     if not d["reliable"]:
         # Flag, don't diff: a false mandate.changed is worse than a missed one (§4d extraction-unreliable).
@@ -148,22 +168,16 @@ def scan(series_id: str, ticker: str, cik: int,
                "prior_accession": prior_accession, "current_accession": current_accession,
                "summary": d["summary"]}
 
-    # MARK A CORROBORATION WE CANNOT ATTRIBUTE TO ONE FUND — do not suppress it (§4d, 2026-07-20).
-    # A prospectus resolves at REGISTRANT level (bug B1), so a trust's combined filing is frozen under
-    # each of its series and every one of them diffs the SAME (first) strategy section this extractor
-    # can bound. Where the filing really carries one section per fund, at most one of those series is
-    # right: on 2026-07-19 two series sharing a Goldman Sachs 485APOS emitted BYTE-IDENTICAL
-    # `mandate.changed` events. Marking keeps the recall (the change is real for SOME fund, and this is
-    # a silent corroboration a human adjudicates anyway) while refusing to state it as clean — the
-    # honest middle between suppressing (which would re-inflate the advisory noise the supplement cut
-    # removed) and the real fix, per-fund block isolation, which needs B1's series->block tie.
-    # Fault behaviour is deliberately UNCHANGED: this adds provenance to the payload, nothing decides
-    # differently. See docs/notes/2026-07-19-mandate-pair-blindness-and-multifund-sections.md.
-    sharing = sorted({s for acc in (current_accession, prior_accession)
-                      for s in prospectus.series_sharing(acc)})
-    if len(sharing) > 1:
-        payload["shared_accession"] = True
-        payload["sharing_series"] = sharing
+    # HEADER-DERIVED PROVENANCE for a multi-fund filing (§4d, block-isolation era — supersedes #122's
+    # `shared_accession` marking). #122 stamped a "we cannot attribute this to one fund" hedge because the
+    # extractor returned the SAME (first) fund's section for every covered series. That premise is now false:
+    # PR1's guard dropped the wrong-fund filings (B1 over-attribution) and PR2 isolates each fund's block by
+    # its SGML SERIES-NAME, so this diff IS the target fund's own section. So we drop the hedge and keep only
+    # NEUTRAL provenance — which series the filing covers, straight from the header (strictly more accurate
+    # than the store-side `series_sharing`, which only says which series we happened to freeze it under).
+    covered = sorted((current_coverage or {}).get("series") or {})
+    if len(covered) > 1:
+        payload["covered_series"] = covered
     for lead in leads:
         emit({"ts": now, "lead": lead, "type": "mandate.changed", "payload": payload, "schema": 1})
 
