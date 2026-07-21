@@ -6,6 +6,7 @@
     ingest/prices/{source}/{date}/...          frozen substrate
     ingest/holdings/{series_id}/{date}/...
     ingest/prospectus/{series_id}/{accession}/...   frozen mandate text per filing (milestone 4)
+    ingest/prospectus_headers/{accession}/...        frozen SGML submission header (series/class coverage, B1)
     ingest/soi/{series_id}/{accession}/...          frozen industry-grouped Schedule of Investments (§4c resolver)
     ingest/edgar/{date}/...
     ingest/etfdb/{date}/...                    (milestone 4)
@@ -100,6 +101,13 @@ class StoreLayout:
         # version kept immutably so it can diff the stated strategy across accessions — a blob per
         # accession is append-only by construction, never a mutable FundEntry field.
         return self.root / "ingest" / "prospectus" / series_id / accession / name
+
+    def prospectus_header_path(self, accession: str, name: str) -> Path:
+        # Keyed on the ACCESSION alone (NOT series_id, unlike prospectus_path): the SGML submission header
+        # is series-independent — the same bytes declare the coverage for every series the filing lists —
+        # so it is frozen ONCE per accession, and the coverage-aware mandate prior walk reuses that one copy
+        # across a trust's series. Frozen so `series_classes` re-reads it (freeze-once) instead of re-fetching.
+        return self.root / "ingest" / "prospectus_headers" / accession / name
 
     def soi_path(self, series_id: str, accession: str, name: str) -> Path:
         # Keyed on the filing ACCESSION, like prospectus_path (§7): the industry-grouped Schedule of

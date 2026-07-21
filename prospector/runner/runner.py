@@ -881,7 +881,7 @@ def _active_lead_sectors(deps: RunnerDeps, fund_registry: FundRegistry) -> dict:
     return lead_sectors(list(ticker_to_series_id.values()), s2sec, active_ids)
 
 
-def _last_frozen_prospectus(prospectus: ProspectusIngest, series_id: str, subs: dict,
+def _last_frozen_prospectus(prospectus: ProspectusIngest, series_id: str, cik: int, subs: dict,
                             current_accession: str) -> str | None:
     """The §9c mandate prior: the most-recent FULL prospectus filing we hold FROZEN that isn't the current
     one — sourced from the blob store (`has_frozen`), NEVER the registry `prospectus_accession` field
@@ -897,6 +897,13 @@ def _last_frozen_prospectus(prospectus: ProspectusIngest, series_id: str, subs: 
     "diff annuals across intervening supplements" follow-up). The §9c invariant is unchanged — the prior is
     still the frozen blob, never the registry field; this only refines WHICH frozen blob.
 
+    COVERAGE-AWARE (B1): a frozen full prospectus whose SGML SERIES/CLASS header does not cover THIS series
+    is ALSO skipped — under registrant-level over-attribution it was frozen here for a DIFFERENT fund, and
+    diffing our current against it would compare two unrelated funds' strategies. The walk reaches back to
+    the true prior FOR THIS FUND. (A header we cannot verify — truncated / unfetchable — is not treated as
+    non-covering: coverage stays UNKNOWN, so we don't skip a possibly-valid prior on a header hiccup; the
+    leaf guard in mandate.scan handles the current-side unknown.)
+
     None if we hold no prior FULL prospectus frozen (mandate.scan then baselines the current)."""
     for f in prospectus_history(subs):  # newest-first
         acc = f["accession"]
@@ -904,6 +911,9 @@ def _last_frozen_prospectus(prospectus: ProspectusIngest, series_id: str, subs: 
             continue
         if is_prospectus_supplement(prospectus.load_frozen(series_id, acc)):
             continue  # a sticker / SAI is not a full prospectus — keep reaching back to the prior annual
+        cov = prospectus.series_classes(cik, acc)
+        if cov["complete"] and cov["has_series_block"] and series_id not in cov["series"]:
+            continue  # B1: this frozen filing covers a DIFFERENT fund — reach back to our true prior
         return acc
     return None
 
@@ -934,7 +944,8 @@ def _run_mandate(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog
             cur = latest_prospectus(subs)
             if cur is None:
                 continue  # no prospectus-family filing on record for this fund
-            prior = _last_frozen_prospectus(prospectus, entry.series_id, subs, cur["accession"])
+            prior = _last_frozen_prospectus(prospectus, entry.series_id, int(entry.cik), subs,
+                                            cur["accession"])
             mandate_sensor.scan(entry.series_id, entry.ticker_current, int(entry.cik),
                                 cur["accession"], cur["primary_doc"], prior,
                                 universe_ids, active_ids, prospectus, mandate_cfg, now, store.append,

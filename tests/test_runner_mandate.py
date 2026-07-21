@@ -45,8 +45,49 @@ A = "0001193125-25-280452"   # the PRIOR annual prospectus (held frozen)
 S = "0001193125-26-285000"   # an intervening 497 SUPPLEMENT (sticker), newer than A, older than B
 B = "0001193125-26-291833"   # the NEW annual prospectus
 DOCB = "docB.htm"
+W = "0001193125-26-290000"   # a WRONG-FUND filing frozen under this series by B1 over-attribution
 SUBS_URL = f"https://data.sec.gov/submissions/CIK{CIK:010d}.json"
 DOCB_URL = f"https://www.sec.gov/Archives/edgar/data/{CIK}/{B.replace('-', '')}/{DOCB}"
+
+
+def _hdr_url(acc):
+    return f"https://www.sec.gov/Archives/edgar/data/{CIK}/{acc.replace('-', '')}/{acc}.txt"
+
+
+def _hdr_bytes(*series_ids):
+    """A synthetic SGML submission header covering the given series (declared-synthetic; the real header
+    shapes are exercised in test_mandate_sensor with recorded fixtures)."""
+    b = b"<SEC-HEADER>\n<SERIES-AND-CLASSES-CONTRACTS-DATA>\n"
+    for sid in series_ids:
+        b += b"<SERIES>\n<SERIES-ID>" + sid.encode() + b"\n"
+    return b + b"</SERIES-AND-CLASSES-CONTRACTS-DATA>\n</SEC-HEADER>\n"
+
+
+COVER = _hdr_bytes(XLK_SID)          # a header that COVERS the fund under test -> the B1 guard proceeds
+OTHER = _hdr_bytes("S000099999")     # a header for a DIFFERENT fund -> not_covered / prior-walk skip
+
+
+def _cover_headers(url):
+    """Answer a filing_header .txt Range GET for A/S/B with a COVERING header (the B1 guard proceeds), or
+    None if `url` is not a header URL. Lets the existing mandate tests keep their bespoke body fetches."""
+    if url in (_hdr_url(A), _hdr_url(S), _hdr_url(B)):
+        return COVER
+    return None
+
+
+def _with_cover_headers(fetch):
+    """Wrap a test's body fetch so a filing_header .txt URL it doesn't handle defaults to a COVERING header
+    (the common case — the B1 guard proceeds, and the existing mandate tests need no change). A test that
+    needs a non-covering / wrong-fund header answers that URL in its own fetch, which wins (no fallback)."""
+    def wrapped(url, headers):
+        try:
+            return fetch(url, headers)
+        except EdgarError:
+            h = _cover_headers(url)
+            if h is not None:
+                return h
+            raise
+    return wrapped
 
 
 def _entry(prospectus_accession):
@@ -72,6 +113,15 @@ def _subs_ASB():
         "filingDate": ["2026-05-01", "2026-03-01", "2025-05-01"]}}}
 
 
+def _subs_BWA():
+    # newest-first: B (new annual), W (a WRONG-FUND filing over-attributed here by B1), A (the true prior
+    # annual). latest_prospectus -> B; history -> [B, W, A]. W sits between the two annuals.
+    return {"name": "Select Sector SPDR Trust", "filings": {"recent": {
+        "form": ["485BPOS", "485BPOS", "485BPOS"], "accessionNumber": [B, W, A],
+        "primaryDocument": [DOCB, "docW.htm", "docA.htm"],
+        "filingDate": ["2026-05-01", "2026-04-01", "2025-05-01"]}}}
+
+
 def _prefreeze(layout, accession, body):
     """Freeze a prospectus blob as a prior run's baseline would have (the §9c prior lives here)."""
     write_atomic(layout.prospectus_path(XLK_SID, accession, "index.html"), body)
@@ -80,7 +130,8 @@ def _prefreeze(layout, accession, body):
 def _deps(layout, registry, event_store, fetch):
     cfg, cfg_hash = load_config(CONFIG)
     clock = {"t": 0.0}
-    edgar = EdgarClient("Test/1.0 (test@example.com)", fetch=fetch, clock=lambda: clock["t"],
+    edgar = EdgarClient("Test/1.0 (test@example.com)", fetch=_with_cover_headers(fetch),
+                        clock=lambda: clock["t"],
                         sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
                         persist=lambda name, body: write_atomic(layout.edgar_path(NOW[:10], name), body))
     return RunnerDeps(layout=layout, registry=registry, event_store=event_store, edgar_client=edgar,
@@ -223,3 +274,62 @@ def test_mandate_per_fund_failure_is_a_soft_fault(layout, registry):
 
     assert any(f["subsystem"] == "mandate" for f in faults)
     assert event_store.read_system("mandate.changed") == []
+
+
+# === B1 over-attribution: the runner does not diff a filing that does not cover the series ===========
+
+def test_mandate_over_attribution_current_filing_not_covering_the_series_emits_nothing(layout, registry):
+    # latest_prospectus returns the trust's newest filing (B) for this series (B1 — the submissions doc has
+    # no series dimension), but B's SGML header covers a DIFFERENT series. The runner must NOT freeze B under
+    # XLK_SID and must NOT diff it -> nothing emitted, no fault (the expected B1 state, not an error).
+    event_store = EventStore(layout, registry)
+    funds = FundRegistry(layout, registry, event_store)
+    funds.upsert(_entry(prospectus_accession=B))
+    _prefreeze(layout, A, BASE)   # a covered prior exists; the CURRENT (B) simply isn't ours
+
+    def fetch(url, headers):
+        if url == SUBS_URL:
+            return json.dumps(_subs_AB()).encode()
+        if url == _hdr_url(B):
+            return OTHER          # B covers a DIFFERENT series -> not_covered (do not fetch/freeze DOCB)
+        raise EdgarError(f"no fixture for {url}", status=404)   # DOCB_URL absent: any body fetch -> a fault
+
+    deps = _deps(layout, registry, event_store, fetch)
+    faults, runlog = [], RunLog(run_id="r", ts=NOW, date=NOW[:10])
+
+    _run_mandate(deps, event_store, NOW, faults, runlog, funds)
+
+    assert event_store.read_system("mandate.changed") == []
+    assert not ProspectusIngest(layout, deps.edgar_client).has_frozen(XLK_SID, B)  # never frozen under us
+    assert faults == [] and runlog.sensors["mandate"] == "ran"  # not_covered is silent, and DOCB never fetched
+
+
+def test_mandate_coverage_aware_prior_reaches_back_across_a_wrong_fund_frozen_filing(layout, registry):
+    # The most-recent frozen prior (W) is a WRONG-FUND filing over-attributed here by B1; its SGML header
+    # does not cover XLK_SID. The §9c prior walk must SKIP it (as it skips a supplement) and reach back to
+    # the true covered prior annual (A), so the strategy change diffs A -> B, not against an unrelated fund.
+    event_store = EventStore(layout, registry)
+    funds = FundRegistry(layout, registry, event_store)
+    funds.upsert(_entry(prospectus_accession=B))
+    _prefreeze(layout, A, BASE)      # the true prior annual (covered)
+    _prefreeze(layout, W, BASE)      # a wrong-fund filing frozen under this series (B1 pollution), newer than A
+
+    def fetch(url, headers):
+        if url == SUBS_URL:
+            return json.dumps(_subs_BWA()).encode()
+        if url == DOCB_URL:
+            return SUBSTANTIVE
+        if url == _hdr_url(W):
+            return OTHER             # W covers a DIFFERENT fund -> skipped by the coverage-aware prior walk
+        raise EdgarError(f"no fixture for {url}", status=404)   # A/B headers default to COVER (the wrapper)
+
+    deps = _deps(layout, registry, event_store, fetch)
+    faults, runlog = [], RunLog(run_id="r", ts=NOW, date=NOW[:10])
+
+    _run_mandate(deps, event_store, NOW, faults, runlog, funds)
+
+    changed = event_store.read_system("mandate.changed")
+    assert len(changed) == 1
+    assert changed[0].payload["prior_accession"] == A       # reached ACROSS the wrong-fund W to the true prior
+    assert changed[0].payload["current_accession"] == B
+    assert faults == [] and runlog.sensors["mandate"] == "ran"

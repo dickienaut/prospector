@@ -34,9 +34,11 @@ import re
 
 from bs4 import BeautifulSoup
 
+from prospector.ingest.edgar import EdgarError
 from prospector.primitives.atomic import write_atomic
 
 _FROZEN_NAME = "index.html"  # the raw prospectus HTML, frozen per accession (blob-per-accession, §7)
+_FROZEN_HEADER_NAME = "header.txt"  # the raw SGML submission header, frozen per accession (series-coverage)
 
 
 class ProspectusIngest:
@@ -82,6 +84,98 @@ class ProspectusIngest:
         # Derived from the layout rather than rebuilt by hand, so a path change can't silently orphan this.
         base = self._layout.prospectus_path("_", accession, _FROZEN_NAME).parents[2]
         return sorted(p.parent.parent.name for p in base.glob(f"*/{accession}/{_FROZEN_NAME}"))
+
+    # --- SGML SERIES/CLASS header: which series a filing ACTUALLY covers (B1 series-scoped confirmation) ---
+    # Frozen ACCESSION-keyed (series-independent bytes: the same header covers every series of the filing),
+    # not per-series like the body — so a filing over-attributed to a wrong series doesn't get a wrong-fund
+    # header copied under it, and the coverage-aware prior walk reuses one frozen copy across the trust.
+
+    def has_frozen_header(self, accession: str) -> bool:
+        return self._layout.prospectus_header_path(accession, _FROZEN_HEADER_NAME).exists()
+
+    def pull_header(self, cik: int, accession: str) -> bytes:
+        """Fetch the filing's SGML submission header and freeze it (accession-keyed) before returning."""
+        body = self._edgar.filing_header(cik, accession)
+        write_atomic(self._layout.prospectus_header_path(accession, _FROZEN_HEADER_NAME), body)
+        return body
+
+    def load_frozen_header(self, accession: str) -> bytes:
+        return self._layout.prospectus_header_path(accession, _FROZEN_HEADER_NAME).read_bytes()
+
+    def series_classes(self, cik: int, accession: str) -> dict:
+        """The filing's SERIES/CLASS coverage (freeze-once, then re-read): the parsed
+        `<SERIES-AND-CLASSES-CONTRACTS-DATA>` header. Returns `parse_series_classes`'s three-signal dict.
+        A header we cannot FETCH (EDGAR error) degrades to `complete: False` — "coverage unknown" — so the
+        caller FAULTS (flag, don't guess) exactly as it does for a truncated header; it never silently
+        reads "not covered" from a fetch that failed. Other errors propagate (a real bug, not a not-yet)."""
+        try:
+            if not self.has_frozen_header(accession):
+                self.pull_header(cik, accession)
+            body = self.load_frozen_header(accession)
+        except EdgarError as e:
+            return {"series": {}, "complete": False, "has_series_block": False,
+                    "reason": f"series/class header fetch failed: {e}"}
+        return parse_series_classes(body)
+
+
+# --- STRUCTURE: SGML SERIES/CLASS header (which series the filing declares — never significance) ---
+
+# The SEC full-submission SGML header is line-oriented tag/value (`<TAG>value`, no closing tag on leaf
+# lines), so it is parsed by walking lines, not with bs4 (that owns the HTML BODY). The block we want:
+#   <SERIES-AND-CLASSES-CONTRACTS-DATA> … <SERIES> <SERIES-ID>S00…</> <SERIES-NAME>…</>
+#     <CLASS-CONTRACT-ID>C00…</> <CLASS-CONTRACT-TICKER-SYMBOL>GCPB</> … </SERIES-AND-CLASSES-CONTRACTS-DATA>
+_SGML_TAG = re.compile(r"^<([A-Za-z0-9-]+)>(.*)$")
+
+
+def parse_series_classes(header_bytes: bytes) -> dict:
+    """Parse a filing's SGML submission header into its SERIES/CLASS coverage. Returns
+    `{"series": {series_id: {"name": str, "tickers": [str]}}, "complete": bool, "has_series_block": bool}`.
+
+    This is B1's deferred series-scoped confirmation source (`edgar.py` `confirm_prospectus` docstring;
+    decision `2026-07-06-identity-integrity.md`): the submissions JSON has no series dimension, so
+    `latest_prospectus` returns the trust's newest filing for EVERY series of a CIK — but this header says
+    which series the filing actually covers. STRUCTURE only (which series the filing declares), never which
+    change matters.
+
+    THREE distinct signals, never collapsed (the fail-silent trap this repo keeps getting bitten by):
+      - `series` populated (+ `has_series_block` True) — AUTHORITATIVE coverage. A `series_id` absent from
+        it is genuinely not covered (registrant-level over-attribution, B1).
+      - `complete` True, `has_series_block` False — the filing declares NO series block (an older / non-fund
+        form). Benign "no series data", NOT "not covered" — the caller must not read absence as exclusion.
+      - `complete` False — the header is TRUNCATED (`</SEC-HEADER>` never seen) or unfetched. Coverage is
+        UNKNOWN; the caller FAULTS (flag, don't guess), never reads "not covered" from partial bytes."""
+    text = header_bytes.decode("latin-1", errors="replace")
+    complete = "</SEC-HEADER>" in text.upper()
+    series: dict[str, dict] = {}
+    in_block = False
+    cur_id: str | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line.startswith("<"):
+            continue
+        up = line.upper()
+        if up.startswith("<SERIES-AND-CLASSES-CONTRACTS-DATA>"):
+            in_block, cur_id = True, None
+            continue
+        if up.startswith("</SERIES-AND-CLASSES-CONTRACTS-DATA>"):
+            in_block, cur_id = False, None
+            continue
+        if not in_block:
+            continue
+        m = _SGML_TAG.match(line)
+        if not m:
+            continue
+        tag, val = m.group(1).upper(), m.group(2).strip()
+        if tag == "SERIES-ID":
+            cur_id = val
+            series.setdefault(cur_id, {"name": "", "tickers": []})
+        elif tag == "SERIES-NAME" and cur_id:
+            series[cur_id]["name"] = val
+        elif tag == "CLASS-CONTRACT-TICKER-SYMBOL" and cur_id and val and not val.startswith("["):
+            series[cur_id]["tickers"].append(val)  # a placeholder "[ ]" (preliminary filing) is not a ticker
+    # "has a usable series map" — a present-but-empty block (or one truncated before any SERIES-ID) is
+    # NOT authoritative coverage, so it must fall to the benign / truncated dispositions above.
+    return {"series": series, "complete": complete, "has_series_block": bool(series)}
 
 
 # --- STRUCTURE (bs4's job ends here) ------------------------------------------------------------

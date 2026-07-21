@@ -37,6 +37,31 @@ from prospector.sensors.rebalance import watching_leads
 from prospector.store.envelope import SYSTEM_LEAD
 
 
+def _coverage_verdict(coverage: dict, series_id: str, prospectus: ProspectusIngest,
+                      accession: str) -> tuple[str, str]:
+    """The B1 over-attribution guard: does the filing's SGML SERIES/CLASS coverage let us diff for THIS
+    series? Returns `(verdict, reason)`, verdict in {'proceed', 'not_covered', 'review'} — the THREE
+    distinct dispositions `parse_series_classes` keeps apart (never collapse them; that's the fail-silent
+    trap):
+      - complete + AUTHORITATIVE series map → `series_id` present → 'proceed'; absent → 'not_covered'
+        (the filing does not cover this fund — registrant-level attribution, B1: it was handed to us by
+        `latest_prospectus` because it is the trust's newest, not because it is ours).
+      - NOT complete (truncated header, or the header could not be fetched) → coverage UNKNOWN → 'review'
+        (flag for manual review — refuse to guess, §4d).
+      - complete but NO series block (older / non-fund form) → fall back to the store-side `series_sharing`
+        tripwire: shared by >1 series → cannot attribute → 'review'; a lone claimant → 'proceed' (today's
+        whole-doc behaviour). Absence of a series block is "no series data", never "not covered"."""
+    if not coverage["complete"]:
+        return "review", coverage.get("reason") or "series/class header truncated — coverage unverifiable"
+    if coverage["has_series_block"]:
+        if series_id in coverage["series"]:
+            return "proceed", ""
+        return "not_covered", "filing does not cover this series (registrant-level attribution, B1)"
+    if len(prospectus.series_sharing(accession)) > 1:
+        return "review", "filing declares no series header and is shared by multiple series — cannot attribute"
+    return "proceed", ""
+
+
 def scan(series_id: str, ticker: str, cik: int,
          current_accession: str | None, current_doc: str | None, prior_accession: str | None,
          universe_series_ids: Iterable[str], active_lead_ids: Iterable[str],
@@ -51,9 +76,30 @@ def scan(series_id: str, ticker: str, cik: int,
     if not current_accession:
         return {"action": "none", "reason": "no prospectus filing on record"}
 
+    # B1 OVER-ATTRIBUTION GUARD (§4d), BEFORE any freeze. A prospectus resolves at REGISTRANT (CIK) level,
+    # so `latest_prospectus` hands us the trust's newest filing for EVERY series of the CIK — including
+    # filings that do not cover THIS fund (verified: a J.P. Morgan 497 for one NEW series was frozen under
+    # three unrelated series and diffed against a different fund). Consult the filing's SGML SERIES/CLASS
+    # header first, so a wrong-fund filing is neither frozen under us (which would ADD B1 pollution and feed
+    # `series_sharing`) nor diffed. Vet only when there is something new to act on: a filing already held as
+    # our UNCHANGED baseline was vetted when first seen, and re-vetting a stable no-series-header baseline
+    # would cry-wolf a review advisory every tick.
+    have_current = prospectus.has_frozen(series_id, current_accession)
+    if not have_current or current_accession != prior_accession:
+        verdict, reason = _coverage_verdict(
+            prospectus.series_classes(cik, current_accession), series_id, prospectus, current_accession)
+        if verdict == "not_covered":
+            # Not this fund's filing — nothing to freeze, nothing to diff, no fault (the expected B1 state).
+            return {"action": "not_covered", "accession": current_accession, "reason": reason}
+        if verdict == "review":
+            report_advisory("mandate",
+                            f"new prospectus {current_accession} for {series_id}: {reason} — manual review",
+                            series_id, extra={"ticker": ticker, "accession": current_accession})
+            return {"action": "flagged_unreliable", "reason": reason, "accession": current_accession}
+
     # Establish/refresh the baseline: the current filing must be frozen (idempotent, freeze-before-diff).
     freshly_frozen = False
-    if not prospectus.has_frozen(series_id, current_accession):
+    if not have_current:
         prospectus.pull(series_id, cik, current_accession, current_doc)
         freshly_frozen = True
 

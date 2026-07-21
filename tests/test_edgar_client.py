@@ -534,6 +534,65 @@ def test_filing_index_retries_429_via_get():
     assert len(attempts) == 2 and sleeps == [1.0]
 
 
+# -- filing_header (§2 / B1): the SGML SERIES/CLASS header via a Range GET -------------
+
+def test_filing_header_accepts_206_url_shape_and_persist_name(monkeypatch):
+    # A Range request returns 206 Partial Content (not 200): _default_fetch must accept it. Also proves the
+    # archive URL uses the DASHED accession as the filename (unlike filing_text) and freezes via persist (§3).
+    import prospector.ingest.edgar as edgar_mod
+    seen = {}
+
+    class Resp:
+        status_code = 206
+        content = b"<SEC-HEADER>\n<SERIES-ID>S000000001\n</SEC-HEADER>\n"
+
+    def fake_get(url, headers=None, **kwargs):
+        seen["url"], seen["range"] = url, headers.get("Range")
+        return Resp()
+
+    monkeypatch.setattr(edgar_mod.httpx, "get", fake_get)
+    records = []
+    client = EdgarClient(UA, clock=lambda: 0.0, sleep=lambda s: None,
+                         persist=lambda name, body: records.append(name))
+    body = client.filing_header(1479026, "0001193125-26-300911")
+    assert b"</SEC-HEADER>" in body
+    assert seen["range"] == "bytes=0-49999"                        # header-only Range GET
+    assert seen["url"] == ("https://www.sec.gov/Archives/edgar/data/1479026/"
+                           "000119312526300911/0001193125-26-300911.txt")  # dashed filename, no-dash dir
+    assert records == ["000119312526300911_header.txt"]            # frozen via persist (§3)
+
+
+def test_filing_header_escalates_the_range_until_the_sentinel_appears():
+    # A long omnibus-trust header may exceed the first range: escalate until </SEC-HEADER> is present, so
+    # the coverage map is never silently truncated.
+    ranges = []
+
+    def fetch(url, headers):
+        ranges.append(headers.get("Range"))
+        if headers.get("Range") == "bytes=0-49999":
+            return b"<SEC-HEADER>\n<SERIES-ID>S1\n"                 # truncated: no </SEC-HEADER> yet
+        return b"<SEC-HEADER>\n<SERIES-ID>S1\n</SEC-HEADER>\n"      # the larger range completes it
+
+    client, _, _ = make_client(fetch)
+    body = client.filing_header(1, "acc-1")
+    assert ranges == ["bytes=0-49999", "bytes=0-262143"]           # escalated exactly once
+    assert b"</SEC-HEADER>" in body
+
+
+def test_filing_header_falls_back_to_an_unranged_get_when_still_truncated():
+    # Both ranges still short -> one final unranged GET (SEC caps it). A still-truncated header is detected
+    # downstream (parse_series_classes complete=False) and FAULTS — never a coverage guess off partial bytes.
+    ranges = []
+
+    def fetch(url, headers):
+        ranges.append(headers.get("Range"))
+        return b"<SEC-HEADER>\n<SERIES-ID>S1\n"                     # never completes -> exercise the backstop
+
+    client, _, _ = make_client(fetch)
+    client.filing_header(1, "acc-1")
+    assert ranges == ["bytes=0-49999", "bytes=0-262143", None]     # both ranges, then the unranged backstop
+
+
 def test_resolve_soi_document_picks_the_lone_exhibit():
     idx = _index(["primary_doc.xml", "NPORT_J9C7_54705771_0725.htm",
                   "0001410368-25-011151-index.htm"])
