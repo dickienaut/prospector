@@ -39,7 +39,10 @@ GS_NAMES = ["Goldman Sachs Core Plus Bond ETF", "Goldman Sachs Income ETF"]  # i
 UA = "Prospector-tests/1.0 (lyle.e.dickie@gmail.com)"
 NOW = "2026-07-03T22:30:00Z"
 
-CFG = {"mandate": None, "strategy_headings": ["principal investment strateg", "investment objective"],
+CFG = {"mandate": None,
+       "strategy_headings": ["principal investment strateg",
+                             "what are the fund's main investment strateg",  # J.P. Morgan Q&A form (PR3)
+                             "investment objective"],
        "stop_headings": ["principal risk", "principal investment risk", "performance",
                          "fees and expenses", "portfolio management", "purchase and sale",
                          "tax information"],
@@ -120,23 +123,37 @@ def test_is_heading_strict_rejects_prose_but_keeps_real_heading_variants():
     assert _is_heading("Principal Risks of Investing in the Fund", ["principal risk"], strict=True) is True
 
 
-def test_extract_faults_on_a_prose_investment_objective_line_no_false_section():
-    # The fund's only "investment objective" text is a body sentence; its strategy sits under an unmatched
-    # Q&A heading. Pre-fix this returned reliable:True on the text below the prose line (a false section).
+def test_is_heading_matches_a_qa_question_and_normalizes_smart_apostrophes():
+    # A Q&A-format summary heading is a QUESTION ("…strategies?") rendered with a smart apostrophe (’ from
+    # &rsquo;). The matcher treats the trailing "?" as terminal heading punctuation and normalizes ’->' so a
+    # plain-apostrophe config pattern matches — while a question that runs on into a content word is still
+    # rejected as prose (the guard holds). (PR3, docs/bugs/INDEX.md MANDATE-QA-QUESTION-HEADING.)
+    pat = ["what are the fund's main investment strateg"]                      # config pattern: plain apostrophe
+    assert _is_heading("What are the Fund’s main investment strategies?", pat, strict=True) is True   # curly ’ + ?
+    assert _is_heading("What are the Fund's main investment strategies?", pat, strict=True) is True   # straight ' + ?
+    assert _is_heading("What are the Fund’s main investment strategies", pat, strict=True) is True    # no "?"
+    # a question that continues into a content word is NOT a heading (strict tail-check still bites)
+    assert _is_heading("What are the fund's main investment strategies designed to do?", pat, strict=True) is False
+
+
+def test_extract_recovers_the_jpm_qa_strategy_and_ignores_the_prose_objective_line():
+    # The strategy sits under a Q&A heading ("What are the Fund's main investment strategies?"); the fund's
+    # "investment objective" text is a body SENTENCE. With the Q&A heading recognized (PR3), extraction now
+    # recovers the REAL strategy — and the prose objective line is still NOT mistaken for it (the Q&A heading
+    # is the higher-priority target, and strict matching rejects the prose line anyway): recall + the guard.
     m = extract_mandate(JPM_QA, CFG)
-    assert m["reliable"] is False                          # never a reliable extraction on a prose line
-    assert m["reason"] == "strategy heading not found"     # -> a fault for manual review (the safe path)
-    assert m["section"] is None
+    assert m["reliable"] is True
+    assert m["heading"] == "What are the Fund’s main investment strategies?"   # the Q&A heading, not the prose
+    assert "80% of its assets" in m["section"]                                  # the real strategy text...
+    assert "may change without shareholder approval" not in m["section"]        # ...not the prose objective
 
 
-def test_prose_heading_cannot_produce_a_spurious_mandate_change():
-    # Diffing the fund across a cosmetic re-file (new date only) must NOT surface a change off the prose
-    # line: extraction is unreliable both sides, so diff_mandate punts (reliable False) and scan would
-    # FAULT — never emit mandate.changed onto a live lead.
+def test_jpm_qa_cosmetic_refile_is_not_a_change():
+    # A cosmetic re-file (new date only) leaves the Q&A strategy section byte-identical -> no change, no
+    # spurious mandate.changed. (Pre-PR3 both sides faulted "heading not found"; now both extract cleanly.)
     refiled = JPM_QA.replace(b"January&nbsp;1,&nbsp;2026", b"January&nbsp;1,&nbsp;2027")
     d = diff_mandate(JPM_QA, refiled, CFG)
-    assert d["reliable"] is False and d["changed"] is False
-    assert d["reason"] == "strategy heading not found"
+    assert d["reliable"] is True and d["changed"] is False
 
 
 # --- EDGAR surface: latest_prospectus + the Archives fetch URL ------------------------------------
