@@ -9,7 +9,7 @@ Offline throughout — a realistically messy 485BPOS fixture, controlled deltas.
 
 from pathlib import Path
 
-from prospector.ingest.edgar import EdgarClient, latest_prospectus
+from prospector.ingest.edgar import EdgarClient, EdgarError, latest_prospectus
 from prospector.ingest.prospectus import (ProspectusIngest, _is_heading, diff_mandate, extract_mandate,
                                           html_to_text, is_prospectus_supplement, parse_series_classes)
 from prospector.sensors import mandate
@@ -39,8 +39,7 @@ GS_NAMES = ["Goldman Sachs Core Plus Bond ETF", "Goldman Sachs Income ETF"]  # i
 UA = "Prospector-tests/1.0 (lyle.e.dickie@gmail.com)"
 NOW = "2026-07-03T22:30:00Z"
 
-CFG = {"mandate": None,
-       "strategy_headings": ["principal investment strateg",
+CFG = {"strategy_headings": ["principal investment strateg",
                              "what are the fund's main investment strateg",  # J.P. Morgan Q&A form (PR3)
                              "investment objective"],
        "stop_headings": ["principal risk", "principal investment risk", "performance",
@@ -237,7 +236,10 @@ class FakeEdgar:
 
     def filing_header(self, cik, accession):
         self.header_calls.append((cik, accession))
-        return self.headers_by_accession[accession]
+        v = self.headers_by_accession[accession]
+        if isinstance(v, Exception):
+            raise v                       # a test can register an EdgarError to model a header-fetch failure
+        return v
 
 
 def _run(layout, by_accession, current, prior, active_lead_ids, *, prefreeze=None,
@@ -401,6 +403,21 @@ def test_scan_truncated_header_flags_for_review_never_diffs(layout):
     (ev,) = events
     assert ev["type"] == "fault" and ev["payload"]["category"] == "review-advisory"
     assert "manual review" in ev["payload"]["message"]
+    assert not any(e["type"] == "mandate.changed" for e in events)
+
+
+def test_scan_header_fetch_failure_is_a_review_advisory_not_an_operational_fault(layout):
+    # A header .txt fetch that RAISES EdgarError (a transient EDGAR error, not a truncated body) must degrade
+    # to coverage-UNKNOWN -> a review-advisory (pages only on a live lead), NEVER propagate as an exception
+    # that the runner turns into an OPERATIONAL fault (which pages). series_classes catches the EdgarError
+    # internally -> complete:False -> the guard reviews. (Registered: pins the prospectus.py:series_classes
+    # fetch-failure branch, which was reachable but unpinned.)
+    result, events, _ = _run(layout, {A: BASE, B: SUBSTANTIVE}, current=B, prior=A,
+                             active_lead_ids={xcorr_lead_id([XLK, XLU])}, prefreeze=A,
+                             headers={B: EdgarError("edgar down", status=503)})   # filing_header raises this
+    assert result["action"] == "flagged_unreliable"        # a punt, not a raised exception
+    (ev,) = events
+    assert ev["type"] == "fault" and ev["payload"]["category"] == "review-advisory"   # NOT operational
     assert not any(e["type"] == "mandate.changed" for e in events)
 
 
