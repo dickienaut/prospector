@@ -6,8 +6,6 @@ ceiling tripwire, the read-only macro catalog, the coverage/dormant-pile blindne
 appears — it accretes onto a lead), the launch survey, the fault log, and the weekly dead-man. Offline:
 events are appended to a real registry; the socket guard fails any real connection."""
 
-from pathlib import Path
-
 from prospector.dashboard import views
 from prospector.store.envelope import SYSTEM_LEAD
 from prospector.store.event_store import EventStore
@@ -200,12 +198,7 @@ def test_last_heartbeat_sent_newest_wins(layout, registry):
     assert views.last_heartbeat_sent(registry) == "2026-07-08T00:00:00Z"          # newest ts wins
 
 
-# === firewall: the dashboard never reaches the portfolio side =======================================
-
-def test_dashboard_firewall_never_reads_portfolio():
-    # The wall (CLAUDE.md): a read-only surface must never reach into the portfolio system. Read the
-    # sources as TEXT (app.py imports streamlit, an optional extra not in the core test env).
-    import prospector.dashboard as dash_pkg
-    pkg_dir = Path(dash_pkg.__file__).parent
-    for name in ("views.py", "app.py"):
-        assert "portfolio.yaml" not in (pkg_dir / name).read_text(encoding="utf-8")
+# === firewall ======================================================================================
+# The dashboard's firewall guard moved to `tests/test_firewall.py`, which sweeps the WHOLE package
+# (this one listed 2 files by hand, and a text scan would have false-positived on export.py's
+# firewall docstring). One rule, one home.
