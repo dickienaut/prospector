@@ -98,11 +98,26 @@ def test_no_module_imports_from_the_sibling_repo():
     assert offenders == [], f"firewall: sibling-repo imports (capacity and opacity): {offenders}"
 
 
+S3_CLIENT_ROOTS = ("boto3", "botocore", "s3transfer")
+# The import roots that construct or drive an S3 client. `boto3` is the convenience wrapper, but it is a
+# thin layer over `botocore` (its always-installed engine: `from botocore.session import get_session;
+# get_session().create_client("s3")` builds a fully functional client with get_object/list_objects_v2 and
+# imports root `botocore`, not `boto3`), and `s3transfer` (also a boto3 dep) drives uploads/downloads. A
+# root-only check for `boto3` was EVADED by the botocore path (F3, proven green). Forbidding all three
+# closes the standard alternates.
+#
+# STATED HONESTLY (the tiering the CLAUDE.md consolidation established): this is a PROXY with NAMED GAPS,
+# not a capability boundary. An import-root check cannot catch a bare bucket-name string with no import,
+# nor a client reached through a not-yet-enumerated third dep. The real wall is IAM — "credentials unable
+# to read the detector's bucket," enforced outside this repo and outside CI (spec §; consolidation §3).
+# This gate is the cheap in-repo tripwire under that wall, not a substitute for it.
+
 def test_s3_access_is_confined_to_the_one_configured_module():
     # The structural proxy for "never read the detector's bucket": if only the config-driven module can
-    # build an S3 client, no other module can reach any bucket at all.
+    # build an S3 client, no other module can reach any bucket at all. Checks every S3-capable import
+    # root (see S3_CLIENT_ROOTS), not just the boto3 convenience wrapper.
     offenders = [str(p.relative_to(PACKAGE)) for p in _modules()
-                 if "boto3" in _imported_roots(p.read_text(encoding="utf-8"))
+                 if any(r in S3_CLIENT_ROOTS for r in _imported_roots(p.read_text(encoding="utf-8")))
                  and str(p.relative_to(PACKAGE)) != S3_OWNER]
     assert offenders == [], f"firewall: only {S3_OWNER} may construct an S3 client; found {offenders}"
 
@@ -144,3 +159,15 @@ def test_gate_bites_on_an_unauthorised_s3_client():
     assert "boto3" in _imported_roots("import boto3\nc = boto3.client('s3')\n")
     # ...and not on the docstring mention in ingest/prospectus.py ("boring infrastructure like boto3").
     assert "boto3" not in _imported_roots('"""bs4 is infrastructure, like numpy / SQLite / boto3."""\n')
+
+
+def test_gate_bites_on_the_botocore_s3_evasion():
+    # F3: reaching S3 via botocore (boto3's always-installed engine) imports root `botocore`, NOT `boto3`
+    # — the boto3-only check was blind to it (proven: a botocore-session client planted in a non-owner
+    # module left the sweep green). A working client with zero `boto3` string. The gate must catch it.
+    evasion = "from botocore.session import get_session\nc = get_session().create_client('s3')\n"
+    roots = _imported_roots(evasion)
+    assert "boto3" not in roots                      # the blind spot: no boto3 root at all
+    assert any(r in S3_CLIENT_ROOTS for r in roots)  # ...but S3_CLIENT_ROOTS catches botocore
+    # s3transfer (also a boto3 dep, drives multipart transfers) is likewise covered.
+    assert any(r in S3_CLIENT_ROOTS for r in _imported_roots("import s3transfer\n"))

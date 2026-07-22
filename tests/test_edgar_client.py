@@ -492,9 +492,20 @@ def test_latest_soi_same_day_tie_keeps_the_later_filing():
     assert latest_soi(subs)["accession"] == "acc-later"
 
 
-def test_latest_soi_missing_columns_returns_none():
-    assert latest_soi({}) is None
-    assert latest_soi({"filings": {"recent": {}}}) is None
+def test_latest_soi_missing_shape_surfaces_absent_shape_stays_none():
+    # F1 (post-#99): a submissions dict whose SHAPE we cannot read is a drift, not an absence — it must
+    # surface (raise), so classify_soi_target reports SOI_ERROR instead of a silent not-yet. This inverts
+    # the prior test, which locked in the swallow (`latest_soi({}) is None`) that made the drift invisible.
+    #  - `{}` has no `filings` key             -> shape drift -> raise
+    #  - `{"filings": {"recent": {}}}` has no columnar lists -> shape drift -> raise
+    for drifted in ({}, {"filings": {"recent": {}}}):
+        with pytest.raises(EdgarError):
+            latest_soi(drifted)
+    # ...but a GENUINELY filing-less registrant (recent present, every column an empty list) is a benign
+    # not-yet and still returns None — the state the raise must NOT swallow into an error.
+    absent = {"filings": {"recent": {"form": [], "filingDate": [],
+                                     "accessionNumber": [], "primaryDocument": []}}}
+    assert latest_soi(absent) is None
 
 
 # -- SOI-fetch (§9b): filing_index + resolve_soi_document -------------------------------

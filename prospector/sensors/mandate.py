@@ -143,7 +143,30 @@ def scan(series_id: str, ticker: str, cik: int,
     # fund's. Each side uses ITS OWN filing's names (keyed on the stable series_id — name drift can't cross
     # filings). A single-fund filing passes (None, None) → whole-doc extraction, unchanged.
     cur_anchor, cur_names = _isolation_args(current_coverage, series_id)
-    pri_anchor, pri_names = _isolation_args(prospectus.series_classes(cik, prior_accession), series_id)
+    # F5: the PRIOR side must be vetted with the SAME discipline as the current side. An asymmetric
+    # diff is a false diff — if one operand is isolated to this fund's block and the other is extracted
+    # whole-doc, every difference is an artifact of the asymmetry, not a real strategy change. The
+    # current side already refuses to diff on `complete: False` (via _coverage_verdict -> "review"); the
+    # prior side did NOT — it passed the coverage straight to _isolation_args, which only branches on
+    # len(series)<=1 and so collapses "prior coverage UNVERIFIABLE (header fetch failed / truncated)"
+    # and "prior is legitimately single-fund" into the same (None, None) whole-doc fallback. That is the
+    # F1 swallowed-state class one module over: a transient prior-header EdgarError on a NON-FIRST fund
+    # in a multi-fund filing then yields a RELIABLE spurious mandate.changed onto live leads (proven on
+    # the real Goldman body, S000106341). Vet prior completeness FIRST and refuse to diff when it is
+    # unverifiable — a review-advisory (flag for a human), never a whole-doc fallback that fabricates a
+    # change. A false mandate.changed is worse than a missed one (§4d), and it writes a permanent event
+    # into the append-only store.
+    prior_coverage = prospectus.series_classes(cik, prior_accession)
+    if not prior_coverage["complete"]:
+        report_advisory("mandate",
+                        f"prior prospectus {prior_accession} for {series_id}: coverage unverifiable "
+                        f"({prior_coverage.get('reason') or 'series/class header unavailable'}) — "
+                        f"cannot diff symmetrically, manual review",
+                        series_id, extra={"ticker": ticker, "accession": current_accession,
+                                          "prior_accession": prior_accession})
+        return {"action": "flagged_unreliable", "reason": "prior coverage unverifiable",
+                "accession": current_accession}
+    pri_anchor, pri_names = _isolation_args(prior_coverage, series_id)
     d = diff_mandate(prior_body, current_body, cfg,
                      prior_anchor=pri_anchor, prior_names=pri_names,
                      current_anchor=cur_anchor, current_names=cur_names)
