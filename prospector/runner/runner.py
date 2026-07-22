@@ -39,8 +39,8 @@ from prospector.dashboard import views
 from prospector.fold.fold import active_nonshadow, fold, state_changed
 from prospector.fold.snapshots import SnapshotConfig, should_snapshot, write_snapshot
 from prospector.identity.resolution import ResolutionMachine
-from prospector.ingest.edgar import (SOI_AMBIGUOUS, SOI_ERROR, classify_soi_target,
-                                     latest_prospectus, prospectus_history)
+from prospector.ingest.edgar import (SOI_AMBIGUOUS, SOI_ERROR, SubmissionsShapeError,
+                                     classify_soi_target, latest_prospectus, prospectus_history)
 from prospector.ingest import capture
 from prospector.ingest.holdings import (MembershipSnapshot, priceable_members, priced_coverage,
                                          weight_covering_members)
@@ -950,6 +950,18 @@ def _run_mandate(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog
                                 cur["accession"], cur["primary_doc"], prior,
                                 universe_ids, active_ids, prospectus, mandate_cfg, now, store.append,
                                 report_advisory)
+        except SubmissionsShapeError as e:
+            # A submissions-JSON shape drift is FLEET-WIDE, not per-fund (SEC versioned the format;
+            # our columnar read no longer matches). It must surface — the old bare `None` from
+            # latest_prospectus swallowed it as "no filing -> dormant", every watched fund going
+            # silently quiet at once (F1). It is an OPERATIONAL fault (the submissions endpoint is a
+            # controlled source fetched with declared identity: a shape we cannot read is a broken
+            # ingestion layer that PAGES, not a per-document review-advisory). The nuisance risk is
+            # that N watched funds each raise it -> N pages; a STABLE, drift-scoped `key` collapses
+            # every fund to ONE signature, so a fleet-wide drift pages ONCE and rides the heartbeat
+            # until fixed (§10 volatile-message discipline). Still per-fund (§9g: we do NOT break the
+            # loop — a partial/registrant-specific shape anomaly must not blind the healthy funds).
+            _emit_fault(store, "mandate.submissions_shape", e, now, faults, key="submissions_shape")
         except Exception as e:  # one fund's failure never blinds the others (§9g)
             _emit_fault(store, "mandate", e, now, faults)
     runlog.sensors["mandate"] = "ran"

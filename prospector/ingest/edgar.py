@@ -75,6 +75,20 @@ class EdgarError(Exception):
         self.status = status
 
 
+class SubmissionsShapeError(EdgarError):
+    """The submissions JSON parsed but does not have the shape we read — `filings.recent` absent,
+    or its columnar lists missing. This is a SWALLOWED-STATE split (N8): the old helpers returned a
+    bare `None` here, indistinguishable from "this registrant has no filing of that family on
+    record" — so a shape drift (SEC versions this JSON) went silently dormant fleet-wide, the exact
+    case `classify_soi_target`'s docstring claimed becomes SOI_ERROR-and-surfaces. It never did,
+    because the KeyError was eaten one layer below that handler. Raising a TYPED error here — a
+    subclass of EdgarError so existing `except EdgarError` sites still catch it — lets the drift
+    surface as an operational fault (the submissions endpoint is a controlled source; an unreadable
+    shape is a broken ingestion layer, not a per-fund not-yet) while a genuinely-absent filing stays
+    the benign `None`. Inherits EdgarError's `(message, status=None)` constructor; status defaults
+    to None (the fetch itself succeeded — the bytes are the problem)."""
+
+
 @dataclass(frozen=True)
 class Resolution:
     """A successful §2 lookup — the raw material for a registry entry (never the entry itself:
@@ -231,6 +245,25 @@ class EdgarClient:
         return self._get(url, name)  # unranged backstop; parse detects if still truncated
 
 
+def _recent_columns(submissions: dict) -> "tuple[list, list, list, list]":
+    """The `(forms, dates, accessions, primary_docs)` columnar lists from a submissions dict's
+    `filings.recent` — the ONE place the three helpers read that shape, so the swallowed-state split
+    (N8) lives once, not three times. A genuinely-absent column set (`recent` present but a fund with
+    no filings — every list empty) returns empty lists, the benign "no filing" the callers translate
+    to None/[]. A drift — `filings`/`recent` absent, or `recent` not a mapping, or a required column
+    key missing — RAISES `SubmissionsShapeError`, because those states are DIFFERENTLY ACTIONABLE from
+    absence: absence is a not-yet, a drift is a broken read that must page. (Design's rule: when a
+    function returns a sentinel, split any two states that map to it that are distinguishable AND want
+    different dispositions.)"""
+    try:
+        recent = submissions["filings"]["recent"]
+        return recent["form"], recent["filingDate"], recent["accessionNumber"], recent["primaryDocument"]
+    except (KeyError, TypeError) as e:
+        raise SubmissionsShapeError(
+            f"submissions dict is not the shape we read (filings.recent columnar lists): {e!r}"
+        ) from e
+
+
 def latest_prospectus(submissions: dict) -> dict | None:
     """The most-recent prospectus-family filing in a submissions dict, as
     `{accession, primary_doc, form, filing_date}` — or None if there is none.
@@ -238,13 +271,11 @@ def latest_prospectus(submissions: dict) -> dict | None:
     Same PROSPECTUS_FORMS + newest-first rule `resolve_ticker` uses to pick the prospectus accession,
     but it also returns `primaryDocument` (the Archives filename) so the mandate-diff (§4d) can fetch
     the document text. `recent` is newest-first, so strict `>` keeps the earlier index (the later
-    filing) on same-day ties — identical to resolve_ticker."""
-    try:
-        recent = submissions["filings"]["recent"]
-        forms, dates = recent["form"], recent["filingDate"]
-        accs, docs = recent["accessionNumber"], recent["primaryDocument"]
-    except (KeyError, TypeError):
-        return None
+    filing) on same-day ties — identical to resolve_ticker.
+
+    Raises `SubmissionsShapeError` when the dict does not have the shape we read (N8 swallowed-state
+    split): a drift is NOT a benign "no filing" (`None`), it is a broken read that must surface."""
+    forms, dates, accs, docs = _recent_columns(submissions)
     best: int | None = None
     for i, form in enumerate(forms):
         if form in PROSPECTUS_FORMS and (best is None or dates[i] > dates[best]):
@@ -259,13 +290,11 @@ def prospectus_history(submissions: dict) -> list[dict]:
     """All prospectus-family filings in a submissions dict, NEWEST-FIRST, each as
     `{accession, primary_doc, form, filing_date}`. `latest_prospectus` is effectively `[0]`; the mandate
     frozen-prior walk (§9c) uses the rest to find the most-recent filing it holds FROZEN. `recent` is
-    newest-first, so preserving that order keeps this consistent with `latest_prospectus`."""
-    try:
-        recent = submissions["filings"]["recent"]
-        forms, dates = recent["form"], recent["filingDate"]
-        accs, docs = recent["accessionNumber"], recent["primaryDocument"]
-    except (KeyError, TypeError):
-        return []
+    newest-first, so preserving that order keeps this consistent with `latest_prospectus`.
+
+    Raises `SubmissionsShapeError` on a drifted shape (N8 split): an empty list means "no
+    prospectus-family filing", never "we couldn't read the dict"."""
+    forms, dates, accs, docs = _recent_columns(submissions)
     return [{"accession": str(accs[i]), "primary_doc": str(docs[i]),
              "form": str(forms[i]), "filing_date": str(dates[i])}
             for i, form in enumerate(forms) if form in PROSPECTUS_FORMS]
@@ -282,13 +311,14 @@ def latest_soi(submissions: dict) -> dict | None:
     latest_prospectus).
 
     `primary_doc` is EDGAR's `primaryDocument` — for NPORT-EX that is `primary_doc.xml` (no GICS); the
-    caller resolves the sector-bearing exhibit via `filing_index` + `resolve_soi_document`."""
-    try:
-        recent = submissions["filings"]["recent"]
-        forms, dates = recent["form"], recent["filingDate"]
-        accs, docs = recent["accessionNumber"], recent["primaryDocument"]
-    except (KeyError, TypeError):
-        return None
+    caller resolves the sector-bearing exhibit via `filing_index` + `resolve_soi_document`.
+
+    Raises `SubmissionsShapeError` on a drifted shape (N8 split). This is the finding's crux: the old
+    bare-`None` here was eaten below `classify_soi_target`'s `except Exception` handler, so a shape
+    drift became SOI_NOT_YET (silent) — the exact case its docstring promised becomes SOI_ERROR. With
+    the raise, that promise is true for the first time: the error propagates to the handler and
+    surfaces."""
+    forms, dates, accs, docs = _recent_columns(submissions)
     for tier in SOI_FORMS:  # priority order, not newest-across-all-forms
         best: int | None = None
         for i, form in enumerate(forms):
