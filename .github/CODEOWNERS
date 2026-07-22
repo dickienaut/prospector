@@ -8,5 +8,7 @@
 #   - require_last_push_approval re-blocks the merge on any commit pushed AFTER that approval (the
 #     approve-then-swap hole), because the new push needs approval from someone other than the pusher.
 #
-# See docs/notes/…four-seat-model…  and docs/decisions/2026-07-12-code-does-not-merge-human-reviews.md.
+# See docs/notes/…four-seat-model…  and docs/decisions/2026-07-16-agent-identity-split-and-merge-gate.md
+# (supersedes the 2026-07-12 posture-era record — the merge gate is now mechanism: the bot seats aren't
+# code owners, so no agent action alone lands code on main).
 * @dickienaut

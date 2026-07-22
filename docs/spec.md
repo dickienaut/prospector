@@ -1,4 +1,16 @@
-# Project Prospector — v1 Build Specification (rev 16)
+# Project Prospector — v1 Build Specification (rev 17)
+
+*2026-07-21, rev 17 — supersedes rev 16. A single clarification, no contract delta: the NPORT-P
+survivor-bias hazard is now co-located with the §3b stub definition (holdings-intake §3b) — the hazard
+already stood at the §10 quarterly-cross-check clause, and co-locating it makes the §3b clause
+self-contained so CLAUDE.md's echo of it can delete cleanly during the pending consolidation
+(`docs/notes/2026-07-21-claude-md-consolidation-reconciled.md` §P-2). Everything in rev 16 and earlier
+carries forward unchanged.*
+
+**Rev 17 change (one clarification, no contract delta):**
+- **§3b NPORT-P stub — the survivor-bias hazard is co-located** with the stub definition (`do not fill
+  parse_nport_holdings with survivor-biased data`), not only at the §10 quarterly-cross-check clause where
+  it already stood. Enables the consolidation to delete CLAUDE.md's duplicate line. No behaviour change.
 
 *2026-07-19, rev 16 — supersedes rev 15. Rev 16 folds one ratified **§8a taxonomy amendment**: a discourse-capture page-fetch failure against an **uncontrolled (open-web) host** is a **review-advisory** (expected scraping friction — a commentary host owes an automated client nothing — and capture is write-only, so the miss loses only the supplementary page text, not the search-block substrate), while a failure against a **controlled source** (SEC/EDGAR, fetched with the declared `edgar.user_agent`) stays **operational**: severity by whether we had a right to expect success. Folds `docs/decisions/2026-07-19-capture-fetch-controlled-vs-uncontrolled.md`, superseding the M6 build note §3c blanket-operational choice with the open-web 403 base rate it did not have. Everything in rev 15 and earlier carries forward unchanged.*
 
@@ -64,7 +76,7 @@
 - **Routing (CONTRACT — no payload change):** forward-hash the fund's memberships via the existing `xcorr_lead_id`/`dispersion_lead_id` functions and intersect with active leads. The lead-id already encodes the series_ids; duplicating them in the payload invites drift.
 - **Live-lead enumeration (CONTRACT):** read the active set from the registry (the fold's materialized snapshots) — no re-fold-each, no separate lead-to-baskets cache.
 - **Mandate storage (§7):** `ingest/prospectus/{series_id}/{accession}/`, frozen per accession, reference-only in the registry — append-only, so the diff across versions is possible.
-- **NPORT-P (deferred §3b):** holdings-table-only extraction (proper XML, not full-schema, not regex); trigger is the daily filings-index check (event-driven), not a quarterly cron. Stub stays deliberately thin.
+- **NPORT-P (deferred §3b):** holdings-table-only extraction (proper XML, not full-schema, not regex); trigger is the daily filings-index check (event-driven), not a quarterly cron. Stub stays deliberately thin — and is **never filled with survivor-biased data** (the delisted-name look-through hazard; the same rule stated at the §10 quarterly cross-check).
 
 **Rev 8 changes (proto-cluster substrate):**
 - **Appendix B (v2 design note): proto-clusters — modeling the substrate below the corpus.** ETFs are the corpus ceiling (only packaged/discussed theses); the constituent layer breaks it — an unpackaged, undiscussed thesis is visible as a *cluster of names co-moving across sector boundaries* (a pseudo-ETF). The canary is the **cluster, not the single name** (single names are the idiosyncratic noise baskets exist to escape). It is the earliest possible T0 for the cross-stream lag; the same scope / disposition / firewall discipline transfers wholesale (observation-only — the canary is never the trade). Worked example: the 2023 nuclear+AI cluster, before NUKZ existed.
