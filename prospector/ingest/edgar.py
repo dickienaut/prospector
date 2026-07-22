@@ -89,6 +89,23 @@ class SubmissionsShapeError(EdgarError):
     to None (the fetch itself succeeded — the bytes are the problem)."""
 
 
+class SubmissionsIncompleteError(EdgarError):
+    """The submissions JSON is well-formed and readable, but the answer is UNDETERMINED, not absent:
+    `filings.recent` (the newest ~1000 filings) carries no prospectus-family filing WHILE
+    `filings.files[]` — the SEC pointer to older filing pages we deliberately do NOT paginate (B2, the
+    named deferral) — is non-empty. The prospectus may live in a page we did not read: "I searched the
+    window I have and found nothing, and there is more I did not look at." This is the pagination
+    third-state (Design 2026-07-22): a distinct, differently-actionable state the bare `None` fused with
+    a genuine not-yet — the F1 shape-drift split (`SubmissionsShapeError`) one condition further along.
+
+    Disposition is REVIEW-ADVISORY, not operational (unlike `SubmissionsShapeError`): nothing BROKE —
+    SEC honored the submissions contract exactly; OUR request was too narrow. Coverage is incomplete
+    by design and a human decides whether to paginate. The runner routes it through `report_advisory`
+    with a STABLE per-fund key (this condition is stable — it must surface once and ride the heartbeat,
+    not re-page every tick). An `EdgarError` subclass so existing `except EdgarError` sites still catch
+    it; `status` defaults to None (the read window, not the bytes, is the limit)."""
+
+
 @dataclass(frozen=True)
 class Resolution:
     """A successful §2 lookup — the raw material for a registry entry (never the entry itself:
@@ -274,13 +291,20 @@ def latest_prospectus(submissions: dict) -> dict | None:
     filing) on same-day ties — identical to resolve_ticker.
 
     Raises `SubmissionsShapeError` when the dict does not have the shape we read (N8 swallowed-state
-    split): a drift is NOT a benign "no filing" (`None`), it is a broken read that must surface."""
+    split): a drift is NOT a benign "no filing" (`None`), it is a broken read that must surface. Raises
+    `SubmissionsIncompleteError` when no prospectus is in `recent` but older filing pages exist unread
+    (`filings.files[]` non-empty, B2): the answer is UNDETERMINED, not absent — the pagination
+    third-state, mirroring `confirm_prospectus`'s `older_filings_unread` on the resolution path."""
     forms, dates, accs, docs = _recent_columns(submissions)
     best: int | None = None
     for i, form in enumerate(forms):
         if form in PROSPECTUS_FORMS and (best is None or dates[i] > dates[best]):
             best = i
     if best is None:
+        if submissions["filings"].get("files"):  # older pages exist, unread (B2) — undetermined, not absent
+            raise SubmissionsIncompleteError(
+                "no prospectus-family filing in filings.recent, but older filing pages exist "
+                "(filings.files[]) not paginated (B2) — coverage undetermined, not absent")
         return None
     return {"accession": str(accs[best]), "primary_doc": str(docs[best]),
             "form": str(forms[best]), "filing_date": str(dates[best])}

@@ -39,8 +39,9 @@ from prospector.dashboard import views
 from prospector.fold.fold import active_nonshadow, fold, state_changed
 from prospector.fold.snapshots import SnapshotConfig, should_snapshot, write_snapshot
 from prospector.identity.resolution import ResolutionMachine
-from prospector.ingest.edgar import (SOI_AMBIGUOUS, SOI_ERROR, SubmissionsShapeError,
-                                     classify_soi_target, latest_prospectus, prospectus_history)
+from prospector.ingest.edgar import (SOI_AMBIGUOUS, SOI_ERROR, SubmissionsIncompleteError,
+                                     SubmissionsShapeError, classify_soi_target, latest_prospectus,
+                                     prospectus_history)
 from prospector.ingest import capture
 from prospector.ingest.holdings import (MembershipSnapshot, priceable_members, priced_coverage,
                                          weight_covering_members)
@@ -147,10 +148,17 @@ def _advisory_reporter(store, now: str, faults: list, universe_ids, active_ids):
     (active, non-shadow) lead pages (`on_live_lead`, via the shared forward-hash `watching_leads`); every
     other advisory is counted + surfaced (heartbeat/dashboard) but does NOT page. The risk-owner's call:
     a held/watched fund quietly rewording its mandate is the one advisory worth interrupting for."""
-    def report(subsystem: str, message: str, series_id: str | None, extra: dict | None = None) -> None:
+    def report(subsystem: str, message: str, series_id: str | None, extra: dict | None = None,
+               key: str | None = None) -> None:
+        # `key` (optional): a STABLE suppression signature for advisories whose condition is stable
+        # across ticks (e.g. a fund's prospectus paged out of the readable window — the same fact every
+        # tick). Left None (the default), the signature keys on `message`, which is right for a
+        # genuinely-new advisory each time (a new unparseable prospectus). A stable per-fund key makes
+        # such an advisory surface ONCE and ride the heartbeat — and, if its fund touches a live lead,
+        # page once rather than every tick (the E1 volatile-message discipline, §10).
         on_live = bool(series_id and watching_leads(series_id, universe_ids, active_ids))
         _emit_fault(store, subsystem, message, now, faults, category="review-advisory",
-                    series_id=series_id, on_live_lead=on_live, extra=extra)
+                    series_id=series_id, on_live_lead=on_live, key=key, extra=extra)
     return report
 
 
@@ -962,6 +970,19 @@ def _run_mandate(deps: RunnerDeps, store, now: str, faults: list, runlog: RunLog
             # until fixed (§10 volatile-message discipline). Still per-fund (§9g: we do NOT break the
             # loop — a partial/registrant-specific shape anomaly must not blind the healthy funds).
             _emit_fault(store, "mandate.submissions_shape", e, now, faults, key="submissions_shape")
+        except SubmissionsIncompleteError as e:
+            # B2 pagination third-state: SEC honored the submissions contract exactly — OUR request was
+            # too narrow (this fund has filings, but no prospectus in the readable `recent` window while
+            # older pages exist unread; we deliberately do NOT paginate — the named deferral). Nothing
+            # BROKE, so this is a REVIEW-ADVISORY, not an operational page (Design 2026-07-22): coverage is
+            # incomplete-by-design and a human decides whether to paginate. Paging a coverage gap would be
+            # cry-wolf; a retry-disposition never resolves (next tick re-reads the same window). The
+            # condition is STABLE per-fund, so a per-fund key surfaces it ONCE and rides the heartbeat —
+            # unkeyed it re-emits identically every tick, and pages every tick if the fund touches a live
+            # lead (the E1 class). Per-fund (§9g: no break — a fund we cannot fully read must not blind the
+            # healthy ones).
+            report_advisory("mandate.submissions_incomplete", str(e), entry.series_id,
+                            key=f"submissions_incomplete:{entry.series_id}")
         except Exception as e:  # one fund's failure never blinds the others (§9g)
             _emit_fault(store, "mandate", e, now, faults)
     runlog.sensors["mandate"] = "ran"

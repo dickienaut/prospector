@@ -23,6 +23,7 @@ from prospector.primitives.atomic import write_atomic
 from prospector.runner.deps import RunnerDeps
 from prospector.runner.notify import NullNotifier
 from prospector.runner.runlog import RunLog
+from prospector.runner.fault_taxonomy import page_worthy_faults
 from prospector.runner.runner import _run_mandate
 from prospector.store.envelope import SYSTEM_LEAD
 from prospector.store.event_store import EventStore
@@ -333,3 +334,92 @@ def test_mandate_coverage_aware_prior_reaches_back_across_a_wrong_fund_frozen_fi
     assert changed[0].payload["prior_accession"] == A       # reached ACROSS the wrong-fund W to the true prior
     assert changed[0].payload["current_accession"] == B
     assert faults == [] and runlog.sensors["mandate"] == "ran"
+
+
+# === pagination third-state: an undetermined coverage gap is a REVIEW-ADVISORY, not a page ===========
+
+SID2 = "S000009999"          # a second fund, sorted AFTER XLK_SID, to prove the loop does not break
+CIK2 = 1516999
+SUBS2_URL = f"https://data.sec.gov/submissions/CIK{CIK2:010d}.json"
+
+
+def _subs_incomplete():
+    # `recent` is well-formed but carries NO prospectus-family filing (only an N-CSR), WHILE older filing
+    # pages exist unread (filings.files[] non-empty) — the pagination third-state: UNDETERMINED, not
+    # absent. latest_prospectus raises SubmissionsIncompleteError rather than returning the benign None.
+    return {"name": "Select Sector SPDR Trust", "filings": {
+        "recent": {"form": ["N-CSR"], "accessionNumber": ["0000000000-26-000001"],
+                   "primaryDocument": ["ncsr.htm"], "filingDate": ["2026-05-01"]},
+        "files": [{"name": f"CIK{CIK:010d}-submissions-001.json", "filingCount": 900}]}}
+
+
+def _entry2():
+    return FundEntry(series_id=SID2, class_ids=[], cik=CIK2, ticker_current="ZZZ",
+                     name="Sibling Fund", issuer="Select Sector SPDR Trust", category_draft=None,
+                     concentration_industries=[], prospectus_accession=B,
+                     holdings_source="issuer_daily", first_seen=NOW, verified_at=NOW)
+
+
+def test_mandate_pagination_undetermined_is_a_review_advisory_surfaced_not_paged(layout, registry):
+    # A watched fund whose prospectus has aged out of the readable `recent` window while older pages exist
+    # unread -> latest_prospectus raises SubmissionsIncompleteError. The runner surfaces it as ONE
+    # REVIEW-ADVISORY (coverage incomplete-by-design, a human decides whether to paginate — nothing broke,
+    # so not an operational page), per-fund keyed. A generically-failing SIBLING processed AFTER it still
+    # faults (§9g: the per-fund handler never breaks the loop).
+    event_store = EventStore(layout, registry)
+    funds = FundRegistry(layout, registry, event_store)
+    funds.upsert(_entry(prospectus_accession=B))    # XLK_SID: the undetermined fund (sorts first)
+    funds.upsert(_entry2())                          # SID2: a sibling that fails generically (sorts second)
+
+    def fetch(url, headers):
+        if url == SUBS_URL:
+            return json.dumps(_subs_incomplete()).encode()   # fund 1: pagination-undetermined
+        if url == SUBS2_URL:
+            raise EdgarError("edgar down", status=500)        # fund 2: a plain per-fund failure
+        raise EdgarError(f"no fixture for {url}", status=404)
+
+    deps = _deps(layout, registry, event_store, fetch)
+    faults, runlog = [], RunLog(run_id="r", ts=NOW, date=NOW[:10])
+
+    _run_mandate(deps, event_store, NOW, faults, runlog, funds)
+
+    adv = [f for f in faults if f["subsystem"] == "mandate.submissions_incomplete"]
+    assert len(adv) == 1
+    assert adv[0]["category"] == "review-advisory"                 # NOT operational (nothing broke)
+    assert adv[0]["series_id"] == XLK_SID
+    assert adv[0]["key"] == f"submissions_incomplete:{XLK_SID}"    # stable per-fund suppression signature
+    assert adv[0]["on_live_lead"] is False                        # touches no live lead in this fixture
+
+    # Surfaced-not-paged: a review-advisory off a live lead is held back from the page-worthy set.
+    assert adv[0] not in page_worthy_faults(faults)
+
+    # No break: the sibling that failed AFTER it still produced its own operational fault.
+    assert any(f["subsystem"] == "mandate" and f["series_id"] is None for f in faults)
+    assert event_store.read_system("mandate.changed") == []
+    assert runlog.sensors["mandate"] == "ran"
+
+
+def test_mandate_pagination_undetermined_signature_is_stable_across_ticks(layout, registry):
+    # The condition is STABLE (a fund's prospectus stays paged out until someone paginates — the same fact
+    # every tick), so its suppression signature must NOT move with the calendar: two ticks on different
+    # dates produce an IDENTICAL (key, message). A date-carrying or unkeyed signature would read as NEW
+    # each tick and page daily on a live lead (the E1 volatile-message class); keyed per-fund, once.
+    event_store = EventStore(layout, registry)
+    funds = FundRegistry(layout, registry, event_store)
+    funds.upsert(_entry(prospectus_accession=B))
+
+    def fetch(url, headers):
+        if url == SUBS_URL:
+            return json.dumps(_subs_incomplete()).encode()
+        raise EdgarError(f"no fixture for {url}", status=404)
+
+    def run_on(now):
+        deps = _deps(layout, registry, event_store, fetch)
+        faults, runlog = [], RunLog(run_id="r", ts=now, date=now[:10])
+        _run_mandate(deps, event_store, now, faults, runlog, funds)
+        return next(f for f in faults if f["subsystem"] == "mandate.submissions_incomplete")
+
+    first = run_on(NOW)
+    later = run_on("2026-09-14T22:30:00Z")   # a LATER tick, a different calendar date
+    assert first["key"] == later["key"] == f"submissions_incomplete:{XLK_SID}"
+    assert first["message"] == later["message"]   # date-free message -> identical signature across ticks

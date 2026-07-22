@@ -184,6 +184,16 @@ are the few that fail *silently* — this is the axis that ranks every class abo
 - **The silent set (the dangerous ones):** H1, H4, I1/B1, S1, S5, N1, N2, N3, N8, N10, 9e-ENR, E1, the count-lie.
 - **Rule of thumb:** a finding's severity ≈ how silently it fails. A loud raise is a nuisance; a silent wrong
   number corrupts the fossil record.
+- **The `edgar.py` single-sentinel state-collapse signature (a recurring shape *within* this axis).** The
+  columnar submissions helpers (`latest_prospectus` / `prospectus_history` / `latest_soi` / `confirm_prospectus`
+  / `classify_soi_target`) each return ONE sentinel (`None`/`[]`/one reason), so every distinct failure mode
+  lands in the same hole. **Six instances so far:** N8's three-way (ambiguous/error/not-yet), F1 shape-drift-vs-
+  absence, F5 prior-coverage, the pagination-undetermined third-state, and two mislabels found by enumerating
+  the family — SOI `index.json` drift → `SOI_AMBIGUOUS` (should be `SOI_ERROR`), `confirm_prospectus` drift →
+  `http_error`. **The discipline: when you touch one of these helpers, enumerate the states that map to its
+  return, and split any two that are distinguishable AND differently actionable** (Design's N8 rule;
+  `../decisions/2026-07-22-submissions-pagination-undetermined.md`). Distinguishing is not always *fixing* — a
+  split state may still route to one disposition — but the split is what makes the choice visible.
 
 ---
 
