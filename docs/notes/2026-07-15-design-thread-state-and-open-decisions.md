@@ -38,9 +38,11 @@ duplication was import-graph-forced, not laziness. **No agreement test by design
 (cf. LOCK-TEST-TAUT); the structure is the guard. PR #73.
 
 **Git strategy** — merge commits, not squash (the commits are clean and atomic; the full history is
-informative; squash rewrites the record, which cuts against append-only). **Use "Update with rebase"** instead
-of GitHub's default merge when the branch falls behind — kills the back-merge noise without touching the
-record. **Keep strict-up-to-date** (it's the gate that catches composition failures: branch green + main green
+informative; squash rewrites the record, which cuts against append-only). **[Corrected 2026-07-21, P-3: rebase-merge is now
+disabled at the repo level too — both `allow_rebase_merge` and `allow_squash_merge` are OFF, merge-commits
+only — so the "Update with rebase" button no longer exists.]** When a branch falls behind, update it via
+GitHub's "Update with merge commit" (the back-merge commit is the accepted cost of the append-only trail)
+or a local rebase + force-push. **Keep strict-up-to-date** (it's the gate that catches composition failures: branch green + main green
 + merged result broken).
 
 **Bug archive → retrieval system** — `README.md` = doctrine (stable), `INDEX.md` = register (volatile, greppable).
