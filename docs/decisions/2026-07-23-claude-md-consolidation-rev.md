@@ -84,3 +84,42 @@ it is a follow-up ruling, not a loss.
 2. **QA §7.4 cold post-check** over the merged result: the protected-list sweep + a **re-plant of the firewall
    violation** — a `portfolio.yaml` read in `prospector/sensors/soi.py` — which must go **RED** (the sweep
    bites). Any finding → a follow-up.
+
+---
+
+## Correction (2026-07-23, post QA §7.4 post-check + Design cold read)
+
+The §7.4 post-check (`docs/notes/2026-07-23-claude-md-consolidation-qa-post-check.md`) **PASSED** — the firewall
+re-plant went RED, every scar was grep-present — with one doc-accuracy nit. A subsequent **Design cold read**
+caught what a keyword-grep cannot: several §4-homed scars were *present* but had their **operative half**
+compressed away in the CLAUDE.md index labels (the descriptive slogan kept, the imperative dropped). Verified
+real against the true pre-consolidation original (`<#145-merge>^1:CLAUDE.md`), not paraphrased quotes. All fixed
+in the follow-up (CLAUDE.md surgical amendment); this section corrects the record accordingly.
+
+**§4-table row 13 split (QA's nit — the table's home annotation was inaccurate):**
+- **13a — "fixtures are never refreshed by fetch code":** home = **spec** (`docs/spec.md` :75, :392, verbatim),
+  additionally **mechanized** (fixture `.source.txt` sidecars carry it; `test_edgar_client.py:630` enforces it
+  for the frozen `.htm`). It is **NOT** in CLAUDE.md — a correct Category-B deletion; the original table wrongly
+  annotated its home as CLAUDE.md `## Fixture provenance`. Scar safe (present in a canonical home).
+- **13b — "no fixture silently stands in for a real filing":** home = **CLAUDE.md** `## Fixture provenance`
+  (verbatim). Unchanged.
+
+**Operative-half restorations (CLAUDE.md index labels — before → after):** the labels below dropped the
+imperative during compression; the full clause was safe in the spec (its home) in each case, but per C-2 the
+label must carry the *imperative*, not the descriptive part. The follow-up restores them:
+- **bs4 boundary (#10):** was *"bs4 owns structure / code owns meaning / human owns significance"* (slogan only)
+  → now also **"the extraction/diff must never grow a 'this change is meaningful' opinion"** (spec home :94/:270).
+- **proto-cluster wall (#11):** was *"price-only · cluster-never-single-name · never-the-trade"* → now
+  **"price-only, never keyword/NLP mining · …"** (the spec frames it descriptively at App. B :513; the hard
+  prohibition is now stated in CLAUDE.md, not implied by "price-only").
+- **anti-fitting (#7):** was *"a dormant real outcome NEVER **lowers** sector_min_weight"* (reads as a fact about
+  the action) → now *"NEVER **motivates lowering** … never an *argument* to move the threshold"* (forbids the
+  reasoning, the original rule; spec home :73/:81).
+
+**Also fixed in the follow-up:** the header precedence line (scoped — this file wins on *seat actions*, the spec
+wins on *CONTRACT content*, a disagreement there is a bug in this file's index); the stress-gate index entry
+de-duplicated (the "never a rolling percentile" aging rule now lives once, in `## Standing review items`); the
+missing **B-M5** sensor-conduct rule ("mark what you cannot attribute — never suppress, never emit as clean")
+added to `## Verification`; a Firewall → `## Enforcement tiers` pointer added. Firewall test green; full suite
+unaffected. No scar was ever absent from a canonical home — the §4 pass held throughout; these are label/accuracy
+corrections, not scar restorations from loss.
