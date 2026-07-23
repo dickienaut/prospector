@@ -76,7 +76,7 @@ merge-gate on `main` are all built. The **M7 autonomy core is live**: a launchd 
 backup` daily on the Mac Mini, mirrors the fossil store to two blessed HDDs, and arms the §8a dead-man (a
 weekly heartbeat; silence beyond 7 days unambiguously means broken). A real `pros run` has fired live `xcorr`
 leads on the SPDR grid, dispersion runs in shadow burn-in, and the backup restores cleanly (`verify-restore`).
-**v1 is build-complete and deployed.** **~660 offline tests, network-guarded**; every change lands only
+**v1 is build-complete and deployed.** **~720 offline tests, network-guarded**; every change lands only
 through a green-CI pull request, and production is a tag-pinned worktree (`ops/deploy.sh`).
 
 The honest caveat the docs keep front-and-center: **live ≠ validated.** The firing is n=1, the
@@ -90,7 +90,7 @@ what remains now that v1 is deployed. (M6 discourse capture is **built and ships
 
 ```sh
 uv sync                                     # base install
-uv run pytest                               # the full offline suite (~660 tests, network-guarded)
+uv run pytest                               # the full offline suite (~720 tests, network-guarded)
 uv run pytest -q tests/test_capture.py      # a single module
 ```
 
@@ -149,7 +149,7 @@ ops/deploy.sh <tag>                                # ship a release (tag-pinned,
 - **[`CLAUDE.md`](CLAUDE.md)** — the repo constitution (the firewall, CONTRACT-vs-DEFAULT, the
   append-only and identity rules).
 - **[`docs/spec.md`](docs/spec.md)** —
-  the canonical spec (rev15; rev14 and earlier revs kept as history).
+  the canonical spec (read its header for the current rev; earlier revs kept as history).
 - **`docs/decisions/`** — every load-bearing CONTRACT amendment, next to its `config.changed` fossil.
 - **[`ops/README.md`](ops/README.md)** — the M7 autonomy core: scheduling the runner on launchd + the
   fossil-store backup, and the on-Mini activation runbook.
