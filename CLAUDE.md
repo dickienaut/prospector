@@ -3,33 +3,12 @@
 This repo is **Project Prospector**, the offensive twin of the thesis smoke detector. It watches
 the ETF universe for structural novelty and proposes **reading, never orders**.
 
-The canonical spec is `docs/spec.md` (rev 15, stated in its header; earlier revs kept in
-`docs/history/`). Read it before changing anything load-bearing. Rev12 folds the launch corroboration hook
-(§4c) to **built** (the M4 capstone) and records its finding at deflated strength — the live lag is
-bounded by holdings coverage, an **existence proof, not a rate** — plus the fixture-provenance honesty.
-Primary-source review then sharpened it: the real SSGA daily file is **xlsx, not CSV**, and for an
-**active fund carries no `Sector` column at all** (all "-"), so file-sector-derived concentration is
-empty → real TEKX → `sectors_unresolved` (dormant), not a corroboration; the +593 was reachable only on
-the synthetic fixture (see `docs/decisions/2026-07-04-real-holdings-xlsx-and-blank-sectors.md`). Rev11
-folds the mandate-diff precision into
-§4d/§7 (raw-HTML frozen per accession, section extracted on *read*; priority-match Strategies→Objective;
-specified extraction-unreliable→`fault` conditions) and adds a **CONTRACT state-source invariant for the
-§9 runner**: the mandate sensor's "prior" is its last *frozen* prospectus blob, never the registry
-`prospectus_accession` (which an identity pass may advance intra-run). Rev10 recorded mandate-diff built.
-Rev9 decomposed the rebalance sensor (§4d)
-like the launch sensor: the **holdings-diff accretion core is self-contained** (its own PR) and
-**`mandate.changed` is a deferred defined-next-slice** (needs new surface — EDGAR prospectus-*text*
-fetch + `ingest/prospectus/` blob-per-accession storage + text diff). Rev9 also makes **CONTRACT**:
-routing by **forward-hash** (reuse `xcorr_lead_id`/`dispersion_lead_id` verbatim — no series_ids in the
-payload, the lead-id already encodes them) and **live-lead enumeration from the registry-materialized
-fold** (no separate cache). Rev8 records the **proto-cluster / pseudo-ETF** concept as a v2 design note
-(Appendix B — a deterministic, price-only route to *new-category* detection below the ETF corpus) and
-folds in a **generous `dispersion.tick` payload** (§4b, CONTRACT). Rev7 (folded in) demoted the launch stream to
-corroboration + consensus-clock (never a ceiling-counting lead-spawner) and split the launch sensor
-into recording (built) + corroboration (gated on §4d holdings ingest). Rev6 folded the four-value
-verdict vocabulary into §5/§8c, recorded the box-B crash-flag outcome (§4a/§5/§8b/§10), and added the
-§4a multi-factor-β guard. It carries forward unchanged rev5's stress-gate freeze (absolute 0.85,
-crisis-only) and the amended March-2020 falsification (test 5c → reversion criterion).
+The canonical spec is `docs/spec.md`; **read its header for the current rev**, earlier revs in
+`docs/history/`. Read it before changing anything load-bearing. (The spec carries its own rev changelog —
+this file names no rev number, so the pointer cannot drift; the CONTRACTs the old rev-narrative summarized
+all live in the spec, e.g. the §9-runner mandate-prior-from-the-frozen-blob invariant, forward-hash
+routing, `sectors_unresolved`, the registrant-level `prospectus_accession` residual, and the frozen
+GICS industry→sector rollup.)
 
 ## Firewall
 - Never add code that reads the detector's bucket or `portfolio.yaml`.
@@ -72,8 +51,8 @@ Design-thread-authorized amendments to CONTRACT defaults are recorded under `doc
   `dispersion_lead_id` verbatim and intersect with active leads; **never** add series_ids to a lead
   payload (the lead-id already encodes them — duplication invites drift). Read the active-lead set from
   the **registry-materialized fold** (the snapshots the fold writes), never by re-folding or a separate
-  cache. `mandate.changed` is a deferred defined-next-slice (unblock: EDGAR prospectus-*text* fetch +
-  `ingest/prospectus/` blob-per-accession storage); NPORT-P (`parse_nport_holdings`) stays the labeled
+  cache. `mandate.changed` is **built** (§4d — the targeted strategy-section diff on the last *frozen*
+  per-accession prospectus blob; see the next bullet); NPORT-P (`parse_nport_holdings`) stays the labeled
   §3b stub — do not fill it with survivor-biased data.
 - **Mandate-diff: targeted section + a deliberate dependency (§4d, rev9→rev10)** — ratified:
   `docs/decisions/2026-07-03-mandate-diff-targeted-section.md`. A new prospectus → diff **only the
@@ -124,7 +103,7 @@ Design-thread-authorized amendments to CONTRACT defaults are recorded under `doc
   the **reconcile-to-`COMMON STOCKS`-total** check caught a mixed-case `SPECIALIZED REITs` the first regex
   dropped; on real TEKX the Jul-2025 SOI clears `{Financials, Industrials, IT, Utilities}` (Financials
   10.1% too — filed truth over the spec's 3-sector prose) → **+593 on real data**, and Jan-2026 stays
-  **dormant** (Utilities 6.4% < floor). **Live EDGAR-SOI-fetch is DEFERRED to M5** (tied to `EdgarClient`;
+  **dormant** (Utilities 6.4% < floor). **Live EDGAR-SOI-fetch is built (the M5 runner)** (`EdgarClient`;
   `SOI_FORMS`/`latest_soi`/`index.json` doc resolution) — **drop-and-freeze for tests, fetch-on-cadence
   for the runner; the two never conflate** (fixtures are never refreshed by fetch code). `parse_nport_
   holdings` stays the labeled §3b stub. Holdings-intake coverage (per-issuer / NPORT-P) remains secondary

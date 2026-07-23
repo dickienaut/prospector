@@ -287,9 +287,11 @@ The two LOW test-integrity items from QA's post-#99 sweep, landed together (test
   registry-field residual (and B2 pagination) remain the named deferrals.
 - ✅ **Doc debt** — DRIFT-1, DRIFT-2, C.2 **closed** (2026-07-22): `state.md` re-synthesized to **rev 9** and
   `ARCHITECTURE.md` refreshed, both regenerated from the wired set with §5 as the single source. *(The CLAUDE.md
-  drift — A2 rev-pointer + A3 false "mandate.changed deferred" — is tracked separately: a **minimal drift-kill**
-  is next; the **full ratified consolidation** (`../notes/2026-07-21-claude-md-consolidation-reconciled.md`)
-  stays deferred with a trigger — its own dedicated session, shipping the §4 protected-list table.)*
+  drift — A2 rev-pointer + A3 false "mandate.changed deferred" — **closed 2026-07-23 by the minimal drift-kill**
+  (C-1 version-free spec pointer + the two false "deferred" lines corrected;
+  `../decisions/2026-07-23-claude-md-minimal-drift-kill.md`). The **full ratified consolidation**
+  (`../notes/2026-07-21-claude-md-consolidation-reconciled.md`) stays deferred with a trigger — its own
+  dedicated session, shipping the §4 protected-list table.)*
   Deliberately **not** in the Tier-4 sweep — rides the rev15 spec-fold ("record matches territory", done together).
 - ✅ **Tier-4 low-severity sweep — CLOSED (#67):** H3/S5/lag-lexical-sort/sql-assert/BK-MSG-01 fixed
   (commit-per-item); H2/H4/S3/report.py/edgar-`matches[0]`/ledger-datesort were already fixed on main and the
