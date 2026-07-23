@@ -4,7 +4,7 @@ Sensors sit between `ingest/` (frozen raw bytes, §3) and the `store`/`fold` (th
 record a lead is folded from). Each is a **pure function over pandas/dicts** — no store, no network,
 no clock — driven once per tick by `runner/`. They emit **facts, never verdicts**: a `lead.spawned`,
 an `xcorr.tick`, a `rebalance` — the human owns the verdict. Milestone 4 is "sensors complete" (spec
-rev14). One distinction governs the whole package: **`xcorr` is the primary live lead-spawner;
+§4). One distinction governs the whole package: **`xcorr` is the primary live lead-spawner;
 `dispersion` is built but shadow/not-yet-wired; the other four accretion sensors NEVER spawn a lead**
 — they attach facts onto leads that already exist (routed by forward-hash, CONTRACT §4d).
 

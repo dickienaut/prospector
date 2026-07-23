@@ -78,3 +78,19 @@ single canonical home × verified-present — so the owner reviews **~14 rows, n
 un-mechanizable attention problem mostly dissolves (Design's stated condition for doing it full-now). It also
 runs the escape valve in full: a clause-by-clause diff proof in *its own* decision record, the §4 protected-list
 check, and the §7.4 QA cold post-check (a re-plant of the firewall violation, which must go RED).
+
+## C-1 sweep completion (2026-07-23, post-consolidation)
+
+C-1 (the version-free spec pointer) was applied **per document, not swept** — killed in `CLAUDE.md` here and in
+`ARCHITECTURE.md` (#143), but the same rev-pinned pointer survived in two docs no in-scope work happened to
+touch: `README.md` (the widest-readership doc — "the canonical spec (rev15…)", plus "~660 offline tests" ×2)
+and `prospector/sensors/README.md` ("Milestone 4 … (spec rev14)"). Design caught README on a cold read.
+
+**The lesson is worth more than the fix: enumerate-don't-recall, pointed at the fix itself.** A recurring-drift
+defect must be closed by a **repo-wide grep**, not a per-document pass — precisely because the drift's whole
+nature is that it re-appears in the doc you didn't enumerate. Closed by
+`grep -rn "rev *1[0-9]\|~6[0-9][0-9] tests" README.md ARCHITECTURE.md prospector/*/README.md docs/state.md …`
+over the stable-named docs (the point-in-time docs — `history/`, `decisions/`, `notes/` — legitimately pin
+historical revs and are excluded). All four surviving instances fixed version-free / to the current count; the
+sweep now returns only current (`rev 18`) references and historical register facts. The class is closed by
+enumeration, not by recall.
