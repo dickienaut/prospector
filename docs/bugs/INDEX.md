@@ -289,10 +289,15 @@ The two LOW test-integrity items from QA's post-#99 sweep, landed together (test
   `ARCHITECTURE.md` refreshed, both regenerated from the wired set with §5 as the single source. *(The CLAUDE.md
   drift — A2 rev-pointer + A3 false "mandate.changed deferred" — **closed 2026-07-23 by the minimal drift-kill**
   (C-1 version-free spec pointer + the two false "deferred" lines corrected;
-  `../decisions/2026-07-23-claude-md-minimal-drift-kill.md`). The **full ratified consolidation**
-  (`../notes/2026-07-21-claude-md-consolidation-reconciled.md`) stays deferred with a trigger — its own
-  dedicated session, shipping the §4 protected-list table.)*
-  Deliberately **not** in the Tier-4 sweep — rides the rev15 spec-fold ("record matches territory", done together).
+  `../decisions/2026-07-23-claude-md-minimal-drift-kill.md`). The **full ratified consolidation** is now
+  **EXECUTED (2026-07-23)** — the reconciled edit-list (`../notes/2026-07-21-claude-md-consolidation-reconciled.md`)
+  run as an explicit consolidation rev: CONTRACT-vs-DEFAULT compressed to an amendment index, the three doc-rule
+  sections grouped under `## The record`, `Identity` → `Fund identity`, the header map + honest enforcement tiers
+  + the missing operative rules (the seats / verification / merge-mechanism / deploy-by-tag) added. Shipped with
+  the **clause-by-clause diff proof + the §4 protected-list table** (all 14 scars verified present in one home;
+  no scar lost) and the §3c detector-bucket deviation recorded as a finding —
+  `../decisions/2026-07-23-claude-md-consolidation-rev.md`. QA §7.4 cold post-check (firewall re-plant → RED) is
+  owed after merge.)*
 - ✅ **Tier-4 low-severity sweep — CLOSED (#67):** H3/S5/lag-lexical-sort/sql-assert/BK-MSG-01 fixed
   (commit-per-item); H2/H4/S3/report.py/edgar-`matches[0]`/ledger-datesort were already fixed on main and the
   **register drift** (false-⭕) is corrected with citations; **eigengap** → 💤 parked-with-gate (dispersion
