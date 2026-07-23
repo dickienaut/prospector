@@ -1,44 +1,55 @@
-# Project Prospector — Architecture, Findings, and Current State (rev 8)
+# Project Prospector — Architecture, Findings, and Current State (rev 9)
 
-*Canonical state-of-the-project record — **rev 8, 2026-07-16** (rev 7 was 2026-07-11; rev 6, 2026-07-10).
+*Canonical state-of-the-project record — **rev 9, 2026-07-22** (rev 8 was 2026-07-16; rev 7, 2026-07-11).
 Captures what Prospector is, what has been built, what the build has empirically found, the discipline that
 governs it, and where it stands — with every claim in §5 sorted by **register** (built / queued / deferred-
-named / aspirational-v2) so the record neither over- nor under-claims. **As of rev 8, v1 is build-complete:**
-both structural spawners are live (xcorr paging, dispersion in shadow burn-in), the §10 sender fires honest
-alarms, rebalance is runner-wired (the last M4 slice), and the **M7 autonomy core is built** — a
-launchd-scheduled runner that fires `pros run && pros backup` on cadence and **arms the §8a dead-man** —
-awaiting only a one-time on-Mini activation. What finished is the **instrument**; the measurement — the
-years-long prospective run that converts existence-proofs into a *rate* — has not started: falsifiability is
-shown, a rate and profitability are not. Companion to the
-founding document, the decisions review, and the v1 build spec (**rev 15** — this arc's CONTRACT deltas now
+named / aspirational-v2) so the record neither over- nor under-claims. **As of rev 9, v1 is build-complete and
+cut/deployed as `v1.0.6`:** both structural spawners are live (xcorr paging, dispersion in shadow burn-in), the
+§10 sender fires honest alarms, rebalance is runner-wired (the last M4 slice), and the **M7 autonomy core is
+built** — a launchd-scheduled runner that fires `pros run && pros backup` on cadence and **arms the §8a
+dead-man**. Rev 9 records the **post-#99 hardening arc** (no new milestone): the mandate diff earned its B1
+SGML series-scoped confirmation + fund-block isolation, the `edgar.py` submissions helpers' six-instance
+state-collapse family was closed, and §8a's operational-vs-review-advisory test was sharpened to
+**broken-vs-incomplete** (spec rev 18) — the instrument got more defensively built, not larger. What finished is
+the **instrument**; the measurement — the years-long prospective run that converts existence-proofs into a
+*rate* — has not started: falsifiability is shown, a rate and profitability are not. Companion to the
+founding document, the decisions review, and the v1 build spec (**rev 18** — this arc's CONTRACT deltas now
 folded; the canonical build instructions, of which this doc is the orientation/status/roadmap synthesis).
-Supersedes rev 7 (§10) and rev 6.*
+Supersedes rev 8.*
 
-**What changed since rev 7 (for the returning reader).** rev 7 recorded the §10 sender landing — the system
-becoming an always-on monitor. **rev 8 records v1 reaching build-complete, and the shift in what "done" means.**
-Since rev 7, four things:
+**What changed since rev 8 (for the returning reader).** rev 8 recorded v1 reaching build-complete — the
+runner able to run itself. **rev 9 records the post-#99 hardening arc and the `v1.0.6` cut/deploy** — no new
+milestone; the instrument made more defensively built where a cold real-data QA read found it thin. Since rev 8,
+four things:
 
-1. **The M7 autonomy core is built — the runner leaves manual `pros run`.** A launchd-scheduled runner fires
-   `pros run && pros backup` on cadence (`2026-07-12-m7-autonomy-core.md`), which **arms the §8a dead-man**
-   ("silence past 7 days = broken" becomes a real guarantee, not a manual-run artifact) and adds an
-   OK/DEGRADED health line to the heartbeat. It awaits a one-time on-Mini activation (`ops/README.md`); after
-   that, v1 runs itself. This is the piece rev 7's "built now, arms at M7" dead-man was waiting on.
-2. **The durability + concurrency floor landed.** A **single-writer `run.lock`** (`fcntl.flock`, acquired by
-   the runner and `deploy.sh` — `2026-07-14-single-writer-lock-and-deploy-coordination.md`) converts the prose
-   single-writer assumption to a mechanism; **store-durability backup** (`pros backup` / `pros store
-   verify-restore`, a local-HDD mirror of the fossil store, fail-loud — `2026-07-12-store-durability-backup.md`)
-   with backup health surfacing on the one fault→heartbeat channel (`2026-07-14-backup-health-one-fault-channel.md`).
-3. **Rebalance is runner-wired — the last M4 sensor into the runner** (`2026-07-12-rebalance-runner-wiring.md`),
-   a silent accretion sensor that accretes facts onto live leads and never spawns.
-4. **The build spec folded to rev 15.** The CONTRACT deltas of this whole arc — the page-worthy alarm posture,
-   dispersion's constituent vertical, the effective-merged config hash, the byte-exact *ordered* query-drift
-   gate, the board export, the M7-built status, and the lock's not-built items named in the §0 OUT — are now
-   in the canonical build spec (rev 15), whose clause-trace drift audit caught a latent §4b/§8a contradiction
-   the code had already outgrown (D2).
+1. **The mandate diff earned its B1 series-scoped confirmation + fund-block isolation.** A multi-fund prospectus
+   carries one strategy section per fund, and the submissions doc has no series dimension — so the diff could
+   mis-attribute the first fund's strategy to every series sharing the filing. The fix verifies coverage live
+   via the SGML `<SERIES-AND-CLASSES-CONTRACTS-DATA>` header (`parse_series_classes`) and isolates the target
+   fund's block by its SGML series-name before diffing, so each series now diffs ITS OWN section
+   (`2026-07-21-mandate-series-scoped-confirmation-*` + `-fund-block-isolation.md`; closes
+   `MANDATE-MULTIFUND-SECTION`); the J.P. Morgan Q&A question-form heading joined the recognised set. So
+   **combined-prospectus multi-fund extraction — the one mandate item §2.9/§5.2 carried deferred — is now
+   built** (this closes DRIFT-1).
+2. **The `edgar.py` state-collapse family was enumerated and closed — six instances.** The submissions/manifest
+   helpers each returned ONE sentinel, so distinct, differently-actionable failure states fused into it. All six
+   are now split: N8's three-way, F1 shape-drift-vs-absence, F5 prior-coverage asymmetry, the pagination
+   third-state (`SubmissionsIncompleteError` → review-advisory), and two BK-MSG-01 mislabels (SOI manifest drift
+   → `SOI_ERROR`, `confirm_prospectus` drift → `submissions_shape`). Recorded as a signature in
+   `docs/bugs/README.md` §1, with the enumeration's bounds stated (the columnar-JSON family, not the
+   filing-bytes parsers).
+3. **§8a's alarm test was sharpened to broken-vs-incomplete (spec rev 18).** *Operational* = a contract the
+   system depends on was violated (it cannot do its job → pages); *review-advisory* = it did its job and the
+   result needs a human's judgment (surfaced-not-paged). The rev-16 "right to expect success" framing became the
+   fetch-outcome corollary — a fetch that *succeeds* but returns incomplete coverage (submissions pagination) is
+   review-advisory. Three design rulings in four days re-derived the test; the spec now binds the general form.
+4. **`v1.0.6` was cut and deployed to prod**, and two test-integrity items closed (the mandate review-advisory
+   category tautology, driven now through the production reporter; and the owed `deploy.sh` lock-contention
+   regression guard). The build spec folded to **rev 18**.
 
-The shift to hold onto: **build-complete is a finish line *and* a starting line.** What finished is the
-instrument. The false-discovery rate is unmeasured, dispersion's burn-in is barely started, and the edge
-question is open — none of those resolve by building. Part V reads accordingly: *the instrument is done; the
+The shift to hold onto is unchanged from rev 8: **build-complete is a finish line *and* a starting line.** This
+arc hardened the instrument; the false-discovery rate is still unmeasured, dispersion's burn-in barely started,
+the edge question open — none resolve by building. Part V reads accordingly: *the instrument is done; the
 measurement hasn't started.*
 
 ---
@@ -50,7 +61,7 @@ Operating Discipline, §4.1–4.7) are unchanged — the premise, the consensus 
 ETF-as-thesis instrument, the three streams, the wall/scarce-oracle, the firewall, the fossil record, the M3
 findings, and the seven operating disciplines are all stable. Carry them forward verbatim from rev 5/6.*
 
-**§2.9 "What is deferred," updated for rev 8 (walked item-by-item; rebalance, the M7 core, and M6 capture have closed):**
+**§2.9 "What is deferred," updated for rev 8, amended rev 9 (rebalance, the M7 core, M6 capture, and now combined-prospectus multi-fund extraction have closed):**
 
 > ## 2.9 What is deferred
 > - **M7-hardening remainder.** The M7 autonomy core (launchd scheduling, the single-writer lock, the
@@ -61,16 +72,16 @@ findings, and the seven operating disciplines are all stable. Carry them forward
 > - **Milestone 3b** (dispersion PIT calibration + NPORT-P parser) — data-gated; live burn-in substitutes;
 >   not a v1 blocker.
 > - **Named coverage/observability gaps (non-blocking, surfaced-not-lost):** broader holdings-intake coverage;
->   foreign constituent symbol resolution (§9e Option 3 — **kept deferred by spec rev 15 §4b**);
+>   foreign constituent symbol resolution (§9e Option 3 — **kept deferred by spec §4b**);
 >   **`coverage_actual` surfacing** (computed in the runner/ingest; **not yet shown** in the dashboard or
 >   email); **fault-log bounding** (the `fault_log` read is unbounded — reads every fault event then caps
 >   display — a perf/scale concern that grows with the record, distinct from any display window; trigger is
 >   volume); **live-lead advisories on the lead's own timeline** (today all advisories hit `_system`
 >   undifferentiated; the paging call already distinguishes live-lead, but prominent per-lead surfacing is a
->   later refinement); **combined-prospectus multi-fund extraction** (the mandate extractor is
->   single-fund-tuned; a combined iShares/Vanguard prospectus faults to manual review — raw HTML is frozen and
->   extraction is on-read, so nothing is lost and a better extractor re-parses later; the fault is honest, not
->   a break).
+>   later refinement).
+> - *(Closed rev 9 — **combined-prospectus multi-fund extraction is now built**: the mandate diff isolates the
+>   target fund's block by its SGML series-name, so each series diffs its own strategy section rather than the
+>   first fund's — `2026-07-21-mandate-fund-block-isolation.md`. Was carried here as deferred through rev 8.)
 
 ---
 
@@ -104,7 +115,7 @@ structural spawners are live; the runner can now run *itself*. Where it stands:
 
 *(Register transitions since rev 7 are traced in the fold PR — each move names its record, each non-move is verified still-true, and the ASPIRATIONAL wall is checked for drift.)*
 
-**BUILT (634 tests, all offline):**
+**BUILT (721 tests, all offline):**
 - *Foundation + M4 + SOI + M5 runner + §9e + §8b + §10* — carried from rev 7, unchanged: the fossil record,
   identity layer, excess-correlation + frozen stress gate, backtest + full M3 gate, the M4 sensors + SOI
   resolver, the §9 runner (SOI-fetch, §9d retry, §9c mandate invariant, Tiingo prices, xcorr live), §9e
@@ -128,6 +139,17 @@ structural spawners are live; the runner can now run *itself*. Where it stands:
   `capture.monthly_budget_usd` + `ANTHROPIC_API_KEY`, behind the one-time **CAP-DRIFT armed byte-compare**
   (`query-drift-byte-exact`) that runs before capture is armed. Write-only — nothing in v1 reads a capture.
   (Anthropic `web_search` + $10/mo budget ratified per the M6 build note.)
+- ***NEW — the post-#99 hardening arc (`v1.0.6`).*** No new milestone; the instrument made more defensively
+  built where a cold real-data QA read found it thin. The mandate diff's **B1 SGML series-scoped confirmation +
+  fund-block isolation** (a multi-fund prospectus now diffs each series' OWN strategy section, isolated by its
+  SGML series-name — `2026-07-21-mandate-series-scoped-confirmation-*` + `-fund-block-isolation.md`; closes
+  `MANDATE-MULTIFUND-SECTION`, and with it the last deferred mandate item); the **`edgar.py` submissions
+  state-collapse family closed** — six instances split so distinct, differently-actionable failure states no
+  longer fuse into one sentinel (N8, F1 shape-drift, F5 prior-coverage, the pagination third-state, and two
+  BK-MSG-01 mislabels; signature recorded in `docs/bugs/README.md` §1); and **§8a sharpened to
+  broken-vs-incomplete** (spec **rev 18** — *operational* = a violated contract that pages, *review-advisory* =
+  the system did its job and a human decides; the pagination third-state is the worked example). Cut and
+  **deployed to prod as `v1.0.6`.**
 
 **QUEUED (named, next):**
 - **The on-Mini activation** — *not a build, a deploy action:* install the launchd job, bless the backup
@@ -138,9 +160,9 @@ structural spawners are live; the runner can now run *itself*. Where it stands:
   local-disk + HDD; S3 dormant).
 - **Milestone 3b** (dispersion PIT calibration + NPORT-P parser) — data-gated; live burn-in substitutes.
 - **The coverage/observability gaps** (per §2.9): broader holdings coverage; foreign symbol resolution
-  (Option 3, kept deferred by rev 15 §4b); `coverage_actual` surfacing (computed, not shown); **fault-log
-  bounding** (unbounded read, grows with the record); live-lead advisories on the lead's timeline;
-  **combined-prospectus multi-fund extraction** (honest fault, raw banked, re-parseable on-read).
+  (Option 3, kept deferred by spec §4b); `coverage_actual` surfacing (computed, not shown); **fault-log
+  bounding** (unbounded read, grows with the record); live-lead advisories on the lead's timeline.
+  *(Combined-prospectus multi-fund extraction moved BUILT this rev — see the post-#99 hardening bullet above.)*
 
 **ASPIRATIONAL (v2, walled off — captured, not queued):**
 - The **proto-cluster / pseudo-ETF** layer and Prospector-as-product (§1.9) — its substrate accrues via the
@@ -175,8 +197,8 @@ Beyond v1: the **discourse interpretation** (v2 — the capture that feeds it is
 
 **The shift to internalize:** the whole arc to here built the instrument. That is done. Everything that answers
 the real question — does a structure-first signal have an edge — lives in the run, which has not started.
-Build-complete is the starting line, not the finish. This doc (rev 8) records the build-complete state; spec
-rev 15 carries the CONTRACT deltas.
+Build-complete is the starting line, not the finish. This doc (rev 9) records the build-complete-and-deployed
+(`v1.0.6`) state; spec rev 18 carries the CONTRACT deltas.
 
 ---
 

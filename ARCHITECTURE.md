@@ -1,11 +1,13 @@
 # Prospector — Architecture
 
 *A map of what's built and why. Read this to catch up; read `docs/spec.md`
-for the canonical "what to build," `docs/state.md` for
+for the canonical "what to build" (read its header for the current rev), `docs/state.md` for
 the status/roadmap source of truth, and `docs/decisions/` for the "why we changed our minds." Last
-updated after the **M5 runner arc + going-live (N1–N10) hardening**: the runner is built and the
-system is **live and firing** — a real `pros run` fired 5 xcorr leads on the SPDR grid — but it is
-still **n=1 and unfalsified** (falsifiability is demonstrated; a rate and profitability are not).*
+updated after the **post-#99 hardening arc, cut and deployed as `v1.0.6`** (spec rev 18): v1 is
+build-complete, live and firing, and the mandate diff + the `edgar.py` submissions layer are now
+defensively hardened (B1 SGML series-scoped confirmation + fund-block isolation; the six-instance
+`edgar.py` state-collapse family closed; §8a sharpened to **broken-vs-incomplete**). It remains
+**n=1 and unfalsified** (falsifiability is demonstrated; a rate and profitability are not).*
 
 ---
 
@@ -36,7 +38,7 @@ path places, sizes, or recommends a trade.
 
 ## 2. Module map
 
-~7,400 lines of Python, 499 tests (offline). Packages under `prospector/`:
+~7,400 lines of Python, 721 tests (offline). Packages under `prospector/`:
 
 | Package / module | Responsibility | Key entry points |
 |---|---|---|
@@ -265,7 +267,16 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 
 ## 9. Status — built vs deferred
 
-**Built (committed, 499 tests green, all offline) — milestones 1–4 + the SOI resolver + the M5 runner (live):**
+**Built (committed, 721 tests green, all offline) — v1 build-complete, cut/deployed `v1.0.6`; milestones 1–6, the SOI resolver, the M5 runner (live), and the M7 autonomy core:**
+- **Post-#99 hardening (`v1.0.6`, spec rev 18) — the instrument made more defensively built, not larger.** The
+  mandate diff's **B1 SGML series-scoped confirmation + fund-block isolation** (a multi-fund prospectus diffs
+  each series' own strategy section, isolated by SGML series-name — closes `MANDATE-MULTIFUND-SECTION`); the
+  `edgar.py` submissions **state-collapse family closed** — six instances where distinct, differently-actionable
+  failure states fused into one sentinel, now split by typed errors (`SubmissionsShapeError` /
+  `SubmissionsIncompleteError` / `FilingIndexShapeError`) and a `submissions_shape` resolution reason
+  (`docs/bugs/README.md` §1 records the signature + the enumeration bounds); and **§8a sharpened to
+  broken-vs-incomplete** (spec rev 18 — operational = a violated contract that pages, review-advisory = the
+  system did its job and a human decides). Closes **C.2**.
 - Milestone 1 — vendored primitives, envelope store, WAL registry, fold engine, reactive snapshots,
   S3 sync, config honesty, reindex.
 - Milestone 2 — EDGAR client, fund registry (HECO rule), failed-resolution machine.
@@ -273,7 +284,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
 - Post-M3 design-thread work — the stress-gate recalibration (0.85 crisis-only), spec rev5's amended
   falsification (reversion criterion), the read-only crash-flags diagnostic (box B), and the
   verdict-disposition vocabulary lock-in.
-- Milestone 4 (**sensors complete**) — spec **rev14** canonical; the **launch sensor** (recording,
+- Milestone 4 (**sensors complete**) — spec-canonical; the **launch sensor** (recording,
   the consensus clock, `detected_at` preserved); **holdings ingest** (§4d keystone; now reads real
   SSGA **xlsx** — pinned `openpyxl`); the **dispersion sensor** (§4b, shadow-wired, generous payload);
   the **rebalance sensor** (§4d accretion, forward-hash routing); the **mandate-diff sensor** (§4d,
@@ -431,7 +442,7 @@ nothing keys on it to drive action, so "context, never a trigger" holds by const
   tree). A HARD budget cap (`capture.max_searches_per_week` + `capture.monthly_budget_usd`, a persisted
   counter) pauses + faults on breach (§10, never a silent overrun). Write-only: nothing in v1 reads a
   capture. The owner arms it by setting `capture.monthly_budget_usd` + `ANTHROPIC_API_KEY` in the prod
-  `.env`; live on-Mini verification (first scheduled run) + the spec rev15 fold are the remaining v1 items.
+  `.env`; **live on-Mini verification (first scheduled run) is the remaining v1 activation item** (the spec fold landed long since — now rev 18).
   Provider (Anthropic web_search) + $10/mo budget ratified this session (build note
   `docs/notes/2026-07-13-m6-discourse-capture-build-note.md`).
 - **Milestone 7** — infra-as-code + **scheduled**
@@ -465,7 +476,7 @@ is demonstrated; profitability is not. "Live" is not "proven."**
 
 ```sh
 uv sync                 # set up the environment
-uv run pytest -q        # 499 tests, offline
+uv run pytest -q        # 721 tests, offline
 uv run pros --help      # the CLI
 uv run pros run         # one cadence tick (§9): ingest → sensors → snapshots → push-on-state-change
 uv run pros backtest --from 2019-01-01 --to 2024-12-31 --sweep   # regenerate the acceptance gate
