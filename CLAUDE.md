@@ -10,8 +10,9 @@ spec: the §9-runner mandate-prior-from-the-frozen-blob invariant, forward-hash 
 the registrant-level `prospectus_accession` residual, the frozen GICS industry→sector rollup.)
 
 **How to read this file.** *Operative rules live here · the **why** is in `METHOD.md` · the full **contract**
-is the spec (`docs/spec.md`) · past **scars** are `docs/bugs/` · **on any disagreement, this file wins** (and
-the disagreeing doc is the bug).* Sections: **Firewall · CONTRACT vs DEFAULT · Enforcement tiers · The record ·
+is the spec (`docs/spec.md`) · past **scars** are `docs/bugs/`. **On what a seat must *do*, this file wins**
+(the disagreeing doc is the bug); **on CONTRACT *content*, the spec wins** — if this file's compressed index
+disagrees with the contract it indexes, the index is the bug, fix it here.* Sections: **Firewall · CONTRACT vs DEFAULT · Enforcement tiers · The record ·
 Vendored store provenance · No LLM text as data · No run-now surfaces · Fund identity · Config honesty · Alert
 posture · Standing review items · The seats · Verification · Development · Fixture provenance · Documentation.**
 (No index-of-every-NEVER by design — it would either restate the imperatives, a second home, or rot into a
@@ -22,20 +23,24 @@ maintenance-cost pointer list.)
 - Never add a code path that places, sizes, or recommends a trade.
 - The only connection to the portfolio system is human and one-way (a lead graduates by hand).
 
+Their **enforcement tiers** are stated honestly in `## Enforcement tiers` — which clause is a mechanism (the
+`portfolio.yaml` sweep, the S3-client confinement) and which is prose (*recommend a trade* has nothing behind
+it but this line, and that is the clause closest to the real risk).
+
 ## CONTRACT vs DEFAULT
 Items marked CONTRACT in `docs/` specs change only via the design thread (chat with the owner), never
 unilaterally in implementation. DEFAULTs are config in `config/prospector.yaml` — change freely. **The full
 CONTRACT text is the spec**; this section **indexes the design-thread-ratified amendments** under
 `docs/decisions/` — the operative constraint + its record, the narrative left in the record:
-- **Stress gate** — frozen at absolute **0.85** (crisis-only); fix its aging by human recalibration, **never**
-  a rolling percentile (the baseline-relative failure it diagnosed) — `2026-07-02-stress-gate-recalibration.md`.
+- **Stress gate** — frozen at absolute **0.85** (crisis-only), never baseline-relative —
+  `2026-07-02-stress-gate-recalibration.md`. (Its aging discipline lives once, in `## Standing review items`.)
 - **Verdict vocabulary (§5/§8c)** — four values, three live meanings (`yes` · `watch` · `off-thesis-real` ·
   `noise`); **never** file a live tech lead as macro (`off-thesis-real` ≠ `watch`). `VERDICT_VOCAB` in
   `fold/fold.py` is the single source — `2026-07-02-crash-flags-guidance-rev2.md`.
 - **Dispersion payload (§4b)** — `dispersion.tick` carries **full membership + each name's sub-cluster +
   correlation structure** (you cannot backfill a payload you did not capture). The v2 proto-cluster wall (not
-  built): **price-only** · the canary is a **cluster, never a single name** · **observation-only — the canary
-  is never the trade** — `2026-07-03-dispersion-payload-generous.md`.
+  built): **price-only, never keyword/NLP mining** · the canary is a **cluster, never a single name** ·
+  **observation-only — the canary is never the trade** — `2026-07-03-dispersion-payload-generous.md`.
 - **Rebalance routing (§4d)** — an **accretion** sensor (no Schmitt, no lead of its own). Forward-hash
   memberships via `xcorr_lead_id`/`dispersion_lead_id`; **never** add series_ids to a lead payload (the lead-id
   encodes them — duplication invites drift). Read active leads from the **registry-materialized fold**, never a
@@ -43,12 +48,13 @@ CONTRACT text is the spec**; this section **indexes the design-thread-ratified a
 - **Mandate-diff (§4d)** — diff the **principal-investment-strategy section only**, **never** the whole filing
   (a full-text diff is a false-positive machine — the diff-trap); `mandate.changed` is a silent corroboration;
   extraction-unreliable → `fault`, **never** a false change. Boundary: **bs4 owns structure, our code owns
-  meaning, the human owns significance** (`beautifulsoup4==4.15.0`, pinned) —
-  `2026-07-03-mandate-diff-targeted-section.md`.
+  meaning, the human owns significance** — the extraction/diff must **never grow a "this change is meaningful"
+  opinion** (`beautifulsoup4==4.15.0`, pinned) — `2026-07-03-mandate-diff-targeted-section.md`.
 - **Launch corroboration (§4c)** — a launch's sectors derive from its **first holdings**; a both-sides overlap
   **accretes**, **never spawns** a ceiling lead. The v1 live lag is an **existence proof, not a rate**
   (holdings-unavailable → dormant — flag the blind spot, never guess). **Anti-fitting:** a dormant real outcome
-  **NEVER** lowers `corroboration.sector_min_weight` — `2026-07-03-launch-corroboration-existence-proof.md`,
+  **NEVER motivates lowering** `corroboration.sector_min_weight` — it must never be an *argument* to move the
+  threshold — `2026-07-03-launch-corroboration-existence-proof.md`,
   `2026-07-04-real-holdings-xlsx-and-blank-sectors.md`.
 - **SOI sector concentration (§4c resolver)** — the EDGAR SOI carries the GICS grouping; roll industry→sector
   through a **frozen table** (re-freeze only on a GICS structure revision, **never** a knob); no ticker
@@ -210,6 +216,9 @@ The fix discipline — what "done" means:
 - Parser/extraction changes are **corpus-checked**: the frozen substrate (§7) makes a whole-corpus replay
   nearly free, so re-run `tools/corpus-check/` over every frozen blob — a fix verified only on its target
   documents is verified on a biased sample.
+- **Mark what you cannot attribute** — a result you can't cleanly source is flagged for review, **never
+  suppressed and never emitted as clean** (a wrong attribution presented as truth is worse than a fault). The
+  §4d flag-don't-guess discipline, one grain out: honesty about the residual, not a papered-over green (#122).
 
 ## Development
 - **Always work on a new branch.** Never commit directly to `main`. At the start of any change,
