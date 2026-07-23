@@ -12,6 +12,7 @@ from pathlib import Path
 from prospector.ingest.edgar import EdgarClient, EdgarError, latest_prospectus
 from prospector.ingest.prospectus import (ProspectusIngest, _is_heading, diff_mandate, extract_mandate,
                                           html_to_text, is_prospectus_supplement, parse_series_classes)
+from prospector.runner.runner import _advisory_reporter
 from prospector.sensors import mandate
 from prospector.sensors.xcorr import xcorr_lead_id
 from prospector.store.envelope import SYSTEM_LEAD
@@ -257,13 +258,18 @@ def _run(layout, by_accession, current, prior, active_lead_ids, *, prefreeze=Non
         edgar.calls.clear()
     events = []
 
-    def report_advisory(subsystem, message, series_id, extra=None):
-        # Mirror the runner's §10 fault-reporter: a review-advisory fault into the same event stream, so
-        # these unit tests read it exactly where the old raw `emit` fault landed (proving scan routes the
-        # extraction-unreliable punt through report_advisory, never a raw fault write).
-        events.append({"ts": NOW, "lead": SYSTEM_LEAD, "type": "fault",
-                       "payload": {"subsystem": subsystem, "message": message, "series_id": series_id,
-                                   "category": "review-advisory", **(extra or {})}})
+    # F2: drive scan through the PRODUCTION fault-reporter, not a fake that hard-codes
+    # category="review-advisory". The old fake STAMPED the very category the tests then asserted — a
+    # tautology that could not fail whatever scan did, because the review-advisory disposition is the
+    # reporter's doing, never scan's. The real `_advisory_reporter` (runner.py) sets it, so the category
+    # assertions now read a value the code under test produced — they FAIL if the reporter stops setting
+    # review-advisory. `store.append` routes the fault into the same `events` stream the old fake used, so
+    # every reader is unchanged; on_live_lead is computed the production way from (universe, active).
+    class _EventSink:
+        def append(self, event):
+            events.append(event)
+
+    report_advisory = _advisory_reporter(_EventSink(), NOW, [], UNIVERSE, active_lead_ids)
 
     result = mandate.scan(series_id, "XLK", CIK, current, "cur.htm", prior, UNIVERSE, active_lead_ids,
                           prospectus, CFG, NOW, events.append, report_advisory)
