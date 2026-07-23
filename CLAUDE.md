@@ -4,11 +4,18 @@ This repo is **Project Prospector**, the offensive twin of the thesis smoke dete
 the ETF universe for structural novelty and proposes **reading, never orders**.
 
 The canonical spec is `docs/spec.md`; **read its header for the current rev**, earlier revs in
-`docs/history/`. Read it before changing anything load-bearing. (The spec carries its own rev changelog —
-this file names no rev number, so the pointer cannot drift; the CONTRACTs the old rev-narrative summarized
-all live in the spec, e.g. the §9-runner mandate-prior-from-the-frozen-blob invariant, forward-hash
-routing, `sectors_unresolved`, the registrant-level `prospectus_accession` residual, and the frozen
-GICS industry→sector rollup.)
+`docs/history/`. Read it before changing anything load-bearing. (The spec names its own rev; this file names
+no rev number, so the pointer cannot drift — the CONTRACTs the old rev-narrative summarized all live in the
+spec: the §9-runner mandate-prior-from-the-frozen-blob invariant, forward-hash routing, `sectors_unresolved`,
+the registrant-level `prospectus_accession` residual, the frozen GICS industry→sector rollup.)
+
+**How to read this file.** *Operative rules live here · the **why** is in `METHOD.md` · the full **contract**
+is the spec (`docs/spec.md`) · past **scars** are `docs/bugs/` · **on any disagreement, this file wins** (and
+the disagreeing doc is the bug).* Sections: **Firewall · CONTRACT vs DEFAULT · Enforcement tiers · The record ·
+Vendored store provenance · No LLM text as data · No run-now surfaces · Fund identity · Config honesty · Alert
+posture · Standing review items · The seats · Verification · Development · Fixture provenance · Documentation.**
+(No index-of-every-NEVER by design — it would either restate the imperatives, a second home, or rot into a
+maintenance-cost pointer list.)
 
 ## Firewall
 - Never add code that reads the detector's bucket or `portfolio.yaml`.
@@ -16,105 +23,66 @@ GICS industry→sector rollup.)
 - The only connection to the portfolio system is human and one-way (a lead graduates by hand).
 
 ## CONTRACT vs DEFAULT
-Items marked CONTRACT in `docs/` specs change only via the design thread (chat with the owner),
-never unilaterally in implementation. DEFAULTs are config in `config/prospector.yaml` — change freely.
+Items marked CONTRACT in `docs/` specs change only via the design thread (chat with the owner), never
+unilaterally in implementation. DEFAULTs are config in `config/prospector.yaml` — change freely. **The full
+CONTRACT text is the spec**; this section **indexes the design-thread-ratified amendments** under
+`docs/decisions/` — the operative constraint + its record, the narrative left in the record:
+- **Stress gate** — frozen at absolute **0.85** (crisis-only); fix its aging by human recalibration, **never**
+  a rolling percentile (the baseline-relative failure it diagnosed) — `2026-07-02-stress-gate-recalibration.md`.
+- **Verdict vocabulary (§5/§8c)** — four values, three live meanings (`yes` · `watch` · `off-thesis-real` ·
+  `noise`); **never** file a live tech lead as macro (`off-thesis-real` ≠ `watch`). `VERDICT_VOCAB` in
+  `fold/fold.py` is the single source — `2026-07-02-crash-flags-guidance-rev2.md`.
+- **Dispersion payload (§4b)** — `dispersion.tick` carries **full membership + each name's sub-cluster +
+  correlation structure** (you cannot backfill a payload you did not capture). The v2 proto-cluster wall (not
+  built): **price-only** · the canary is a **cluster, never a single name** · **observation-only — the canary
+  is never the trade** — `2026-07-03-dispersion-payload-generous.md`.
+- **Rebalance routing (§4d)** — an **accretion** sensor (no Schmitt, no lead of its own). Forward-hash
+  memberships via `xcorr_lead_id`/`dispersion_lead_id`; **never** add series_ids to a lead payload (the lead-id
+  encodes them — duplication invites drift). Read active leads from the **registry-materialized fold**, never a
+  separate cache — `2026-07-03-rebalance-accretion-and-routing.md`.
+- **Mandate-diff (§4d)** — diff the **principal-investment-strategy section only**, **never** the whole filing
+  (a full-text diff is a false-positive machine — the diff-trap); `mandate.changed` is a silent corroboration;
+  extraction-unreliable → `fault`, **never** a false change. Boundary: **bs4 owns structure, our code owns
+  meaning, the human owns significance** (`beautifulsoup4==4.15.0`, pinned) —
+  `2026-07-03-mandate-diff-targeted-section.md`.
+- **Launch corroboration (§4c)** — a launch's sectors derive from its **first holdings**; a both-sides overlap
+  **accretes**, **never spawns** a ceiling lead. The v1 live lag is an **existence proof, not a rate**
+  (holdings-unavailable → dormant — flag the blind spot, never guess). **Anti-fitting:** a dormant real outcome
+  **NEVER** lowers `corroboration.sector_min_weight` — `2026-07-03-launch-corroboration-existence-proof.md`,
+  `2026-07-04-real-holdings-xlsx-and-blank-sectors.md`.
+- **SOI sector concentration (§4c resolver)** — the EDGAR SOI carries the GICS grouping; roll industry→sector
+  through a **frozen table** (re-freeze only on a GICS structure revision, **never** a knob); no ticker
+  classifier, no third-party feed (the primary-source wall). Extraction-unreliable → `fault`, **never** a wrong
+  sector set; multi-fund NPORT-EX requires fund-block isolation — `2026-07-04-soi-derived-sector-concentration.md`.
 
-Design-thread-authorized amendments to CONTRACT defaults are recorded under `docs/decisions/`:
-- `docs/decisions/2026-07-02-stress-gate-recalibration.md` — the market-stress gate moved from an
-  absolute 0.65 to an absolute 0.85 (crisis-only), after the β-strip was proven the primary
-  market-factor defense. Baseline-relative was tested and rejected (a fragility gauge's intrinsic
-  level is the signal). The stress gate's crisis_level is frozen; fix its aging by human
-  recalibration, never a rolling percentile. (Test 5c amended by rev5; see below.)
-- **Verdict vocabulary (CONTRACT §5/§8c) — four values, three live meanings** (ratified:
-  `docs/decisions/2026-07-02-crash-flags-guidance-rev2.md` §8.4). `yes` · `watch` (on-thesis but
-  UNPROVEN — live) · `off-thesis-real` (real but off-thesis macro/sector regime — catalogued as
-  context, inert) · `noise` (the refined `no` — not real). `off-thesis-real` and `watch` are
-  deliberately distinct: never file a live candidate tech lead as macro. `VERDICT_VOCAB` in
-  `prospector/fold/fold.py` is the single source of truth. Rev6 §5/§8c now carry
-  `none|yes|watch|off-thesis-real|noise` — the code-ahead-of-spec drift is closed. The macro-catalog
-  forensic view + Streamlit panel remain milestone 5.
-- **Generous dispersion payload (CONTRACT §4b, rev8)** — ratified:
-  `docs/decisions/2026-07-03-dispersion-payload-generous.md`. The `dispersion.tick` payload carries
-  **full constituent membership + each name's sub-cluster assignment + the correlation structure**
-  (not just the scalar Q), so the deferred v2 **proto-cluster / pseudo-ETF** layer (Appendix B) can
-  thaw backward over it — you cannot backfill a payload you did not capture. The proto-cluster layer
-  itself is **v2, not built**: it is **price-only** (correlation one level down — never keyword/NLP
-  mining), the canary is a **cluster, never a single name**, and it is **observation-only — the
-  canary is never the trade** (watch the forming cluster, buy the diversified ETF when it packages;
-  single-name granularity is where over-trading and concentration risk peak). Same firewall class as
-  the reading-list wall. v1's only action is capturing the substrate richly; do not build the
-  interpretation.
-- **Rebalance routing + enumeration (CONTRACT §4d, rev9)** — ratified:
-  `docs/decisions/2026-07-03-rebalance-accretion-and-routing.md`. Rebalance is an **accretion** sensor
-  (no Schmitt, no lead of its own; `rebalance`/`mandate.changed` are silent corroborations). To find
-  "every live lead whose baskets include a fund," **forward-hash** — reuse `xcorr_lead_id`/
-  `dispersion_lead_id` verbatim and intersect with active leads; **never** add series_ids to a lead
-  payload (the lead-id already encodes them — duplication invites drift). Read the active-lead set from
-  the **registry-materialized fold** (the snapshots the fold writes), never by re-folding or a separate
-  cache. `mandate.changed` is **built** (§4d — the targeted strategy-section diff on the last *frozen*
-  per-accession prospectus blob; see the next bullet); NPORT-P (`parse_nport_holdings`) stays the labeled
-  §3b stub — do not fill it with survivor-biased data.
-- **Mandate-diff: targeted section + a deliberate dependency (§4d, rev9→rev10)** — ratified:
-  `docs/decisions/2026-07-03-mandate-diff-targeted-section.md`. A new prospectus → diff **only the
-  principal-investment-strategy section** (never the whole filing — a full-text diff is a false-positive
-  machine, the diff-trap), emit `mandate.changed` as a **silent corroboration** the human adjudicates
-  cosmetic-vs-substantive; when extraction is unreliable, emit a `fault` (manual review), **never** a
-  false change. Added **`beautifulsoup4` (pinned `==4.15.0`)** — a deliberate, reasoned dependency:
-  infrastructure-not-intelligence (parsing malformed filing HTML, like numpy/SQLite/boto3), pinned
-  because it parses external input. **Boundary (do not blur):** bs4 owns HTML **structure**, our code
-  owns **meaning** (which section, did the text move), the **human** owns **significance** — the
-  extraction/diff must never grow a "this change is meaningful" opinion. Routing reuses the rebalance
-  forward-hash. Folds into **spec rev10**.
-- **Launch corroboration: existence proof, not a rate (§4c, M4 capstone)** — ratified:
-  `docs/decisions/2026-07-03-launch-corroboration-existence-proof.md`. A resolved launch's sectors are
-  **derived from its first holdings** (ground truth, not prose); a **both-sides sector-set overlap**
-  with a live lead's baskets **accretes** the launch onto that lead (NEVER spawns one — rev7, no ceiling
-  slot), making the **signed** cross-stream lag measurable (negative = packaging beat structure, recorded
-  honestly, never clamped). It is a **deferred** pass (holdings post days after launch; wiring it at
-  resolution would find the empty set and never fire) — reaches back, preserving `detected_at` as T2.
-  The backtest `keyword_match` + curated launch table **never enter the live path**. **Load-bearing
-  finding, at full strength:** the live lag is **bounded by holdings coverage, not the hook** —
-  `ingest/holdings.py` is SPDR-only, so outside that family the lag is **structurally unmeasurable**;
-  the v1 live lag is an **existence proof, not yet a rate**, and `holdings-unavailable → dormant` is the
-  **first-class majority case** (flag the blind spot, never guess). **Real-data finding (2026-07-04,
-  `docs/decisions/2026-07-04-real-holdings-xlsx-and-blank-sectors.md`):** the real SSGA daily file is
-  **xlsx** (now handled — pinned `openpyxl`) and for an **active fund carries no `Sector` column** —
-  so file-sector-derived concentration is empty and a real launch resolves **`sectors_unresolved` →
-  dormant** (a new first-class disposition; the +593 was reachable only on the synthetic fixture).
-  **Anti-fitting (CONTRACT):** a dormant real outcome NEVER motivates lowering
-  `corroboration.sector_min_weight`.
-- **SOI-derived sector concentration — the EDGAR filing carries the GICS grouping; the ticker→GICS
-  classifier is RETIRED (§4c resolver)** — ratified:
-  `docs/decisions/2026-07-04-soi-derived-sector-concentration.md` (design:
-  `docs/notes/2026-07-04-soi-derived-sector-concentration.md`). The prior bullet's "external ticker→GICS
-  classifier" unblock was a **convergent-prior error**: the primary source already publishes the sector
-  grouping. A fund's periodic EDGAR filing renders a **GICS-industry-grouped Schedule of Investments**
-  (`SOFTWARE — 38.7%`, `ELECTRIC UTILITIES — 6.4%`); sector concentration is derived by parsing those
-  industry headers and rolling **industry → GICS sector** through a **frozen `gics_industry_sector`
-  table** (config, CONTRACT — re-freeze only on a GICS structure revision, never a knob). No per-ticker
-  classifier, no third-party feed (a bought feed breaches the primary-source wall). This is the
-  **resolver** of `sectors_unresolved`: when the first SOI lands, `sensors/soi.py` derives `{sector:
-  weight}`, thresholds it with the frozen `sector_min_weight`, and routes via the shared
-  `launch_corroboration.route_corroboration` (holdings + SOI feed **one** overlap/accrete/lag path), the
-  deferred reach-back preserving `detected_at` as T2. **Extraction-unreliable → `fault`, never a wrong
-  sector set** (fund block not isolable / unknown industry / reconcile miss); bs4 owns structure, our
-  code owns which-industry-and-rollup, the human owns significance. **Primary-source findings:** the
-  sector-bearing artifact is the **`NPORT-EX`** exhibit (multi-fund — fund-block isolation is mandatory);
-  the **reconcile-to-`COMMON STOCKS`-total** check caught a mixed-case `SPECIALIZED REITs` the first regex
-  dropped; on real TEKX the Jul-2025 SOI clears `{Financials, Industrials, IT, Utilities}` (Financials
-  10.1% too — filed truth over the spec's 3-sector prose) → **+593 on real data**, and Jan-2026 stays
-  **dormant** (Utilities 6.4% < floor). **Live EDGAR-SOI-fetch is built (the M5 runner)** (`EdgarClient`;
-  `SOI_FORMS`/`latest_soi`/`index.json` doc resolution) — **drop-and-freeze for tests, fetch-on-cadence
-  for the runner; the two never conflate** (fixtures are never refreshed by fetch code). `parse_nport_
-  holdings` stays the labeled §3b stub. Holdings-intake coverage (per-issuer / NPORT-P) remains secondary
-  — do not widen ad hoc.
+## Enforcement tiers
+The firewall and its neighbours are stated with their **true tier**, so no clause reads as stronger than it is
+(the honest-ledger discipline, `METHOD.md` rule 3):
 
-## Append-only
+| clause | enforcement (verified) | tier |
+|---|---|---|
+| never read `portfolio.yaml` | AST **package-wide sweep** over `prospector/**` (`test_firewall.py`) | **mechanism** |
+| never read the detector's bucket | **S3-client-confinement proxy** — only `store/s3_sync.py` may construct an S3 client (import-root sweep over `boto3`/`botocore`/`s3transfer`, `test_firewall.py`) | **mechanism (proxy, named gaps)** |
+| never place / size a trade | capability absence — no broker credentials, no reachable portfolio | **mechanism-adjacent** |
+| never **recommend** a trade | nothing — you cannot test the absence of a recommendation | **prose — the clause closest to the real risk** |
+
+The detector-bucket check is a **proxy with named gaps**, not a capability wall: an import-root sweep cannot
+catch a bare bucket-name string with no import, nor a client reached through a not-yet-enumerated dependency.
+The **bucket name is deliberately absent from this repo**, so there is nothing to grep — the real wall is
+**IAM, outside CI**; this gate is the cheap in-repo tripwire under it. Also **mechanism**: offline-tests /
+network-guard, append-only (write-path validators), ticker-rejection-at-write, tag-only deploy. **Prose by
+design** (the human is the only mover): no-run-now, no-auto-tune. **Assumed, unguarded:** `config.changed`
+strict ordering has no ordering test — do not state it as mechanism until one exists.
+
+## The record
+The append-only discipline, in three forms — nothing (data, docs, or history) silently rewrites the past.
+
+### Append-only (the fossil store)
 - Nothing under `events/` is ever edited or deleted. Corrections are new events.
 - A changed mind is a new `verdict` event that supersedes via `superseded_by`, never an edit.
 - Backtests write **only** under `backtest/` (separate store root + registry per run).
 
-## Canonical documents — amended, never regenerated
+### Canonical documents — amended, never regenerated
 The doc-process form of Append-only: never let the present silently rewrite the past. **Canonical
 contract/reference documents are amended, never regenerated.** The build spec, this file (the constitution),
 the package READMEs, and the founding document change by **surgical diff — altering only the clauses a
@@ -140,7 +108,7 @@ silently dropped — the document states the *current* contract, but *every* cha
   `docs/decisions/2026-07-11-canonical-docs-amended-not-regenerated.md`. (This rule was itself added by
   surgical amendment — fittingly.)
 
-## Doc naming — provenance in the filename
+### Doc naming — provenance in the filename
 Every doc is **born with a leading ISO date** (`YYYY-MM-DD-…`) so versions are tellable apart at a glance — the
 date orders it and never changes. This mostly formalizes existing practice (decision records are dated; the spec
 and state doc carry date + rev). The rule is deliberately narrow in three ways:
@@ -181,7 +149,7 @@ trading ontology stripped and the schema inverted to envelope + JSON-payload.
 - Do not import anything from the sibling repo's `models/` (capacity and opacity — forbidden).
 
 ## No LLM text as data (v1)
-No model-generated prose is ever persisted as record content. Capture (v1 milestone 6) stores raw
+No model-generated prose is ever persisted as record content. Capture (milestone 6) stores raw
 search-result blocks and fetched page text only.
 
 ## No run-now surfaces
@@ -189,10 +157,11 @@ No commands, buttons, or endpoints that trigger recompute or capture on demand. 
 push on state change. No dashboard autorefresh. (`pros store reindex` rebuilds the index from the
 fossil record — it computes nothing new, so it is repair, not run-now.)
 
-## Identity
+## Fund identity
 Every fund keys on its SEC series ID (S######). A bare ticker is rejected at the write path.
 Failed resolutions go to the retry-then-manual queue, never silently dropped. Tickers are
-display-only attributes.
+display-only attributes. (The **machine-account** identity — the bot seats vs the human — is the
+`## The seats` + `## Development` merge-gate, not this fund-key rule.)
 
 ## Config honesty
 On every run the config is hashed; a change emits `config.changed` with the diff **before** any
@@ -220,6 +189,28 @@ leaves a `config.changed` fossil — never by a self-updating rule:
   entangled with real tech theses; stripping it would delete real signal). See
   `docs/decisions/2026-07-02-crash-flags-guidance-rev2.md` §8.
 
+## The seats
+Four seats coordinate only through git + committed artifacts (the full model + the identity boundary are in
+`METHOD.md`). The operative subset:
+- **Design** rules on CONTRACT/disposition; **Build/Code** implements and opens PRs; **QA** cold-reads the real
+  substrate and proposes findings; **the Human** decides and merges.
+- **QA findings arrive as `qa/*` PRs, Option-2 composition:** QA proposes a **RED test + a reference patch**;
+  Code applies it with an **independent read** (never blind `git apply`); the handoff ships as
+  `@pytest.mark.xfail(strict=True)` so today's gate is green and the marker flips loud the moment the fix lands.
+- **Machine-account boundary:** Code acts under the bot `claudeatalphalabsengineering` (not a code owner);
+  QA/the human seats are distinct. No seat merges its own PR (see `## Development`).
+
+## Verification
+The fix discipline — what "done" means:
+- **Every fix ships the violation test that would have caught it** — and **prove the gate bites** (a gate that
+  has never rejected is observationally identical to no gate; plant the violation, watch it go RED, revert).
+- **Verify against the unit the system *acts* on, not the unit you changed** — a fixture must reproduce the
+  pre-fix failure, and **the deploy is not the proof, the tick is** (record the null result, name the retest).
+- **A fix isn't done until its `docs/bugs/INDEX.md` row is current** (the register is the searchable memory).
+- Parser/extraction changes are **corpus-checked**: the frozen substrate (§7) makes a whole-corpus replay
+  nearly free, so re-run `tools/corpus-check/` over every frozen blob — a fix verified only on its target
+  documents is verified on a biased sample.
+
 ## Development
 - **Always work on a new branch.** Never commit directly to `main`. At the start of any change,
   branch off `main` (`git switch -c <descriptive-name>`) and do the work there; graduate it to `main`
@@ -234,6 +225,8 @@ leaves a `config.changed` fossil — never by a self-updating rule:
   merge-introduced regression all clear CI — and the human review is where that class is caught. Ratified:
   `docs/decisions/2026-07-16-agent-identity-split-and-merge-gate.md` (supersedes
   `docs/decisions/2026-07-12-code-does-not-merge-human-reviews.md`, which recorded the posture-era rule).
+- **Merge commits, never squash** — the repo enforces it (`allow_squash_merge: false`, verified via the GitHub
+  API), so the append-only history is a mechanism, not a habit; the merge-commit trail stays traceable.
 - **Branch off a freshly-fetched `origin/main`, never off a sibling feature branch** —
   `git fetch origin && git switch -c <descriptive-name> origin/main`. When PRs merge quickly, a branch cut from
   a **stale local `main`** (or from another feature branch) carries a stale base, and a PR from it can
@@ -249,6 +242,9 @@ leaves a `config.changed` fossil — never by a self-updating rule:
   never against local state or memory. The hazard is not the force-push (harmless) — it is **believing a fix
   landed when it did not**, the fail-silent class wearing a git hat. (Born from exactly that:
   `docs/notes/2026-07-19-verify-git-state-before-assuming.md`.)
+- **Production deploys from a tag, by mechanism** — `ops/deploy.sh <tag>` refuses any non-tag ref and takes the
+  single-writer `run.lock`, so production can never be pinned to a moving ref or swapped under an in-flight tick
+  (`docs/decisions/2026-07-14-single-writer-lock-and-deploy-coordination.md`).
 - `uv sync` to set up; `uv run pytest` to test; `uv run pros --help` for the CLI.
 - Tests are offline: a network guard fails any test that opens a real socket. Recorded fixtures
   live in `tests/fixtures/`.
@@ -276,3 +272,12 @@ when. Primary-source verification is the specific antidote to convergent priors.
 - Code carries **spec-citing docstrings** (which `§` a module implements) and **inline comments on the
   subtle bits** — especially anything that encodes a CONTRACT, a deliberate non-obvious choice, or a
   "do not do X because Y." Comment the *why*, not the *what*. This density is the norm; match it.
+
+---
+*Consolidation rev, 2026-07-23 — the reconciled edit-list (`docs/notes/2026-07-21-claude-md-consolidation-reconciled.md`)
+executed: the CONTRACT-vs-DEFAULT narrative compressed to an amendment index, the three doc-rule sections grouped
+under `## The record`, `## Identity` → `## Fund identity`, the header map + section list added, the honest
+enforcement tiers stated, and the missing operative rules (the seats, verification, the record-as-mechanism,
+deploy-by-tag) folded in. Clause-by-clause diff proof + the §4 protected-list table:
+`docs/decisions/2026-07-23-claude-md-consolidation-rev.md`. C-1 (the version-free spec pointer) landed earlier in
+`docs/decisions/2026-07-23-claude-md-minimal-drift-kill.md`.*
