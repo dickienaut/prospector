@@ -618,8 +618,10 @@ def test_resolve_soi_document_faults_on_multiple_htm_exhibits():
 
 
 def test_resolve_soi_document_faults_on_zero_exhibits_and_never_picks_index_or_primary():
+    # A WELL-FORMED manifest with no sector-bearing exhibit -> None (genuine ambiguity/zero). A
+    # malformed manifest is NOT this case — it now RAISES FilingIndexShapeError (see
+    # test_edgar_drift_mislabels.py), so the two no longer collapse to one None.
     assert resolve_soi_document(_index(["primary_doc.xml", "0001-index.htm"])) is None
-    assert resolve_soi_document({}) is None  # malformed manifest -> None, not a crash
 
 
 # -- SOI-fetch (§9b): resolve_soi_target end-to-end coordinate resolution ---------------

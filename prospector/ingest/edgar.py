@@ -106,6 +106,18 @@ class SubmissionsIncompleteError(EdgarError):
     it; `status` defaults to None (the read window, not the bytes, is the limit)."""
 
 
+class FilingIndexShapeError(EdgarError):
+    """A filing's `index.json` manifest parsed but does not have the shape we read — `directory.item`
+    absent, or not iterable. `resolve_soi_document` returned a bare `None` here, indistinguishable from a
+    well-formed manifest that genuinely carries no unique sector-bearing exhibit — so `classify_soi_target`
+    mislabeled a BROKEN manifest read as `SOI_AMBIGUOUS` (exhibit-ambiguity) when the honest cause is
+    `SOI_ERROR` (a broken read). The BK-MSG-01 mislabel class: right refusal (it faults + surfaces either
+    way), wrong cause. Raising a TYPED error splits the two — a manifest drift RAISES (→ `SOI_ERROR` via
+    `classify_soi_target`'s handler), a genuine zero/multiple-exhibit ambiguity stays `None` (→
+    `SOI_AMBIGUOUS`). Sibling of `SubmissionsShapeError` — the same shape one artifact in (the filing-index
+    manifest, not the submissions JSON); §8a: a violated read contract is BROKEN → operational."""
+
+
 @dataclass(frozen=True)
 class Resolution:
     """A successful §2 lookup — the raw material for a registry entry (never the entry itself:
@@ -122,7 +134,10 @@ class Resolution:
 class ResolutionFailure:
     """A failed §2 lookup — countable, never silent (failed-resolution CONTRACT)."""
     ticker: str
-    reason: str  # 'not_in_mf_map' | 'no_prospectus' | 'http_error'
+    # 'not_in_mf_map' | 'ambiguous_symbol' | 'no_prospectus' | 'older_filings_unread' |
+    # 'submissions_shape' (a drifted submissions JSON — a BROKEN read, distinct from the transport-level
+    # 'http_error'; the BK-MSG-01 right-refusal-wrong-cause fix) | 'http_error'
+    reason: str
     detail: str
 
 
@@ -360,11 +375,17 @@ def resolve_soi_document(index: dict) -> str | None:
     items, drop the `{acc}-index.htm` cover page and any `primary_doc.*` (the N-PORT XML). EXACTLY ONE
     survivor -> it (the real TEKX exhibit is `NPORT_J9C7_54705771_0725.htm`); ZERO or MORE THAN ONE ->
     None, refusing to guess (the anchor-ambiguity discipline, ingest/soi.py). The caller turns a None
-    into a fault / not-yet, NEVER a wrong document — a wrong exhibit is a wrong sector set (§9b)."""
+    into a fault / not-yet, NEVER a wrong document — a wrong exhibit is a wrong sector set (§9b).
+
+    A manifest whose SHAPE we cannot read (`directory.item` absent / not iterable) RAISES
+    `FilingIndexShapeError` — a BROKEN read, distinct from the well-formed-but-no-unique-exhibit `None`
+    (genuine ambiguity). Collapsing them made `classify_soi_target` label a manifest drift as
+    `SOI_AMBIGUOUS` when the honest cause is `SOI_ERROR` (BK-MSG-01: right refusal, wrong cause)."""
     try:
-        items = index["directory"]["item"]
-    except (KeyError, TypeError):
-        return None
+        items = list(index["directory"]["item"])
+    except (KeyError, TypeError) as e:
+        raise FilingIndexShapeError(
+            f"filing index.json is not the shape we read (directory.item): {e!r}") from e
     candidates: list[str] = []
     for it in items:
         name = str(it.get("name", "")) if isinstance(it, dict) else ""
@@ -384,7 +405,9 @@ def resolve_soi_document(index: dict) -> str | None:
 # review), and a swallowed exception — into one indistinguishable value, so an ambiguous filing was
 # silently re-fetched every tick until the 180-day horizon and never surfaced. `classify_soi_target`
 # returns the reason; `resolve_soi_target` stays a thin target-only wrapper so its callers/tests are
-# unchanged. AMBIGUOUS and ERROR are FAULTS the runner surfaces; NOT_YET stays silent.
+# unchanged. AMBIGUOUS and ERROR are FAULTS the runner surfaces; NOT_YET stays silent. A MANIFEST-shape
+# drift (`resolve_soi_document` raising `FilingIndexShapeError`) is a BROKEN read → ERROR, split from a
+# well-formed-but-no-unique-exhibit → AMBIGUOUS (BK-MSG-01: right refusal, right cause).
 SOI_RESOLVED = "resolved"      # coordinates found
 SOI_NOT_YET = "not_yet"        # no SOI filing indexed yet — silent, re-attempt next cycle
 SOI_AMBIGUOUS = "ambiguous"    # SOI filing EXISTS but its exhibit is not uniquely resolvable — FAULT
@@ -404,8 +427,10 @@ def classify_soi_target(cik: int, client: EdgarClient) -> "tuple[SoiTarget | Non
         if soi is None:
             return None, SOI_NOT_YET
         index = client.filing_index(int(cik), soi["accession"])
-        doc = resolve_soi_document(index)
+        doc = resolve_soi_document(index)  # RAISES FilingIndexShapeError on a drifted manifest -> SOI_ERROR
         if doc is None:
+            # GENUINE ambiguity only (the manifest read cleanly; 0 or >1 sector-bearing exhibits). A
+            # manifest-shape drift raised above and is caught below as SOI_ERROR — no longer masked here.
             return None, SOI_AMBIGUOUS  # the filing exists; the exhibit is ambiguous -> surface it
         return SoiTarget(cik=int(cik), accession=soi["accession"], primary_doc=doc,
                          form=soi["form"], filing_date=soi["filing_date"]), SOI_RESOLVED
@@ -447,9 +472,12 @@ def confirm_prospectus(subs: dict, cik: int) -> tuple[str | None, str, str]:
     B2: `filings.recent` holds only the newest ~1000 filings; older ones live in `filings.files[]` pages
     we do not yet paginate. If such pages exist and no prospectus is in `recent`, the answer is
     INCONCLUSIVE — return reason 'older_filings_unread', never a silent 'no_prospectus' that would
-    wrongly queue a long-lived registrant. Following the pages is the named deferral."""
-    recent = subs["filings"]["recent"]
-    forms, dates, accs = recent["form"], recent["filingDate"], recent["accessionNumber"]
+    wrongly queue a long-lived registrant. Following the pages is the named deferral.
+
+    Reads the columnar lists through the shared `_recent_columns`, so a submissions-shape DRIFT raises
+    `SubmissionsShapeError` (the resolution path gets the same typed break as the read path — closing the
+    gap where a drift here surfaced upstream as a generic `http_error`, BK-MSG-01)."""
+    forms, dates, accs, _docs = _recent_columns(subs)
     best: int | None = None
     for i, form in enumerate(forms):
         if form in PROSPECTUS_FORMS and (best is None or dates[i] > dates[best]):
@@ -500,6 +528,11 @@ def resolve_ticker(ticker: str, client: EdgarClient) -> Resolution | ResolutionF
         subs = client.submissions(cik)
         name = str(subs["name"])
         accession, reason, detail = confirm_prospectus(subs, cik)
+    except SubmissionsShapeError as e:
+        # A drifted submissions JSON is a BROKEN read, not a transport failure — its own reason, never
+        # the generic `http_error` bucket (BK-MSG-01: right refusal, wrong cause). §8a: broken → surfaces.
+        return ResolutionFailure(ticker=ticker, reason="submissions_shape",
+                                 detail=f"submissions CIK{cik:010d} shape: {e}")
     except Exception as e:
         return ResolutionFailure(ticker=ticker, reason="http_error",
                                  detail=f"submissions CIK{cik:010d}: {e}")
@@ -533,6 +566,11 @@ def resolve_series(series_id: str, ticker: str, client: EdgarClient) -> Resoluti
         subs = client.submissions(cik)
         name = str(subs["name"])
         accession, reason, detail = confirm_prospectus(subs, cik)
+    except SubmissionsShapeError as e:
+        # A drifted submissions JSON is a BROKEN read, not a transport failure — its own reason, never
+        # the generic `http_error` bucket (BK-MSG-01: right refusal, wrong cause). §8a: broken → surfaces.
+        return ResolutionFailure(ticker=ticker, reason="submissions_shape",
+                                 detail=f"submissions CIK{cik:010d} shape: {e}")
     except Exception as e:
         return ResolutionFailure(ticker=ticker, reason="http_error",
                                  detail=f"submissions CIK{cik:010d}: {e}")
