@@ -53,7 +53,7 @@ full finding, and the rule/decision each spawned is the lineage.
 | **sql-assert** | upload table name f-string-interpolated, gated only by a `-O`-strippable `assert` | store | — | ✅ #67 | — | literal-dict lookup (fail-closed even under `-O`) · `test_registry.py::test_upload_table_name_is_validated_fail_closed` |
 | **edgar-`matches[0]`** | silent first-pick on an ambiguous symbol (the reused-ticker trap) | ingest·edgar | identity-anchor | ✅ (already on main) | 5 | `edgar.py:400-405` returns an `ambiguous_symbol` fault before `matches[0]`; **register drift** corrected |
 | **ledger-datesort** | prior-snapshot selection compared date-dir names lexically | runner | — | ✅ (already on main) | — | `runner.py:170` `date.fromisoformat(name) < date.fromisoformat(current_date)`; **register drift** corrected |
-| **DRIFT-1/2** | state-doc self-contradiction; aging-monitor "pinned" 8 revs | docs | doc-drift | ⭕ | 9 | doc pass owed |
+| **DRIFT-1/2** | state-doc self-contradiction; aging-monitor "pinned" 8 revs | docs | doc-drift | ✅ | 9 | **DRIFT-1:** `state.md` **rev 9** re-synth — the one deferred-but-built item (combined-prospectus multi-fund extraction, shipped via block isolation #130) removed from §2.9 + §5.2's deferred lists, so the two no longer contradict. **DRIFT-2:** the §4a aging-monitor p95 ambiguity (0.81-vs-0.668) was reconciled in **spec rev 14** (`spec.md` §4a — "reconciliation closed, the 0.81-vs-0.668 ambiguity retired"); the "pinned/stuck" framing was already retired, the register just never marked it. `docs/state.md` (rev 9) |
 
 ## The going-live pass — 2026-07-07 (`notes/prospector_followup_review_2026-07-07.md`, `2026-07-07-live-cadence-qa-fixes.md`, `PROSPECTOR_REGRESSION_TESTS*_README.md`)
 
@@ -70,7 +70,7 @@ full finding, and the rule/decision each spawned is the lineage.
 | **N9** | SOI corroboration re-fetches every tick for 180d — no cadence gate | ingest·soi·runner | — | 💤 M7 | — | `test_soi_corroboration_cadence.py` **xfail** |
 | **N10** | inert `off-thesis-real` lead still shows in "Active leads" panel as a signal | dashboard | state-as-signal | ✅ | state-as-signal | `test_dashboard_offthesis_rank.py` |
 | **C.1** | `_compute_push` pages every tick on a persistent fault (no dedup) | email·runner | spurious-fire | ✅→E1/E2 | 7 | folded into §10 sender |
-| **C.2** | runner docstrings + ARCHITECTURE "what's built" stale by a milestone | docs | doc-drift | ⭕ | 9 | doc pass owed |
+| **C.2** | runner docstrings + ARCHITECTURE "what's built" stale by a milestone | docs | doc-drift | ✅ | 9 | `ARCHITECTURE.md` refreshed **rev 9** — §1 banner (M5-arc → post-#99/`v1.0.6`), the §2/§9 test counts (499→721), the §9 milestone framing (1–4+M5 → 1–6+SOI+M5+M7, build-complete/deployed), the stale spec-rev anchors (rev14/rev15 → canonical/rev 18), + a post-#99-hardening bullet (state-collapse family + §8a broken-vs-incomplete + `v1.0.6`). Runner docstrings spot-verified current (the mandate / SOI / advisory paths were rewritten this arc). `ARCHITECTURE.md` |
 
 ## §9e dispersion — 2026-07-09 (`notes/dispersion_foreign_ticker_findings.md`)
 
@@ -285,7 +285,11 @@ The two LOW test-integrity items from QA's post-#99 sweep, landed together (test
   2026-07-21:** the deferred "filing SERIES/CLASS header" unblock is now BUILT for the mandate diff — the
   over-attribution guard verifies coverage live, so B1 no longer produces false `mandate.changed`. The
   registry-field residual (and B2 pagination) remain the named deferrals.
-- ⭕ **Doc debt** — DRIFT-1, DRIFT-2, C.2 (regenerate "what's built" from the wired set; §5 as single source).
+- ✅ **Doc debt** — DRIFT-1, DRIFT-2, C.2 **closed** (2026-07-22): `state.md` re-synthesized to **rev 9** and
+  `ARCHITECTURE.md` refreshed, both regenerated from the wired set with §5 as the single source. *(The CLAUDE.md
+  drift — A2 rev-pointer + A3 false "mandate.changed deferred" — is tracked separately: a **minimal drift-kill**
+  is next; the **full ratified consolidation** (`../notes/2026-07-21-claude-md-consolidation-reconciled.md`)
+  stays deferred with a trigger — its own dedicated session, shipping the §4 protected-list table.)*
   Deliberately **not** in the Tier-4 sweep — rides the rev15 spec-fold ("record matches territory", done together).
 - ✅ **Tier-4 low-severity sweep — CLOSED (#67):** H3/S5/lag-lexical-sort/sql-assert/BK-MSG-01 fixed
   (commit-per-item); H2/H4/S3/report.py/edgar-`matches[0]`/ledger-datesort were already fixed on main and the
